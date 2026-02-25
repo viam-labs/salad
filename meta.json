@@ -8,6 +8,14 @@
   "markdown_link": "README.md",
   "entrypoint": "bin/salad",
   "first_run": "",
+  "models": [
+    {
+      "api": "rdk:service:vision",
+      "model": "ncs:salad:passthrough-to-camera",
+      "markdown_link": "README.md",
+      "short_description": "passthrough vision service"
+    }
+  ],
   "build": {
     "build": "make module.tar.gz",
     "setup": "make setup",

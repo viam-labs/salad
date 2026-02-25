@@ -139,7 +139,7 @@ func (s *saladPassthroughToCamera) GetObjectPointClouds(ctx context.Context, cam
 	}
 	obj := vis.NewEmptyObject()
 	obj.PointCloud = pc
-	return []*vis.Object{obj}, fmt.Errorf("not implemented")
+	return []*vis.Object{obj}, nil
 }
 
 // properties
