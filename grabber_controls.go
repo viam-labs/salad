@@ -91,17 +91,11 @@ type grabberControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	bins               map[string]*grabberBinSwitches
-	highAboveBowl      sw.Switch
-	leftGripper        gripper.Gripper
-	leftInBowl         sw.Switch
-	leftHome           sw.Switch
-	rightGripper       gripper.Gripper
-	rightAboveBowl     sw.Switch
-	rightGrabBowl      sw.Switch
-	rightAboveDelivery sw.Switch
-	rightBowlDelivery  sw.Switch
-	rightHome          sw.Switch
+	bins          map[string]*grabberBinSwitches
+	highAboveBowl sw.Switch
+	leftGripper   gripper.Gripper
+	leftInBowl    sw.Switch
+	leftHome      sw.Switch
 }
 
 type grabberBinSwitches struct {
