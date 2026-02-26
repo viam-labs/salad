@@ -20,6 +20,12 @@
       "model": "ncs:salad:file-vision",
       "markdown_link": "README.md",
       "short_description": "vision service that returns a mesh from a file"
+    },
+    {
+      "api": "rdk:service:generic",
+      "model": "ncs:salad:grabber-controls",
+      "markdown_link": "README.md",
+      "short_description": "salad grabber controls service"
     }
   ],
   "build": {
