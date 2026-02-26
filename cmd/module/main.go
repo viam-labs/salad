@@ -15,5 +15,6 @@ func main() {
 		resource.APIModel{API: vision.API, Model: salad.PassthroughToCamera},
 		resource.APIModel{API: vision.API, Model: salad.FileVision},
 		resource.APIModel{API: genericservice.API, Model: salad.GrabberControls},
+		resource.APIModel{API: genericservice.API, Model: salad.BuildCoordinator},
 	)
 }

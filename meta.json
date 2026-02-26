@@ -3,29 +3,35 @@
   "module_id": "ncs:salad",
   "visibility": "public",
   "url": "",
-  "description": "Modular vision service: passthrough-to-camera",
+  "description": "Viam module for automated salad assembly",
   "applications": null,
   "markdown_link": "README.md",
   "entrypoint": "bin/salad",
   "first_run": "",
   "models": [
     {
-      "api": "rdk:service:vision",
-      "model": "ncs:salad:passthrough-to-camera",
-      "markdown_link": "README.md",
-      "short_description": "passthrough vision service"
-    },
-    {
-      "api": "rdk:service:vision",
-      "model": "ncs:salad:file-vision",
-      "markdown_link": "README.md",
-      "short_description": "vision service that returns a mesh from a file"
+      "api": "rdk:service:generic",
+      "model": "ncs:salad:build-coordinator",
+      "markdown_link": "README.md#build-coordinator",
+      "short_description": "orchestrates salad assembly by grabbing ingredients to target weights and delivering the bowl"
     },
     {
       "api": "rdk:service:generic",
       "model": "ncs:salad:grabber-controls",
-      "markdown_link": "README.md",
-      "short_description": "salad grabber controls service"
+      "markdown_link": "README.md#grabber-controls",
+      "short_description": "controls grippers and bin switches for grabbing ingredients and delivering bowls"
+    },
+    {
+      "api": "rdk:service:vision",
+      "model": "ncs:salad:passthrough-to-camera",
+      "markdown_link": "README.md#passthrough-to-camera",
+      "short_description": "vision service that passes through point clouds from a camera"
+    },
+    {
+      "api": "rdk:service:vision",
+      "model": "ncs:salad:file-vision",
+      "markdown_link": "README.md#file-vision",
+      "short_description": "vision service that returns a 3D mesh from a PLY file"
     }
   ],
   "build": {
