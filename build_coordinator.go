@@ -182,6 +182,16 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 		}, nil
 	}
 
+	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		"reset": true,
+	})
+	if err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to reset bowl controls after preparing: %v", err),
+		}, nil
+	}
+
 	type ingredientTarget struct {
 		name        string
 		servings    float64
