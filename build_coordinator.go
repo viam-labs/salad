@@ -259,6 +259,8 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
 	s.buildCancelFunc = buildCancelFunc
 	s.buildDone = make(chan struct{})
+	s.status = "preparing"
+	s.progress = 0
 	s.mu.Unlock()
 
 	defer func() {
