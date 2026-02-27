@@ -30,11 +30,12 @@ type BuildCoordinatorIngredientConfig struct {
 }
 
 type BuildCoordinatorConfig struct {
-	GrabberControls  string                             `json:"grabber-controls"`
-	BowlControls     string                             `json:"bowl-controls"`
-	ScaleSensor      string                             `json:"scale-sensor"`
-	Ingredients      []BuildCoordinatorIngredientConfig `json:"ingredients"`
-	DressingControls string                             `json:"dressing-controls"`
+	GrabberControls   string                             `json:"grabber-controls"`
+	BowlControls      string                             `json:"bowl-controls"`
+	ScaleSensor       string                             `json:"scale-sensor"`
+	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
+	DressingControls  string                             `json:"dressing-controls"`
+	ChefsKissControls string                             `json:"chefs-kiss-controls"`
 }
 
 func init() {
@@ -57,6 +58,9 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	}
 	if cfg.DressingControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dressing-controls")
+	}
+	if cfg.ChefsKissControls == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "chefs-kiss-controls")
 	}
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
@@ -104,6 +108,7 @@ type buildCoordinator struct {
 
 	grabberControls      resource.Resource
 	bowlControls         resource.Resource
+	chefsKissControls    resource.Resource
 	scaleSensor          sensor.Sensor
 	dressingControls     resource.Resource
 	ingredients          map[string]float64 // name -> grams per serving
@@ -155,6 +160,12 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("dressing controls service %q not found in dependencies", conf.DressingControls)
 	}
 	s.dressingControls = dressingControls
+
+	chefsKissControls, ok := deps[genericservice.Named(conf.ChefsKissControls)]
+	if !ok {
+		return nil, fmt.Errorf("chefs kiss controls service %q not found in dependencies", conf.ChefsKissControls)
+	}
+	s.chefsKissControls = chefsKissControls
 
 	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
@@ -385,10 +396,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		s.updateStatus(fmt.Sprintf("adding %s", target.name), completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if target.category == "dressing" {
-			if err := s.addDressing(ctx); err != nil {
-				s.logger.Errorf("Failed to add dressing: %v", err)
-				continue
-			}
 			continue
 		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
@@ -435,6 +442,22 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}, nil
 	}
 	s.updateStatus("complete", 100)
+
+	// if targets contains a dressing item
+	for _, target := range targets {
+		if target.category == "dressing" {
+			if err := s.addDressing(ctx); err != nil {
+				s.logger.Errorf("Failed to add dressing: %v", err)
+			}
+		}
+	}
+
+	// chefs kiss
+	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
+		"chefs_kiss": true,
+	}); err != nil {
+		s.logger.Errorf("Failed to perform chefs kiss: %v", err)
+	}
 
 	return map[string]interface{}{
 		"success": true,
