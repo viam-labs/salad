@@ -63,6 +63,7 @@
     </div>
     <span class="progress-pct">{progress}%</span>
   </div>
+  <video class="stream-video" autoplay playsinline></video>
   <button class="btn-stop" disabled={stopping} onclick={handleStop}>
     {stopping ? "Stopping\u2026" : "Stop Build"}
   </button>

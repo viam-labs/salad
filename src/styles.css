@@ -238,11 +238,22 @@ body {
   gap: 1rem;
 }
 
+.stream-video {
+  width: 100%;
+  max-width: 1100px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--tile-radius);
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
 .building-screen h1 {
   font-family: var(--font-display);
   font-size: 2rem;
   font-weight: 400;
   color: var(--green-darker);
+  margin-bottom: 0.75rem;
 }
 
 .status-text {
@@ -250,8 +261,9 @@ body {
   color: var(--gray-text);
   text-transform: capitalize;
   white-space: nowrap;
-  width: 3rem;
-  text-align: left;
+  overflow: hidden;
+  width: 6rem;
+  text-align: right;
 }
 
 .progress-container {
@@ -260,7 +272,6 @@ body {
   gap: 0.5rem;
   width: 100%;
   max-width: 540px;
-  margin-top: auto;
 }
 
 .progress-bar-bg {
@@ -283,8 +294,8 @@ body {
   font-size: 0.85rem;
   color: var(--gray-text);
   white-space: nowrap;
-  width: 3rem;
-  text-align: right;
+  width: 6rem;
+  text-align: left;
 }
 
 .btn-stop {
