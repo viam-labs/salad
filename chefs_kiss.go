@@ -29,13 +29,13 @@ type ChefsKissControlsConfig struct {
 
 func (cfg *ChefsKissControlsConfig) Validate(path string) ([]string, []string, error) {
 	if cfg.gripper == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.gripper)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "gripper")
 	}
 	if cfg.position == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.position)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "position")
 	}
 	if cfg.home == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.home)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "home")
 	}
 
 	return []string{cfg.gripper, cfg.position, cfg.home}, []string{}, nil

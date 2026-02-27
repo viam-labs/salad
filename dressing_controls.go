@@ -34,30 +34,30 @@ type DressingControlsConfig struct {
 
 func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, error) {
 	if cfg.Gripper == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.Gripper)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "gripper")
 	}
 
 	if cfg.PrepareDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PrepareDressing)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "prepare-dressing")
 	}
 
 	if cfg.GrabDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.GrabDressing)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "grab-dressing")
 	}
 
 	if cfg.PourDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PourDressing)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "pour-dressing")
 	}
 
 	if cfg.PourDressing2 == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PourDressing2)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "pour-dressing2")
 	}
 	if cfg.PostPourDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PostPourDressing)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "post-pour-dressing")
 	}
 
 	if cfg.Home == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.Home)
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "home")
 	}
 
 	requiredDeps := []string{}
