@@ -166,6 +166,12 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{}, error) {
 	s.logger.Infof("Executing prepare_bowl")
 
+	// open gripper
+	if err := s.rightGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open right gripper: %w", err)
+	}
+	s.logger.Debugf("Opened right gripper")
+
 	if err := s.rightAboveDelivery.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set right-above-delivery switch to position 2: %w", err)
 	}
@@ -216,6 +222,12 @@ func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{
 
 func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{}, error) {
 	s.logger.Infof("Executing deliver_bowl")
+
+	// open gripper
+	if err := s.rightGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open right gripper: %w", err)
+	}
+	s.logger.Debugf("Opened right gripper")
 
 	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2: %w", err)
