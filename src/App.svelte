@@ -11,7 +11,7 @@
   let order: Record<string, number> = $state({});
   let error = $state("");
   let showCamera = $state(false);
-  let cameraVideo: HTMLVideoElement;
+  let cameraVideo: HTMLVideoElement = $state()!;
 
   async function openCamera() {
     showCamera = true;
@@ -60,8 +60,21 @@
 {/if}
 
 {#if showCamera}
-  <div class="camera-modal-backdrop" onclick={closeCamera}>
-    <div class="camera-modal" onclick={(e) => e.stopPropagation()}>
+  <div
+    class="camera-modal-backdrop"
+    role="presentation"
+    onclick={closeCamera}
+    onkeydown={(e) => e.key === "Escape" && closeCamera()}
+  >
+    <div
+      class="camera-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Camera stream"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+    >
       <button class="camera-modal-close" onclick={closeCamera}>✕</button>
       <video class="camera-modal-video" bind:this={cameraVideo} autoplay playsinline></video>
     </div>
