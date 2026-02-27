@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"go.viam.com/rdk/components/sensor"
@@ -13,9 +14,19 @@ import (
 
 var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
 
+// categoryOrder defines the build sequence for ingredient categories.
+// Ingredients are added to the bowl in this order.
+var categoryOrder = map[string]int{
+	"base":     0,
+	"protein":  1,
+	"topping":  2,
+	"dressing": 3,
+}
+
 type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
+	Category        string  `json:"category"`
 }
 
 type BuildCoordinatorConfig struct {
@@ -61,6 +72,17 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 				ing.Name, path, i,
 			)
 		}
+		if ing.Category == "" {
+			return nil, nil, resource.NewConfigValidationFieldRequiredError(
+				fmt.Sprintf("%s.ingredients.%d", path, i), "category",
+			)
+		}
+		if _, ok := categoryOrder[ing.Category]; !ok {
+			return nil, nil, fmt.Errorf(
+				"ingredient %q at %s.ingredients.%d has unknown category %q",
+				ing.Name, path, i, ing.Category,
+			)
+		}
 	}
 
 	return deps, nil, nil
@@ -79,7 +101,8 @@ type buildCoordinator struct {
 	grabberControls resource.Resource
 	bowlControls    resource.Resource
 	scaleSensor     sensor.Sensor
-	ingredients     map[string]float64 // name -> grams per serving
+	ingredients          map[string]float64 // name -> grams per serving
+	ingredientCategories map[string]string  // name -> category
 
 	mu       sync.RWMutex
 	status   string
@@ -98,13 +121,14 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 
 	s := &buildCoordinator{
-		name:        name,
-		logger:      logger,
-		cfg:         conf,
-		cancelCtx:   cancelCtx,
-		cancelFunc:  cancelFunc,
-		ingredients: make(map[string]float64),
-		status:      "idle",
+		name:            name,
+		logger:          logger,
+		cfg:             conf,
+		cancelCtx:       cancelCtx,
+		cancelFunc:      cancelFunc,
+		ingredients:          make(map[string]float64),
+		ingredientCategories: make(map[string]string),
+		status:          "idle",
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -127,6 +151,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 
 	for _, ing := range conf.Ingredients {
 		s.ingredients[ing.Name] = ing.GramsPerServing
+		s.ingredientCategories[ing.Name] = ing.Category
 	}
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
@@ -217,6 +242,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 		name        string
 		servings    float64
 		targetGrams float64
+		category    string
 	}
 	var targets []ingredientTarget
 	var totalServings float64
@@ -239,9 +265,15 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 			name:        name,
 			servings:    servings,
 			targetGrams: gramsPerServing * servings,
+			category:    s.ingredientCategories[name],
 		})
 		totalServings += servings
 	}
+
+	// Sort ingredients by category build order (base -> protein -> topping -> dressing).
+	sort.SliceStable(targets, func(i, j int) bool {
+		return categoryOrder[targets[i].category] < categoryOrder[targets[j].category]
+	})
 
 	// Total steps = all servings + 1 for bowl delivery
 	totalSteps := totalServings + 1

@@ -5,6 +5,7 @@ A Viam module for automated salad assembly.
 ## build-coordinator
 
 Orchestrates salad assembly by grabbing ingredients to target weights and delivering the finished bowl.
+Ingredients are added in category order: base, protein, topping, then dressing.
 For each ingredient, reads the scale before and after each grab to verify weight was added.
 If 3 consecutive grabs produce no weight change (< 0.5g), errors out (possible empty bin).
 Once all ingredients are added, calls deliver_bowl.
@@ -15,23 +16,41 @@ Once all ingredients are added, calls deliver_bowl.
     // required - name of the grabber-controls generic service
     "grabber-controls" : "<grabber-controls service>",
 
+    // required - name of the bowl-controls generic service
+    "bowl-controls" : "<bowl-controls service>",
+
     // required - name of the sensor used as a scale (must return a numeric reading)
     "scale-sensor" : "<sensor>",
 
     // required - list of available ingredients
     // ingredient name must match a bin name in the grabber-controls config
+    // category must be one of: "base", "protein", "topping", "dressing"
+    // ingredients are added to the bowl in category order
     "ingredients" : [
         {
             "name" : "lettuce",
-            "grams-per-serving" : 30.0
+            "grams-per-serving" : 30.0,
+            "category" : "base"
+        },
+        {
+            "name" : "chicken",
+            "grams-per-serving" : 40.0,
+            "category" : "protein"
         },
         {
             "name" : "tomato",
-            "grams-per-serving" : 25.0
+            "grams-per-serving" : 25.0,
+            "category" : "topping"
         },
         {
             "name" : "croutons",
-            "grams-per-serving" : 15.0
+            "grams-per-serving" : 15.0,
+            "category" : "topping"
+        },
+        {
+            "name" : "ranch",
+            "grams-per-serving" : 20.0,
+            "category" : "dressing"
         }
     ]
 }
