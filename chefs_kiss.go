@@ -22,23 +22,23 @@ func init() {
 }
 
 type ChefsKissControlsConfig struct {
-	position string `json:"position"`
-	gripper  string `json:"gripper"`
-	home     string `json:"home"`
+	Position string `json:"position"`
+	Gripper  string `json:"gripper"`
+	Home     string `json:"home"`
 }
 
 func (cfg *ChefsKissControlsConfig) Validate(path string) ([]string, []string, error) {
-	if cfg.gripper == "" {
+	if cfg.Gripper == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "gripper")
 	}
-	if cfg.position == "" {
+	if cfg.Position == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "position")
 	}
-	if cfg.home == "" {
+	if cfg.Home == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "home")
 	}
 
-	return []string{cfg.gripper, cfg.position, cfg.home}, []string{}, nil
+	return []string{cfg.Gripper, cfg.Position, cfg.Home}, []string{}, nil
 }
 
 type chefsKissControls struct {
@@ -77,21 +77,21 @@ func NewChefsKissControls(ctx context.Context, deps resource.Dependencies, name 
 		cancelFunc: cancelFunc,
 	}
 
-	gripperComponent, err := gripper.FromProvider(deps, conf.gripper)
+	gripperComponent, err := gripper.FromProvider(deps, conf.Gripper)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get gripper '%s': %w", conf.gripper, err)
+		return nil, fmt.Errorf("failed to get gripper '%s': %w", conf.Gripper, err)
 	}
 	s.gripper = gripperComponent
 
-	positionSwitch, err := sw.FromProvider(deps, conf.position)
+	positionSwitch, err := sw.FromProvider(deps, conf.Position)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get position switch '%s': %w", conf.position, err)
+		return nil, fmt.Errorf("failed to get position switch '%s': %w", conf.Position, err)
 	}
 	s.position = positionSwitch
 
-	homeSwitch, err := sw.FromProvider(deps, conf.home)
+	homeSwitch, err := sw.FromProvider(deps, conf.Home)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home switch '%s': %w", conf.home, err)
+		return nil, fmt.Errorf("failed to get home switch '%s': %w", conf.Home, err)
 	}
 	s.home = homeSwitch
 
