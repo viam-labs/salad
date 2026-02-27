@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { initConnection, fetchIngredients, getCameraStream } from "./lib/robot";
   import type { Ingredient, AppScreen } from "./lib/types";
   import OrderingScreen from "./components/OrderingScreen.svelte";
@@ -13,9 +13,10 @@
   let showCamera = $state(false);
   let cameraVideo: HTMLVideoElement = $state()!;
 
-  function openCamera() {
-    cameraVideo.srcObject = getCameraStream();
+  async function openCamera() {
     showCamera = true;
+    await tick();
+    cameraVideo.srcObject = getCameraStream();
   }
 
   function closeCamera() {
