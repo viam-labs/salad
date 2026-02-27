@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { buildSalad, getStatus, stopBuild } from "../lib/robot";
+  import { buildSalad, getStatus, stopBuild, getCameraStream } from "../lib/robot";
 
   interface Props {
     order: Record<string, number>;
@@ -13,6 +13,7 @@
   let status = $state("Starting\u2026");
   let progress = $state(0);
   let stopping = $state(false);
+  let video: HTMLVideoElement;
 
   onMount(() => {
     const payload: Record<string, number> = {};
@@ -22,6 +23,10 @@
     buildSalad(payload).catch((err) =>
       console.error("build_salad error:", err),
     );
+
+    getCameraStream("overhead-webcam")
+      .then((stream) => { video.srcObject = stream; })
+      .catch((err) => console.error("Camera stream error:", err));
 
     const interval = setInterval(async () => {
       try {
@@ -63,7 +68,7 @@
     </div>
     <span class="progress-pct">{progress}%</span>
   </div>
-  <video class="stream-video" autoplay playsinline></video>
+  <video class="stream-video" bind:this={video} autoplay playsinline></video>
   <button class="btn-stop" disabled={stopping} onclick={handleStop}>
     {stopping ? "Stopping\u2026" : "Stop Build"}
   </button>

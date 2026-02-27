@@ -2,6 +2,7 @@ import * as VIAM from "@viamrobotics/sdk";
 import Cookies from "js-cookie";
 import type { Ingredient } from "./types";
 
+let robotClient: VIAM.RobotClient;
 let coordinator: VIAM.GenericServiceClient;
 
 export async function initConnection(): Promise<void> {
@@ -20,7 +21,7 @@ export async function initConnection(): Promise<void> {
   apiKeySecret = parsed.apiKey.key;
   host = parsed.hostname;
 
-  const robotClient = await VIAM.createRobotClient({
+  robotClient = await VIAM.createRobotClient({
     host,
     credentials: {
       type: "api-key",
@@ -57,4 +58,9 @@ export async function getStatus(): Promise<{
 
 export async function stopBuild(): Promise<void> {
   await coordinator.doCommand({ stop: true });
+}
+
+export async function getCameraStream(name: string): Promise<MediaStream> {
+  const streamClient = new VIAM.StreamClient(robotClient);
+  return streamClient.getStream(name);
 }
