@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.viam.com/rdk/components/gripper"
 	sw "go.viam.com/rdk/components/switch"
@@ -22,9 +23,10 @@ func init() {
 }
 
 type ChefsKissControlsConfig struct {
-	Position string `json:"position"`
-	Gripper  string `json:"gripper"`
-	Home     string `json:"home"`
+	Position         string `json:"position"`
+	Gripper          string `json:"gripper"`
+	Home             string `json:"home"`
+	ArmShakerService string `json:"arm-shaker-service"`
 }
 
 func (cfg *ChefsKissControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -37,8 +39,11 @@ func (cfg *ChefsKissControlsConfig) Validate(path string) ([]string, []string, e
 	if cfg.Home == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "home")
 	}
+	if cfg.ArmShakerService == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "arm-shaker-service")
+	}
 
-	return []string{cfg.Gripper, cfg.Position, cfg.Home}, []string{}, nil
+	return []string{cfg.Gripper, cfg.Position, cfg.Home, cfg.ArmShakerService}, []string{}, nil
 }
 
 type chefsKissControls struct {
@@ -52,9 +57,10 @@ type chefsKissControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	gripper  gripper.Gripper
-	position sw.Switch
-	home     sw.Switch
+	gripper          gripper.Gripper
+	position         sw.Switch
+	home             sw.Switch
+	armShakerService genericservice.Service
 }
 
 func newChefsKissControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -95,6 +101,12 @@ func NewChefsKissControls(ctx context.Context, deps resource.Dependencies, name 
 	}
 	s.home = homeSwitch
 
+	armShakerService, err := genericservice.FromProvider(deps, conf.ArmShakerService)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get arm-shaker-service '%s': %w", conf.ArmShakerService, err)
+	}
+	s.armShakerService = armShakerService
+
 	s.logger.Infof("Chefs kiss controls initialized")
 	return s, nil
 }
@@ -123,10 +135,22 @@ func (s *chefsKissControls) doChefsKiss(ctx context.Context) (map[string]interfa
 	}
 	s.logger.Debugf("Set position switch to position 2")
 
+	// slightl delay
+	time.Sleep(200 * time.Millisecond)
+
 	if err := s.gripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open gripper: %w", err)
 	}
 	s.logger.Debugf("Opened gripper")
+
+	if s.armShakerService != nil {
+		_, err := s.armShakerService.DoCommand(ctx, map[string]interface{}{
+			"shake_arm": true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to shake arm: %w", err)
+		}
+	}
 
 	if err := s.home.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set home switch to position 2: %w", err)

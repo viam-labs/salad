@@ -183,6 +183,12 @@ func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interfa
 func (s *dressingControls) doPourDressing(ctx context.Context) (map[string]interface{}, error) {
 	s.logger.Infof("Executing prepare_bowl")
 
+	// open gripper
+	if err := s.gripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open gripper: %w", err)
+	}
+	s.logger.Debugf("Opened gripper")
+
 	if err := s.grabDressing.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set grab-dressing switch to position 2: %w", err)
 	}
