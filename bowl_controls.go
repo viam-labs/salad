@@ -32,31 +32,31 @@ type BowlControlsConfig struct {
 
 func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error) {
 	if cfg.RightGripper == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-gripper")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightGripper)
 	}
 
 	if cfg.RightAboveBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-bowl")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightAboveBowl)
 	}
 
 	if cfg.RightAboveBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-bowl")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightAboveBowl)
 	}
 
 	if cfg.RightGrabBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-grab-bowl")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightGrabBowl)
 	}
 
 	if cfg.RightAboveDelivery == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-delivery")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightAboveDelivery)
 	}
 
 	if cfg.RightBowlDelivery == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-bowl-delivery")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightBowlDelivery)
 	}
 
 	if cfg.RightHome == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.RightHome)
 	}
 
 	requiredDeps := []string{}

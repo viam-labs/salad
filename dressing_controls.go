@@ -16,7 +16,7 @@ var DressingControls = resource.NewModel("ncs", "salad", "dressing-controls")
 func init() {
 	resource.RegisterService(genericservice.API, DressingControls,
 		resource.Registration[resource.Resource, *DressingControlsConfig]{
-			Constructor: newBowlControls,
+			Constructor: newDressingControls,
 		},
 	)
 }
@@ -34,36 +34,36 @@ type DressingControlsConfig struct {
 
 func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, error) {
 	if cfg.Gripper == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-gripper")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.Gripper)
 	}
 
 	if cfg.PrepareDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-bowl")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PrepareDressing)
 	}
 
 	if cfg.GrabDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "grab-dressing")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.GrabDressing)
 	}
 
 	if cfg.PourDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-grab-bowl")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PourDressing)
 	}
 
 	if cfg.PourDressing2 == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-delivery")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PourDressing2)
 	}
 	if cfg.PostPourDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "post-pour-dressing")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.PostPourDressing)
 	}
 
 	if cfg.Home == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-bowl-delivery")
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, cfg.Home)
 	}
 
 	requiredDeps := []string{}
 
 	requiredDeps = append(requiredDeps, cfg.Gripper)
-	requiredDeps = append(requiredDeps, cfg.PrepareDressing, cfg.GrabDressing, cfg.PourDressing, cfg.PourDressing2, cfg.Home)
+	requiredDeps = append(requiredDeps, cfg.PrepareDressing, cfg.GrabDressing, cfg.PourDressing, cfg.PourDressing2, cfg.Home, cfg.PostPourDressing)
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
 		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}

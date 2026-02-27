@@ -30,10 +30,11 @@ type BuildCoordinatorIngredientConfig struct {
 }
 
 type BuildCoordinatorConfig struct {
-	GrabberControls string                             `json:"grabber-controls"`
-	BowlControls    string                             `json:"bowl-controls"`
-	ScaleSensor     string                             `json:"scale-sensor"`
-	Ingredients     []BuildCoordinatorIngredientConfig `json:"ingredients"`
+	GrabberControls  string                             `json:"grabber-controls"`
+	BowlControls     string                             `json:"bowl-controls"`
+	ScaleSensor      string                             `json:"scale-sensor"`
+	Ingredients      []BuildCoordinatorIngredientConfig `json:"ingredients"`
+	DressingControls string                             `json:"dressing-controls"`
 }
 
 func init() {
@@ -54,11 +55,14 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.ScaleSensor == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "scale-sensor")
 	}
+	if cfg.DressingControls == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dressing-controls")
+	}
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor}
+	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -98,9 +102,10 @@ type buildCoordinator struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	grabberControls resource.Resource
-	bowlControls    resource.Resource
-	scaleSensor     sensor.Sensor
+	grabberControls      resource.Resource
+	bowlControls         resource.Resource
+	scaleSensor          sensor.Sensor
+	dressingControls     resource.Resource
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 
@@ -123,14 +128,14 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 
 	s := &buildCoordinator{
-		name:            name,
-		logger:          logger,
-		cfg:             conf,
-		cancelCtx:       cancelCtx,
-		cancelFunc:      cancelFunc,
+		name:                 name,
+		logger:               logger,
+		cfg:                  conf,
+		cancelCtx:            cancelCtx,
+		cancelFunc:           cancelFunc,
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
-		status:          "idle",
+		status:               "idle",
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -144,6 +149,12 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("bowl controls service %q not found in dependencies", conf.BowlControls)
 	}
 	s.bowlControls = bowlControls
+
+	dressingControls, ok := deps[genericservice.Named(conf.DressingControls)]
+	if !ok {
+		return nil, fmt.Errorf("dressing controls service %q not found in dependencies", conf.DressingControls)
+	}
+	s.dressingControls = dressingControls
 
 	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
@@ -213,9 +224,9 @@ func (s *buildCoordinator) listIngredients() map[string]interface{} {
 	ingredients := make([]interface{}, 0, len(s.cfg.Ingredients))
 	for _, ing := range s.cfg.Ingredients {
 		ingredients = append(ingredients, map[string]interface{}{
-			"name":             ing.Name,
+			"name":              ing.Name,
 			"grams_per_serving": ing.GramsPerServing,
-			"category":         ing.Category,
+			"category":          ing.Category,
 		})
 	}
 	return map[string]interface{}{
@@ -373,11 +384,15 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 		s.updateStatus(fmt.Sprintf("adding %s", target.name), completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
+		if target.category == "dressing" {
+			if err := s.addDressing(ctx); err != nil {
+				s.logger.Errorf("Failed to add dressing: %v", err)
+				continue
+			}
+			continue
+		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
-			return map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("Failed to add ingredient %q: %v", target.name, err),
-			}, nil
+			continue
 		}
 		completedServings += target.servings
 	}
@@ -428,6 +443,16 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 }
 
 const zeroChangeTolerance = 0.5 // grams
+
+func (s *buildCoordinator) addDressing(ctx context.Context) error {
+	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
+		"pour_dressing": true,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to pour dressing: %w", err)
+	}
+	return nil
+}
 
 func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targetGrams float64) error {
 	var totalAdded float64
