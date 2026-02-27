@@ -154,7 +154,64 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 	if _, ok := cmd["deliver_bowl"]; ok {
 		return s.doDeliverBowl(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'deliver_bowl' field")
+	if _, ok := cmd["reset"]; ok {
+		return s.reset(ctx)
+	}
+	if _, ok := cmd["prepare_bowl"]; ok {
+		return s.doPrepareBowl(ctx)
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', or 'reset' field")
+}
+
+func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{}, error) {
+	s.logger.Infof("Executing prepare_bowl")
+
+	if err := s.rightAboveDelivery.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-above-delivery switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set right-above-delivery switch to position 2")
+
+	if err := s.rightBowlDelivery.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-bowl-delivery switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set right-bowl-delivery switch to position 2")
+
+	if _, err := s.rightGripper.Grab(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to close right gripper: %w", err)
+	}
+	s.logger.Debugf("Closed right gripper")
+
+	if err := s.rightAboveDelivery.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-above-delivery switch to position 2 (second time): %w", err)
+	}
+	s.logger.Debugf("Set right-above-delivery switch to position 2 (second time)")
+
+	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set right-above-bowl switch to position 2")
+
+	if err := s.rightGrabBowl.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-grab-bowl switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set right-grab-bowl switch to position 2")
+
+	if err := s.rightGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open right gripper: %w", err)
+	}
+	s.logger.Debugf("Opened right gripper")
+
+	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2 (second time): %w", err)
+	}
+	s.logger.Debugf("Set right-above-bowl switch to position 2 (second time)")
+
+	s.logger.Infof("Successfully completed prepare_bowl")
+
+	return map[string]interface{}{
+		"success": true,
+		"message": "Successfully prepared bowl",
+	}, nil
 }
 
 func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{}, error) {
@@ -195,9 +252,6 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Opened right gripper")
 
-	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
-	}
 	s.logger.Debugf("Set right-home switch to position 2")
 
 	s.logger.Infof("Successfully completed deliver_bowl")
@@ -206,6 +260,15 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 		"success": true,
 		"message": "Successfully delivered bowl",
 	}, nil
+}
+
+func (s *bowlControls) reset(ctx context.Context) (map[string]interface{}, error) {
+	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set right-home switch to position 2")
+
+	return nil, nil
 }
 
 func (s *bowlControls) Close(context.Context) error {

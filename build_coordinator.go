@@ -20,8 +20,9 @@ type BuildCoordinatorIngredientConfig struct {
 
 type BuildCoordinatorConfig struct {
 	GrabberControls string                             `json:"grabber-controls"`
+	BowlControls    string                             `json:"bowl-controls"`
 	ScaleSensor     string                             `json:"scale-sensor"`
-	Ingredients     []BuildCoordinatorIngredientConfig  `json:"ingredients"`
+	Ingredients     []BuildCoordinatorIngredientConfig `json:"ingredients"`
 }
 
 func init() {
@@ -36,6 +37,9 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.GrabberControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "grabber-controls")
 	}
+	if cfg.BowlControls == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bowl-controls")
+	}
 	if cfg.ScaleSensor == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "scale-sensor")
 	}
@@ -43,7 +47,7 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.ScaleSensor}
+	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -73,6 +77,7 @@ type buildCoordinator struct {
 	cancelFunc func()
 
 	grabberControls resource.Resource
+	bowlControls    resource.Resource
 	scaleSensor     sensor.Sensor
 	ingredients     map[string]float64 // name -> grams per serving
 
@@ -108,7 +113,13 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.grabberControls = grabber
 
-	scale, err := sensor.FromDependencies(deps, conf.ScaleSensor)
+	bowlControls, ok := deps[genericservice.Named(conf.BowlControls)]
+	if !ok {
+		return nil, fmt.Errorf("bowl controls service %q not found in dependencies", conf.BowlControls)
+	}
+	s.bowlControls = bowlControls
+
+	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scale sensor %q: %w", conf.ScaleSensor, err)
 	}
@@ -161,6 +172,16 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 		return nil, fmt.Errorf("build_salad requires at least one ingredient")
 	}
 
+	result, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		"prepare_bowl": true,
+	})
+	if err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to prepare bowl: %v", err),
+		}, nil
+	}
+
 	type ingredientTarget struct {
 		name        string
 		servings    float64
@@ -208,10 +229,19 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 		}
 		completedServings += target.servings
 	}
+	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
+		"reset": true,
+	})
+	if err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
+		}, nil
+	}
 
 	s.updateStatus("delivering salad", completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added, delivering bowl")
-	result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
+	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 		"deliver_bowl": true,
 	})
 	if err != nil {
@@ -228,6 +258,15 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 		}, nil
 	}
 
+	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		"reset": true,
+	})
+	if err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
+		}, nil
+	}
 	s.updateStatus("complete", 100)
 
 	return map[string]interface{}{
@@ -272,10 +311,8 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 		if change < zeroChangeTolerance {
 			zeroChangeStreak++
 			if zeroChangeStreak >= 3 {
-				return fmt.Errorf(
-					"3 consecutive grabs with no weight change for ingredient %q, possible empty bin",
-					name,
-				)
+				s.logger.Errorf("3 consecutive grabs with no weight change for ingredient %q, possible empty bin", name)
+				break
 			}
 			s.logger.Warnf("No weight change detected for %q (streak: %d/3)", name, zeroChangeStreak)
 		} else {

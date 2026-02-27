@@ -26,6 +26,12 @@
     },
     {
       "api": "rdk:service:generic",
+      "model": "ncs:salad:bowl-controls",
+      "markdown_link": "README.md#bowl-controls",
+      "short_description": "controls grippers and bowl switches for delivering bowls"
+    },
+    {
+      "api": "rdk:service:generic",
       "model": "ncs:salad:grabber-controls",
       "markdown_link": "README.md#grabber-controls",
       "short_description": "controls grippers and bin switches for grabbing ingredients and delivering bowls"
@@ -47,11 +53,6 @@
     "build": "make module.tar.gz",
     "setup": "make setup",
     "path": "module.tar.gz",
-    "arch": [
-      "linux/amd64",
-      "linux/arm64",
-      "darwin/arm64",
-      "windows/amd64"
-    ]
+    "arch": ["linux/amd64", "linux/arm64", "darwin/arm64", "windows/amd64"]
   }
 }

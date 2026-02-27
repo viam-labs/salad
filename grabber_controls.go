@@ -62,6 +62,7 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 	requiredDeps = append(requiredDeps, cfg.HighAboveBowl)
 	requiredDeps = append(requiredDeps, cfg.LeftGripper)
 	requiredDeps = append(requiredDeps, cfg.LeftHome)
+	requiredDeps = append(requiredDeps, cfg.InBowl)
 
 	for i, bin := range cfg.Bins {
 		if bin.Name == "" {
@@ -177,6 +178,9 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 	if _, ok := cmd["get_from_bin"]; ok {
 		return s.doGetFromBin(ctx, cmd)
 	}
+	if _, ok := cmd["reset"]; ok {
+		return s.reset(ctx)
+	}
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'deliver_bowl' field")
 }
 
@@ -230,11 +234,6 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Opened left gripper")
 
-	if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set left-home switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set left-home switch to position 2")
-
 	s.logger.Infof("Successfully completed get_from_bin for bin '%s'", binName)
 
 	return map[string]interface{}{
@@ -242,6 +241,15 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		"bin":     binName,
 		"message": fmt.Sprintf("Successfully grabbed from bin '%s' and moved to bowl", binName),
 	}, nil
+}
+
+func (s *grabberControls) reset(ctx context.Context) (map[string]interface{}, error) {
+	if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set left-home switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set left-home switch to position 2")
+
+	return nil, nil
 }
 
 func (s *grabberControls) Close(context.Context) error {
