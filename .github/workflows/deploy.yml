@@ -1,3 +1,4 @@
+# see https://github.com/viamrobotics/build-action for help
 on:
   push:
     tags:
@@ -5,74 +6,18 @@ on:
       - "v?[0-9]+.[0-9]+.[0-9]+"
       - "v?[0-9]+.[0-9]+.[0-9]+-rc[0-9]+"
 
+
 jobs:
-  build-frontend:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: viamrobotics/build-action@v1
         with:
-          node-version: 20
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: dist/
-
-  publish:
-    needs: build-frontend
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            cgo: true
-          - platform: linux/arm64
-            runner: ubuntu-latest
-            cgo: true
-            cross_compiler: aarch64-linux-gnu-gcc
-          - platform: darwin/arm64
-            runner: macos-latest
-            cgo: true
-          - platform: windows/amd64
-            runner: ubuntu-latest
-            cgo: false
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: frontend-dist
-          path: dist/
-
-      - name: Install cross-compiler
-        if: matrix.cross_compiler
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Build module
-        run: |
-          PLATFORM="${{ matrix.platform }}"
-          export VIAM_BUILD_OS="${PLATFORM%/*}"
-          export VIAM_BUILD_ARCH="${PLATFORM#*/}"
-          if [ "${{ matrix.cgo }}" = "true" ]; then
-            export CGO_ENABLED=1
-          else
-            export CGO_ENABLED=0
-            export VIAM_TARGET_OS=windows
-          fi
-          if [ -n "${{ matrix.cross_compiler }}" ]; then
-            export CC="${{ matrix.cross_compiler }}"
-          fi
-          make module.tar.gz
-
-      - uses: viamrobotics/upload-module@main
-        with:
-          platform: ${{ matrix.platform }}
+          # note: you can replace this line with 'version: ""' if
+          # you want to test the build process without deploying
           version: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           key-id: ${{ secrets.viam_key_id }}
           key-value: ${{ secrets.viam_key_value }}
+          token: ${{ github.token }} # only required for private git repos
