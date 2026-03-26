@@ -22,20 +22,33 @@ jobs:
 
   publish:
     needs: build-frontend
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-          - darwin/arm64
-          - windows/amd64
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            cgo: true
+          - platform: linux/arm64
+            runner: ubuntu-latest
+            cgo: true
+            cross_compiler: aarch64-linux-gnu-gcc
+          - platform: darwin/arm64
+            runner: macos-latest
+            cgo: true
+          - platform: windows/amd64
+            runner: ubuntu-latest
+            cgo: false
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: dist/
+
+      - name: Install cross-compiler
+        if: matrix.cross_compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - uses: actions/setup-go@v5
         with:
@@ -46,10 +59,15 @@ jobs:
           PLATFORM="${{ matrix.platform }}"
           export VIAM_BUILD_OS="${PLATFORM%/*}"
           export VIAM_BUILD_ARCH="${PLATFORM#*/}"
-          if [ "$VIAM_BUILD_OS" = "windows" ]; then
+          if [ "${{ matrix.cgo }}" = "true" ]; then
+            export CGO_ENABLED=1
+          else
+            export CGO_ENABLED=0
             export VIAM_TARGET_OS=windows
           fi
-          export CGO_ENABLED=0
+          if [ -n "${{ matrix.cross_compiler }}" ]; then
+            export CC="${{ matrix.cross_compiler }}"
+          fi
           make module.tar.gz
 
       - uses: viamrobotics/upload-module@main
