@@ -32,7 +32,7 @@ module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html
 ifneq ($(VIAM_TARGET_OS), windows)
 	strip $(MODULE_BINARY)
 endif
-	tar czf $@ meta.json $(MODULE_BINARY) dist
+	tar czf $@ meta.json $(MODULE_BINARY) dist/
 
 module: test module.tar.gz
 

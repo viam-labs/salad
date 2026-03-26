@@ -1,4 +1,3 @@
-# see https://github.com/viamrobotics/build-action for help
 on:
   push:
     tags:
@@ -6,18 +5,56 @@ on:
       - "v?[0-9]+.[0-9]+.[0-9]+"
       - "v?[0-9]+.[0-9]+.[0-9]+-rc[0-9]+"
 
-
 jobs:
-  publish:
+  build-frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: viamrobotics/build-action@v1
+      - uses: actions/setup-node@v4
         with:
-          # note: you can replace this line with 'version: ""' if
-          # you want to test the build process without deploying
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+
+  publish:
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+          - darwin/arm64
+          - windows/amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build module
+        run: |
+          PLATFORM="${{ matrix.platform }}"
+          export VIAM_BUILD_OS="${PLATFORM%/*}"
+          export VIAM_BUILD_ARCH="${PLATFORM#*/}"
+          if [ "$VIAM_BUILD_OS" = "windows" ]; then
+            export VIAM_TARGET_OS=windows
+          fi
+          export CGO_ENABLED=0
+          make module.tar.gz
+
+      - uses: viamrobotics/upload-module@main
+        with:
+          platform: ${{ matrix.platform }}
           version: ${{ github.ref_name }}
-          ref: ${{ github.sha }}
           key-id: ${{ secrets.viam_key_id }}
           key-value: ${{ secrets.viam_key_value }}
-          token: ${{ github.token }} # only required for private git repos
