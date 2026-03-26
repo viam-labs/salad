@@ -56,3 +56,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+downloads/*
+output/*

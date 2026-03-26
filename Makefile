@@ -12,6 +12,11 @@ endif
 $(MODULE_BINARY): Makefile go.mod *.go cmd/module/*.go 
 	GOOS=$(VIAM_BUILD_OS) GOARCH=$(VIAM_BUILD_ARCH) $(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(MODULE_BINARY) cmd/module/main.go
 
+bin/salad-cli: go.mod cmd/cli/*.go
+	go build -o bin/salad-cli ./cmd/cli
+
+cli: bin/salad-cli
+
 lint:
 	gofmt -s -w .
 
