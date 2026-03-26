@@ -36,6 +36,7 @@ type BuildCoordinatorConfig struct {
 	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
+	Printer           string                             `json:"printer"`
 }
 
 func init() {
@@ -65,8 +66,11 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
+	if cfg.Printer == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "printer")
+	}
 
-	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
+	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls, cfg.Printer}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -113,6 +117,7 @@ type buildCoordinator struct {
 	dressingControls     resource.Resource
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
+	printer              resource.Resource
 
 	mu              sync.RWMutex
 	status          string
@@ -180,6 +185,13 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
+
+	printer, err := sensor.FromProvider(deps, conf.Printer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get printer %q: %w", conf.Printer, err)
+	}
+	s.printer = printer
+
 	return s, nil
 }
 
@@ -461,6 +473,13 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 				s.logger.Errorf("Failed to add dressing: %v", err)
 			}
 		}
+	}
+
+	// Print customer name on sticker
+	if _, err := s.printer.DoCommand(ctx, map[string]interface{}{
+		"text": s.customerName,
+	}); err != nil {
+		s.logger.Errorf("Failed to print name: %v", err)
 	}
 
 	// chefs kiss
