@@ -47,8 +47,12 @@ export async function fetchIngredients(): Promise<Ingredient[]> {
 
 export async function buildSalad(
   payload: Record<string, number>,
+  customerName?: string,
 ): Promise<void> {
-  await coordinator.doCommand({ build_salad: payload });
+  await coordinator.doCommand({
+    build_salad: payload,
+    ...(customerName ? { customer_name: customerName } : {}),
+  });
 }
 
 export async function getStatus(): Promise<{

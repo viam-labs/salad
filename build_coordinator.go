@@ -66,7 +66,7 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls}
+	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -117,6 +117,7 @@ type buildCoordinator struct {
 	mu              sync.RWMutex
 	status          string
 	progress        float64
+	customerName    string
 	buildCancelFunc func()
 	buildDone       chan struct{}
 }
@@ -188,7 +189,8 @@ func (s *buildCoordinator) Name() resource.Name {
 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
-		return s.doBuildSalad(ctx, val)
+		customerName, _ := cmd["customer_name"].(string)
+		return s.doBuildSalad(ctx, val, customerName)
 	}
 	if _, ok := cmd["stop"]; ok {
 		return s.doStop()
@@ -226,8 +228,9 @@ func (s *buildCoordinator) getStatus() map[string]interface{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return map[string]interface{}{
-		"status":   s.status,
-		"progress": s.progress,
+		"status":        s.status,
+		"progress":      s.progress,
+		"customer_name": s.customerName,
 	}
 }
 
@@ -268,7 +271,7 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	}, nil
 }
 
-func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) (map[string]interface{}, error) {
+func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
 	s.mu.Lock()
 	if s.buildCancelFunc != nil {
@@ -283,13 +286,19 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}) 
 	s.buildDone = make(chan struct{})
 	s.status = "preparing"
 	s.progress = 0
+	s.customerName = customerName
 	s.mu.Unlock()
 
-	s.logger.Infof("New salad order received: %v", value)
+	if customerName != "" {
+		s.logger.Infof("New salad order received for %q: %v", customerName, value)
+	} else {
+		s.logger.Infof("New salad order received: %v", value)
+	}
 
 	defer func() {
 		s.mu.Lock()
 		s.buildCancelFunc = nil
+		s.customerName = ""
 		close(s.buildDone)
 		s.buildDone = nil
 		s.mu.Unlock()

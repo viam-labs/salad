@@ -9,6 +9,7 @@
   let screen: AppScreen = $state("loading");
   let ingredients: Ingredient[] = $state([]);
   let order: Record<string, number> = $state({});
+  let customerName = $state("");
   let error = $state("");
   let showCamera = $state(false);
 
@@ -30,8 +31,9 @@
     }
   });
 
-  function handleBuild(newOrder: Record<string, number>) {
+  function handleBuild(newOrder: Record<string, number>, name: string) {
     order = newOrder;
+    customerName = name;
     screen = "building";
   }
 
@@ -85,7 +87,7 @@
 {:else if screen === "ordering"}
   <OrderingScreen {ingredients} onBuild={handleBuild} />
 {:else if screen === "building"}
-  <BuildingScreen {order} onComplete={handleComplete} onStopped={handleNewOrder} />
+  <BuildingScreen {order} {customerName} onComplete={handleComplete} onStopped={handleNewOrder} />
 {:else if screen === "complete"}
-  <CompleteScreen onNewOrder={handleNewOrder} />
+  <CompleteScreen {customerName} onNewOrder={handleNewOrder} />
 {/if}
