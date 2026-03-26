@@ -235,7 +235,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 	t0 = time.Now()
 	croppedPath := filepath.Join(outputDir, "cropped.pcd")
 	cropped, err := cropPointCloud(filtered, CropBounds{
-		MinX: 500, MaxX: 1000,
+		MinX: 550, MaxX: 1000,
 		MinY: -math.MaxFloat64, MaxY: 1650,
 		MinZ: -math.MaxFloat64, MaxZ: math.MaxFloat64,
 	})
