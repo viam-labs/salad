@@ -132,6 +132,141 @@ Picks up the bowl and delivers it.
 }
 ```
 
+## bowl-controls
+
+Controls the right gripper and switches for preparing and delivering bowls.
+
+### config
+```
+{
+    // required - right gripper for grabbing/delivering bowl
+    "right-gripper" : "<gripper>",
+
+    // required - switch to position right arm above bowl
+    "right-above-bowl" : "<switch>",
+
+    // required - switch to lower right arm to grab bowl
+    "right-grab-bowl" : "<switch>",
+
+    // required - switch to position right arm above delivery
+    "right-above-delivery" : "<switch>",
+
+    // required - switch to lower right arm for delivery
+    "right-bowl-delivery" : "<switch>",
+
+    // required - switch to send right arm home
+    "right-home" : "<switch>"
+}
+```
+
+### DoCommand
+
+#### deliver_bowl
+Picks up the bowl and delivers it.
+```
+{
+    "deliver_bowl" : true
+}
+```
+
+#### prepare_bowl
+Fetches a bowl from delivery and places it under the ingredient area.
+```
+{
+    "prepare_bowl" : true
+}
+```
+
+#### reset
+Sends the right arm home.
+```
+{
+    "reset" : true
+}
+```
+
+## dressing-controls
+
+Controls the gripper and switches for pouring dressing onto the salad.
+
+### config
+```
+{
+    // required - gripper for grabbing the dressing container
+    "gripper" : "<gripper>",
+
+    // required - switch to prepare dressing position
+    "prepare-dressing" : "<switch>",
+
+    // required - switch to grab the dressing container
+    "grab-dressing" : "<switch>",
+
+    // required - switch to pour dressing
+    "pour-dressing" : "<switch>",
+
+    // required - switch for second pour position
+    "pour-dressing2" : "<switch>",
+
+    // required - switch for post-pour position
+    "post-pour-dressing" : "<switch>",
+
+    // required - switch to send arm home
+    "home" : "<switch>",
+
+    // optional - generic service to shake the arm while pouring
+    "shake-arm-service" : "<generic service>"
+}
+```
+
+### DoCommand
+
+#### pour_dressing
+Grabs the dressing container, pours dressing over the bowl, then returns the container and sends the arm home.
+```
+{
+    "pour_dressing" : true
+}
+```
+
+#### reset
+Sends the arm home.
+```
+{
+    "reset" : true
+}
+```
+
+## chefs-kiss-controls
+
+Controls the gripper and switches for performing a chef's kiss seasoning action over the bowl.
+
+### config
+```
+{
+    // required - switch to position the arm over the bowl
+    "position" : "<switch>",
+
+    // required - gripper for grabbing seasoning
+    "gripper" : "<gripper>",
+
+    // required - switch to send arm home
+    "home" : "<switch>",
+
+    // required - generic service to shake the arm
+    "arm-shaker-service" : "<generic service>"
+}
+```
+
+### DoCommand
+
+#### chefs_kiss
+Grabs seasoning, positions over the bowl, opens gripper, shakes arm, then returns home.
+```
+{
+    "chefs_kiss" : true
+}
+```
+
 ## passthrough-to-camera
 
 Vision service that passes through point clouds from a camera.
