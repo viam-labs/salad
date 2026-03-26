@@ -286,7 +286,6 @@ func retryOnDisconnect(fn func() error, logger logging.Logger) error {
 	return fmt.Errorf("failed after %d retries due to disconnection", maxRetries)
 }
 
-// waitAndGetSwitch retries fetching a switch component on disconnection errors.
 func waitAndGetSwitch(ctx context.Context, robotClient *client.RobotClient, name string, logger logging.Logger) (toggleswitch.Switch, error) {
 	const maxRetries = 3
 	for attempt := range maxRetries {
