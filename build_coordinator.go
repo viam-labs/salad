@@ -36,6 +36,7 @@ type BuildCoordinatorConfig struct {
 	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
+	TextToSpeech      string                             `json:"text-to-speech"`
 }
 
 func init() {
@@ -62,11 +63,14 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.ChefsKissControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "chefs-kiss-controls")
 	}
+	if cfg.TextToSpeech == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "text-to-speech")
+	}
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
+	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls, cfg.TextToSpeech}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -111,6 +115,7 @@ type buildCoordinator struct {
 	chefsKissControls    resource.Resource
 	scaleSensor          sensor.Sensor
 	dressingControls     resource.Resource
+	textToSpeech         resource.Resource
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 
@@ -167,6 +172,12 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("chefs kiss controls service %q not found in dependencies", conf.ChefsKissControls)
 	}
 	s.chefsKissControls = chefsKissControls
+
+	textToSpeech, ok := deps[genericservice.Named(conf.TextToSpeech)]
+	if !ok {
+		return nil, fmt.Errorf("text-to-speech service %q not found in dependencies", conf.TextToSpeech)
+	}
+	s.textToSpeech = textToSpeech
 
 	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
@@ -315,6 +326,16 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 			"success": false,
 			"message": "Build stopped",
 		}, nil
+	}
+
+	if err == nil {
+		msg := "Your salad is ready!"
+		if customerName != "" {
+			msg = customerName + "'s salad is ready!"
+		}
+		if _, ttsErr := s.textToSpeech.DoCommand(buildCtx, map[string]interface{}{"say": msg}); ttsErr != nil {
+			s.logger.Errorw("text-to-speech announcement failed", "err", ttsErr)
+		}
 	}
 
 	return result, err
