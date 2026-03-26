@@ -51,10 +51,11 @@ type FilterFlags struct {
 }
 
 type MeshifyFlags struct {
-	InputPath   string
-	OutputPath  string
-	VoxelMM     float64
-	SmoothIters int
+	InputPath     string
+	OutputPath    string
+	KDTreeKNN     int
+	OrientNN      int
+	LODMultiplier int
 }
 
 type CropFlags struct {
@@ -158,8 +159,9 @@ func init() {
 
 	meshifyCmd.Flags().StringVar(&meshifyFlags.InputPath, "input", "", "input PCD file (required)")
 	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (required)")
-	meshifyCmd.Flags().Float64Var(&meshifyFlags.VoxelMM, "voxel", 8.0, "voxel size in mm (larger = blockier but faster)")
-	meshifyCmd.Flags().IntVar(&meshifyFlags.SmoothIters, "smooth-iters", 5, "Laplacian smoothing iterations (0 = off)")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 30, "KNN for normal estimation")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.OrientNN, "orient-nn", 50, "KNN for normal orientation")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.LODMultiplier, "lod-multiplier", 600, "level of detail multiplier")
 	_ = meshifyCmd.MarkFlagRequired("input")
 	_ = meshifyCmd.MarkFlagRequired("output")
 
