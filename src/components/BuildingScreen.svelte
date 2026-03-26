@@ -4,11 +4,12 @@
 
   interface Props {
     order: Record<string, number>;
+    customerName: string;
     onComplete: () => void;
     onStopped: () => void;
   }
 
-  let { order, onComplete, onStopped }: Props = $props();
+  let { order, customerName, onComplete, onStopped }: Props = $props();
 
   let status = $state("Starting\u2026");
   let progress = $state(0);
@@ -20,7 +21,7 @@
     for (const [name, count] of Object.entries(order)) {
       if (count > 0) payload[name] = count;
     }
-    buildSalad(payload).catch((err) =>
+    buildSalad(payload, customerName).catch((err) =>
       console.error("build_salad error:", err),
     );
 
@@ -58,7 +59,7 @@
 </script>
 
 <div class="building-screen">
-  <h1>Building Your Salad&hellip;</h1>
+  <h1>{customerName ? `Building ${customerName}'s Salad\u2026` : "Building Your Salad\u2026"}</h1>
   <div class="progress-container">
     <div class="status-text">{status}</div>
     <div class="progress-bar-bg">

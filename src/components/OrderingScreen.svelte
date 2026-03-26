@@ -5,12 +5,13 @@
 
   interface Props {
     ingredients: Ingredient[];
-    onBuild: (order: Record<string, number>) => void;
+    onBuild: (order: Record<string, number>, name: string) => void;
   }
 
   let { ingredients, onBuild }: Props = $props();
 
   let order: Record<string, number> = $state({});
+  let customerName = $state("");
 
   let totalItems = $derived(
     Object.values(order).reduce((sum, n) => sum + n, 0),
@@ -43,13 +44,24 @@
 
   function handleBuild() {
     if (totalItems > 0) {
-      onBuild({ ...order });
+      onBuild({ ...order }, customerName.trim());
     }
   }
 </script>
 
 <div class="ordering-screen">
   <h1>Build Your Salad</h1>
+  <div class="name-card">
+    <label class="name-label" for="customer-name">What's your name?</label>
+    <input
+      id="customer-name"
+      class="name-input"
+      type="text"
+      placeholder="e.g. Viam"
+      maxlength="40"
+      bind:value={customerName}
+    />
+  </div>
 
   {#each categoryOrder as cat (cat)}
     {@const items = grouped[cat]}
