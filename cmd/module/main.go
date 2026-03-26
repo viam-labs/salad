@@ -10,7 +10,6 @@ import (
 )
 
 func main() {
-	// ModularMain can take multiple APIModel arguments, if your module implements multiple models.
 	module.ModularMain(
 		resource.APIModel{API: vision.API, Model: salad.PassthroughToCamera},
 		resource.APIModel{API: vision.API, Model: salad.FileVision},
@@ -19,5 +18,6 @@ func main() {
 		resource.APIModel{API: genericservice.API, Model: salad.BowlControls},
 		resource.APIModel{API: genericservice.API, Model: salad.DressingControls},
 		resource.APIModel{API: genericservice.API, Model: salad.ChefsKissControls},
+		resource.APIModel{API: genericservice.API, Model: salad.SupplyDetector},
 	)
 }
