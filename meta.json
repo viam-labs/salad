@@ -57,7 +57,13 @@
       "model": "ncs:salad:file-vision",
       "markdown_link": "README.md#file-vision",
       "short_description": "vision service that returns a 3D mesh from a PLY file"
-    }
+    },
+    {
+  "api": "rdk:service:generic",
+  "model": "ncs:salad:supply-detector",
+  "markdown_link": "README.md#supply-detector",
+  "short_description": "detects ingredient supply level from overhead camera ROIs"
+}
   ],
   "build": {
     "build": "make module.tar.gz",
