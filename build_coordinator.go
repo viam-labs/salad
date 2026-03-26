@@ -63,14 +63,14 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.ChefsKissControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "chefs-kiss-controls")
 	}
-	if cfg.TextToSpeech == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "text-to-speech")
-	}
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls, cfg.TextToSpeech}
+	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
+	if cfg.TextToSpeech != "" {
+		deps = append(deps, cfg.TextToSpeech)
+	}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -173,11 +173,13 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.chefsKissControls = chefsKissControls
 
-	textToSpeech, ok := deps[genericservice.Named(conf.TextToSpeech)]
-	if !ok {
-		return nil, fmt.Errorf("text-to-speech service %q not found in dependencies", conf.TextToSpeech)
+	if conf.TextToSpeech != "" {
+		textToSpeech, ok := deps[genericservice.Named(conf.TextToSpeech)]
+		if !ok {
+			return nil, fmt.Errorf("text-to-speech service %q not found in dependencies", conf.TextToSpeech)
+		}
+		s.textToSpeech = textToSpeech
 	}
-	s.textToSpeech = textToSpeech
 
 	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
@@ -328,7 +330,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		}, nil
 	}
 
-	if err == nil {
+	if err == nil && s.textToSpeech != nil {
 		msg := "Your salad is ready!"
 		if customerName != "" {
 			msg = customerName + "'s salad is ready!"
