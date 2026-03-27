@@ -79,6 +79,7 @@ var (
 	filterFlags  FilterFlags
 	meshifyFlags MeshifyFlags
 	cropFlags    CropFlags
+	grabFlags    GrabFlags
 )
 
 var rootCmd = &cobra.Command{
@@ -126,6 +127,27 @@ var cropCmd = &cobra.Command{
 	Short: "Crop a PCD file to an axis-aligned bounding box",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCrop(cropFlags)
+	},
+}
+
+var grabCmd = &cobra.Command{
+	Use:   "grab-test",
+	Short: "Move arm to ingredient centroid in a bin using its snapshot point cloud",
+	Long: `Moves to the imaging position above the specified bin, captures its point cloud,
+computes the centroid of the ingredient mass, then moves the arm to that position.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runGrab(globalAddress, globalAPIKey, globalAPIKeyID, grabFlags)
+	},
+}
+
+var addIngredientCmd = &cobra.Command{
+	Use:   "add-ingredient",
+	Short: "Repeatedly grab from a bin and deliver to the bowl until target weight is reached",
+	Long: `Loops: moves to bin imaging (switch), computes descent from the mesh, grabs, ascends,
+moves to bowl hover and bowl drop via motion (no linear fragments), opens the gripper, retreats to hover,
+then reads the scale. Repeats until the target grams have been added or 3 consecutive empty grabs are detected.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAddIngredient(globalAddress, globalAPIKey, globalAPIKeyID, grabFlags)
 	},
 }
 
@@ -180,12 +202,38 @@ func init() {
 	_ = cropCmd.MarkFlagRequired("input")
 	_ = cropCmd.MarkFlagRequired("output")
 
+	grabCmd.Flags().IntVar(&grabFlags.Bin, "bin", 0, "bin number (0-5)")
+	grabCmd.Flags().StringVar(&grabFlags.ArmName, "arm", "left-arm", "arm component name")
+	grabCmd.Flags().StringVar(&grabFlags.CamName, "camera", "left-downsample-cam", "camera to capture point cloud from (captured live at imaging position)")
+	grabCmd.Flags().StringVar(&grabFlags.MeshFile, "mesh", "", "path to PLY mesh file (required)")
+	_ = grabCmd.MarkFlagRequired("mesh")
+	grabCmd.Flags().StringVar(&grabFlags.OutputDir, "output", "", "output directory (default: output/<timestamp>)")
+	grabCmd.Flags().Float64Var(&grabFlags.StepMM, "z-step", 40, "maximum Z change per move in mm when descending to target")
+
+	addIngredientCmd.Flags().IntVar(&grabFlags.Bin, "bin", 0, "bin number (0-5)")
+	addIngredientCmd.Flags().StringVar(&grabFlags.ArmName, "arm", "left-arm", "arm component name")
+	addIngredientCmd.Flags().StringVar(&grabFlags.MeshFile, "mesh", "", "path to PLY mesh file (required)")
+	_ = addIngredientCmd.MarkFlagRequired("mesh")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.StepMM, "z-step", 40, "maximum Z change per move in mm when descending to target")
+	addIngredientCmd.Flags().StringVar(&grabFlags.GripperName, "gripper", "left-position-gripper", "gripper component name")
+	addIngredientCmd.Flags().StringVar(&grabFlags.ScaleName, "scale", "scale", "scale sensor component name")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.TargetGrams, "target-grams", 0, "grams to add (required)")
+	_ = addIngredientCmd.MarkFlagRequired("target-grams")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlHoverX, "bowl-x", 339, "bowl hover position X in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlHoverY, "bowl-y", 469, "bowl hover position Y in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlHoverZ, "bowl-z", 617, "bowl hover position Z in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlDropX, "bowl-drop-x", 339, "bowl drop position X in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlDropY, "bowl-drop-y", 469, "bowl drop position Y in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlDropZ, "bowl-drop-z", 560, "bowl drop position Z in world frame (mm, typically lower than hover)")
+
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(framesCmd)
+	rootCmd.AddCommand(grabCmd)
+	rootCmd.AddCommand(addIngredientCmd)
 }
 
 func main() {
