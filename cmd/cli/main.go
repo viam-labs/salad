@@ -143,9 +143,9 @@ computes the centroid of the ingredient mass, then moves the arm to that positio
 var addIngredientCmd = &cobra.Command{
 	Use:   "add-ingredient",
 	Short: "Repeatedly grab from a bin and deliver to the bowl until target weight is reached",
-	Long: `Loops: moves to the imaging position, computes descent target from the mesh,
-descends, grabs, ascends, delivers to the bowl, and checks the scale.
-Repeats until the target grams have been added or 3 consecutive empty grabs are detected.`,
+	Long: `Loops: moves to bin imaging (switch), computes descent from the mesh, grabs, ascends,
+moves to bowl hover and bowl drop via motion (no linear fragments), opens the gripper, retreats to hover,
+then reads the scale. Repeats until the target grams have been added or 3 consecutive empty grabs are detected.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAddIngredient(globalAddress, globalAPIKey, globalAPIKeyID, grabFlags)
 	},
@@ -219,8 +219,12 @@ func init() {
 	addIngredientCmd.Flags().StringVar(&grabFlags.ScaleName, "scale", "scale", "scale sensor component name")
 	addIngredientCmd.Flags().Float64Var(&grabFlags.TargetGrams, "target-grams", 0, "grams to add (required)")
 	_ = addIngredientCmd.MarkFlagRequired("target-grams")
-	addIngredientCmd.Flags().StringVar(&grabFlags.HighAboveBowlSwitch, "high-above-bowl", "tongs-above-bowl", "switch name for high-above-bowl position")
-	addIngredientCmd.Flags().StringVar(&grabFlags.InBowlSwitch, "in-bowl", "tongs-inside-bowl", "switch name for in-bowl position")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlHoverX, "bowl-x", 339, "bowl hover position X in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlHoverY, "bowl-y", 469, "bowl hover position Y in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlHoverZ, "bowl-z", 617, "bowl hover position Z in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlDropX, "bowl-drop-x", 339, "bowl drop position X in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlDropY, "bowl-drop-y", 469, "bowl drop position Y in world frame (mm)")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.BowlDropZ, "bowl-drop-z", 560, "bowl drop position Z in world frame (mm, typically lower than hover)")
 
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
