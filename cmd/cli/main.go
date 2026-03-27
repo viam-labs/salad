@@ -140,6 +140,17 @@ computes the centroid of the ingredient mass, then moves the arm to that positio
 	},
 }
 
+var addIngredientCmd = &cobra.Command{
+	Use:   "add-ingredient",
+	Short: "Repeatedly grab from a bin and deliver to the bowl until target weight is reached",
+	Long: `Loops: moves to the imaging position, computes descent target from the mesh,
+descends, grabs, ascends, delivers to the bowl, and checks the scale.
+Repeats until the target grams have been added or 3 consecutive empty grabs are detected.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAddIngredient(globalAddress, globalAPIKey, globalAPIKeyID, grabFlags)
+	},
+}
+
 var framesCmd = &cobra.Command{
 	Use:   "frames",
 	Short: "Print the robot's frame system (shows all frames, parents, poses, and geometry)",
@@ -199,6 +210,18 @@ func init() {
 	grabCmd.Flags().StringVar(&grabFlags.OutputDir, "output", "", "output directory (default: output/<timestamp>)")
 	grabCmd.Flags().Float64Var(&grabFlags.StepMM, "z-step", 40, "maximum Z change per move in mm when descending to target")
 
+	addIngredientCmd.Flags().IntVar(&grabFlags.Bin, "bin", 0, "bin number (0-5)")
+	addIngredientCmd.Flags().StringVar(&grabFlags.ArmName, "arm", "left-arm", "arm component name")
+	addIngredientCmd.Flags().StringVar(&grabFlags.MeshFile, "mesh", "", "path to PLY mesh file (required)")
+	_ = addIngredientCmd.MarkFlagRequired("mesh")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.StepMM, "z-step", 40, "maximum Z change per move in mm when descending to target")
+	addIngredientCmd.Flags().StringVar(&grabFlags.GripperName, "gripper", "left-position-gripper", "gripper component name")
+	addIngredientCmd.Flags().StringVar(&grabFlags.ScaleName, "scale", "scale", "scale sensor component name")
+	addIngredientCmd.Flags().Float64Var(&grabFlags.TargetGrams, "target-grams", 0, "grams to add (required)")
+	_ = addIngredientCmd.MarkFlagRequired("target-grams")
+	addIngredientCmd.Flags().StringVar(&grabFlags.HighAboveBowlSwitch, "high-above-bowl", "tongs-above-bowl", "switch name for high-above-bowl position")
+	addIngredientCmd.Flags().StringVar(&grabFlags.InBowlSwitch, "in-bowl", "tongs-inside-bowl", "switch name for in-bowl position")
+
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
@@ -206,6 +229,7 @@ func init() {
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(framesCmd)
 	rootCmd.AddCommand(grabCmd)
+	rootCmd.AddCommand(addIngredientCmd)
 }
 
 func main() {
