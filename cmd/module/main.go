@@ -18,6 +18,5 @@ func main() {
 		resource.APIModel{API: genericservice.API, Model: salad.BowlControls},
 		resource.APIModel{API: genericservice.API, Model: salad.DressingControls},
 		resource.APIModel{API: genericservice.API, Model: salad.ChefsKissControls},
-		resource.APIModel{API: genericservice.API, Model: salad.SupplyDetector},
 	)
 }
