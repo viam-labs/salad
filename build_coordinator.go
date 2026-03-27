@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
@@ -37,6 +38,9 @@ type BuildCoordinatorConfig struct {
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
 	TextToSpeech      string                             `json:"text-to-speech"`
+	TempSensor        string                             `json:"temp-sensor"`
+	MinTempC          float64                            `json:"min-temp-celsius"`
+	MaxTempC          float64                            `json:"max-temp-celsius"`
 }
 
 func init() {
@@ -70,6 +74,12 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
 	if cfg.TextToSpeech != "" {
 		deps = append(deps, cfg.TextToSpeech)
+	}
+	if cfg.TempSensor != "" {
+		if cfg.MinTempC >= cfg.MaxTempC {
+			return nil, nil, fmt.Errorf("min-temp-celsius must be less than max-temp-celsius")
+		}
+		deps = append(deps, cfg.TempSensor)
 	}
 
 	for i, ing := range cfg.Ingredients {
@@ -116,6 +126,7 @@ type buildCoordinator struct {
 	scaleSensor          sensor.Sensor
 	dressingControls     resource.Resource
 	textToSpeech         resource.Resource
+	tempSensor           sensor.Sensor
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 
@@ -186,6 +197,15 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("failed to get scale sensor %q: %w", conf.ScaleSensor, err)
 	}
 	s.scaleSensor = scale
+
+	if conf.TempSensor != "" {
+		tempSensor, err := sensor.FromProvider(deps, conf.TempSensor)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get temp sensor %q: %w", conf.TempSensor, err)
+		}
+		s.tempSensor = tempSensor
+		go s.monitorTemp()
+	}
 
 	for _, ing := range conf.Ingredients {
 		s.ingredients[ing.Name] = ing.GramsPerServing
@@ -608,6 +628,46 @@ func toFloat64(v interface{}) (float64, error) {
 		return float64(val), nil
 	default:
 		return 0, fmt.Errorf("cannot convert %T to float64", v)
+	}
+}
+
+func (s *buildCoordinator) monitorTemp() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var lastAnnounced time.Time
+	for {
+		select {
+		case <-s.cancelCtx.Done():
+			return
+		case <-ticker.C:
+			readings, err := s.tempSensor.Readings(s.cancelCtx, nil)
+			if err != nil {
+				s.logger.Warnw("failed to read temp sensor", "err", err)
+				continue
+			}
+			tempRaw, ok := readings["degrees_celsius"]
+			if !ok {
+				s.logger.Warn("temp sensor missing degrees_celsius reading")
+				continue
+			}
+			temp, err := toFloat64(tempRaw)
+			if err != nil {
+				s.logger.Warnw("could not parse temp reading", "err", err)
+				continue
+			}
+			if temp < s.cfg.MinTempC || temp > s.cfg.MaxTempC {
+				if s.textToSpeech != nil && time.Since(lastAnnounced) >= 30*time.Second {
+					msg := fmt.Sprintf(
+						"Temperature is currently %.1f degrees celsius, outside safe range of %.1f to %.1f degrees celsius.",
+						temp, s.cfg.MinTempC, s.cfg.MaxTempC,
+					)
+					if _, ttsErr := s.textToSpeech.DoCommand(s.cancelCtx, map[string]interface{}{"say": msg}); ttsErr != nil {
+						s.logger.Warnw("failed to announce temp warning", "err", ttsErr)
+					}
+					lastAnnounced = time.Now()
+				}
+			}
+		}
 	}
 }
 
