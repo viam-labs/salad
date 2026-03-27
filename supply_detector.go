@@ -110,7 +110,7 @@ func (s *supplyDetector) DoCommand(ctx context.Context, cmd map[string]interface
 }
 
 func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{}, error) {
-	img, err := camera.DecodeImageFromCamera(ctx, "image/jpeg", nil, s.cam)
+	img, err := camera.DecodeImageFromCamera(ctx, s.cam, "image/jpeg", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get image: %w", err)
 	}
