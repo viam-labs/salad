@@ -256,8 +256,6 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 	return nil
 }
 
-// retryOnDisconnect runs fn and, if it returns a disconnection error, waits
-// for the connection to recover and retries up to 3 times before giving up.
 func retryOnDisconnect(fn func() error, logger logging.Logger) error {
 	const maxRetries = 3
 	for attempt := range maxRetries {
