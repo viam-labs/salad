@@ -129,9 +129,10 @@ type grabberControls struct {
 	shakeArmService genericservice.Service
 
 	// Dynamic grab fields (nil if not configured).
-	meshPts   []r3.Vector
-	motionSvc motion.Service
-	scale     sensor.Sensor
+	meshPts        []r3.Vector
+	meshWorldState *referenceframe.WorldState
+	motionSvc      motion.Service
+	scale          sensor.Sensor
 }
 
 type grabberBinSwitches struct {
@@ -215,6 +216,12 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		}
 		s.meshPts = mesh.ToPoints(1)
 		s.logger.Infof("Loaded mesh from %s (%d vertices)", conf.MeshFile, len(s.meshPts))
+		geosInFrame := referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{mesh})
+		ws, err := referenceframe.NewWorldState([]*referenceframe.GeometriesInFrame{geosInFrame}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build world state from mesh: %w", err)
+		}
+		s.meshWorldState = ws
 	}
 	if conf.MotionService != "" {
 		motionSvc, err := motion.FromProvider(deps, conf.MotionService)
@@ -367,7 +374,12 @@ func (s *grabberControls) doAddIngredientDynamic(ctx context.Context, cmd map[st
 
 	bin, ok := s.bins[binName]
 	if !ok {
-		return nil, fmt.Errorf("bin '%s' not found in configuration", binName)
+		// Also try "bin-N" prefix in case caller passed just the number.
+		bin, ok = s.bins["bin-"+binName]
+		if !ok {
+			return nil, fmt.Errorf("bin '%s' not found in configuration", binName)
+		}
+		binName = "bin-" + binName
 	}
 
 	stepMM := s.cfg.StepMM
@@ -424,6 +436,7 @@ func (s *grabberControls) doAddIngredientDynamic(ctx context.Context, cmd map[st
 			if _, err := s.motionSvc.Move(ctx, motion.MoveReq{
 				ComponentName: s.cfg.ArmName,
 				Destination:   referenceframe.NewPoseInFrame(referenceframe.World, stepPose),
+				WorldState:    s.meshWorldState,
 			}); err != nil {
 				s.logger.Warnf("Descent step %d failed (Z=%.0f), stopping descent: %v", i+1, nextZ, err)
 				break
@@ -449,6 +462,7 @@ func (s *grabberControls) doAddIngredientDynamic(ctx context.Context, cmd map[st
 			if _, err := s.motionSvc.Move(ctx, motion.MoveReq{
 				ComponentName: s.cfg.ArmName,
 				Destination:   referenceframe.NewPoseInFrame(referenceframe.World, stepPose),
+				WorldState:    s.meshWorldState,
 			}); err != nil {
 				return nil, fmt.Errorf("ascent step %d failed (Z=%.0f): %w", i+1, nextZ, err)
 			}
@@ -462,6 +476,7 @@ func (s *grabberControls) doAddIngredientDynamic(ctx context.Context, cmd map[st
 		if _, err := s.motionSvc.Move(ctx, motion.MoveReq{
 			ComponentName: s.cfg.ArmName,
 			Destination:   referenceframe.NewPoseInFrame(referenceframe.World, bowlHoverPose),
+			WorldState:    s.meshWorldState,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to move to bowl hover: %w", err)
 		}
@@ -474,6 +489,7 @@ func (s *grabberControls) doAddIngredientDynamic(ctx context.Context, cmd map[st
 		if _, err := s.motionSvc.Move(ctx, motion.MoveReq{
 			ComponentName: s.cfg.ArmName,
 			Destination:   referenceframe.NewPoseInFrame(referenceframe.World, bowlDropPose),
+			WorldState:    s.meshWorldState,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to move to bowl drop: %w", err)
 		}
@@ -502,9 +518,9 @@ func (s *grabberControls) doAddIngredientDynamic(ctx context.Context, cmd map[st
 				direction = -1.0
 			}
 			if zeroChangeStreak == 1 {
-				xOffset = direction * 5.0
+				xOffset = direction * 40.0
 			} else {
-				xOffset = -direction * 5.0
+				xOffset = -direction * 40.0
 			}
 			s.logger.Warnf("No weight change (streak: %d/3) — retrying with X offset %.0fmm", zeroChangeStreak, xOffset)
 		} else {
