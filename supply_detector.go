@@ -10,6 +10,7 @@ import (
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
+	vision "go.viam.com/rdk/services/vision"
 )
 
 var SupplyDetector = resource.NewModel("ncs", "salad", "supply-detector")
@@ -31,9 +32,10 @@ type SupplyBinConfig struct {
 }
 
 type SupplyDetectorConfig struct {
-	Camera       string            `json:"camera"`
-	Bins         []SupplyBinConfig `json:"bins"`
-	LowThreshold float64           `json:"low_threshold"` // fraction of non-steel pixels; below this = low
+	Camera        string            `json:"camera"`
+	VisionService string            `json:"vision_service"`
+	Bins          []SupplyBinConfig `json:"bins"`
+	LowThreshold  float64           `json:"low_threshold"` // fraction of non-steel pixels; below this = low
 }
 
 func (cfg *SupplyDetectorConfig) Validate(path string) ([]string, []string, error) {
@@ -54,7 +56,11 @@ func (cfg *SupplyDetectorConfig) Validate(path string) ([]string, []string, erro
 	if cfg.LowThreshold == 0 {
 		cfg.LowThreshold = 0.20
 	}
-	return []string{cfg.Camera}, nil, nil
+	deps := []string{cfg.Camera}
+	if cfg.VisionService != "" {
+		deps = append(deps, cfg.VisionService)
+	}
+	return deps, nil, nil
 }
 
 type supplyDetector struct {
@@ -67,6 +73,7 @@ type supplyDetector struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 	cam        camera.Camera
+	visionSvc  vision.Service
 }
 
 func newSupplyDetector(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -83,6 +90,14 @@ func NewSupplyDetector(ctx context.Context, deps resource.Dependencies, name res
 		return nil, fmt.Errorf("failed to get camera '%s': %w", conf.Camera, err)
 	}
 
+	var visionSvc vision.Service
+	if conf.VisionService != "" {
+		visionSvc, err = vision.FromDependencies(deps, conf.VisionService)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get vision service '%s': %w", conf.VisionService, err)
+		}
+	}
+
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 
 	s := &supplyDetector{
@@ -92,6 +107,7 @@ func NewSupplyDetector(ctx context.Context, deps resource.Dependencies, name res
 		cancelCtx:  cancelCtx,
 		cancelFunc: cancelFunc,
 		cam:        cam,
+		visionSvc:  visionSvc,
 	}
 
 	s.logger.Infof("Supply detector initialized with %d bins", len(conf.Bins))
@@ -116,6 +132,39 @@ func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{
 	}
 
 	result := make(map[string]interface{})
+
+	if s.visionSvc != nil {
+		detections, err := s.visionSvc.DetectionsFromCamera(ctx, s.cfg.Camera, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get detections: %w", err)
+		}
+		for _, det := range detections {
+			bb := det.BoundingBox()
+			if bb == nil {
+				continue
+			}
+			bin := SupplyBinConfig{
+				Name: det.Label(),
+				X1:   bb.Min.X,
+				Y1:   bb.Min.Y,
+				X2:   bb.Max.X,
+				Y2:   bb.Max.Y,
+			}
+			ratio, err := s.nonSteelRatio(img, bin)
+			if err != nil {
+				s.logger.Warnf("Failed to analyze detection '%s': %v", bin.Name, err)
+				result[bin.Name] = "unknown"
+				continue
+			}
+			s.logger.Debugf("Detection '%s': non-steel ratio = %.2f (threshold: %.2f)", bin.Name, ratio, s.cfg.LowThreshold)
+			if ratio < s.cfg.LowThreshold {
+				result[bin.Name] = "low"
+			} else {
+				result[bin.Name] = "available"
+			}
+		}
+		return result, nil
+	}
 
 	for _, bin := range s.cfg.Bins {
 		ratio, err := s.nonSteelRatio(img, bin)
