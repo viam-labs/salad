@@ -7,6 +7,7 @@ import (
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
 	vision "go.viam.com/rdk/services/vision"
 	"go.viam.com/rdk/spatialmath"
@@ -119,7 +120,17 @@ func (s *fileVision) Classifications(ctx context.Context, img image.Image, n int
 
 // GetObjectPointClouds returns a list of 3D point cloud objects and metadata from the latest 3D camera image using a specified segmenter.
 func (s *fileVision) GetObjectPointClouds(ctx context.Context, cameraName string, extra map[string]interface{}) ([]*vis.Object, error) {
-	obj := vis.NewEmptyObject()
+	pts := s.mesh.ToPoints(1)
+	pc := pointcloud.NewBasicPointCloud(len(pts))
+	for _, p := range pts {
+		if err := pc.Set(p, pointcloud.NewBasicData()); err != nil {
+			return nil, err
+		}
+	}
+	obj, err := vis.NewObject(pc)
+	if err != nil {
+		return nil, err
+	}
 	obj.Geometry = s.mesh
 	return []*vis.Object{obj}, nil
 }
