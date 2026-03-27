@@ -204,7 +204,6 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 			return nil, fmt.Errorf("failed to get temp sensor %q: %w", conf.TempSensor, err)
 		}
 		s.tempSensor = tempSensor
-		go s.monitorTemp()
 	}
 
 	for _, ing := range conf.Ingredients {
@@ -247,7 +246,10 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
+	if _, ok := cmd["check_temp"]; ok {
+		return s.checkTemp(ctx)
+	}
+	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'stop', 'reset', 'status', 'list_ingredients', or 'check_temp' field")
 }
 
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
@@ -631,44 +633,60 @@ func toFloat64(v interface{}) (float64, error) {
 	}
 }
 
-func (s *buildCoordinator) monitorTemp() {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	var lastAnnounced time.Time
-	for {
-		select {
-		case <-s.cancelCtx.Done():
-			return
-		case <-ticker.C:
-			readings, err := s.tempSensor.Readings(s.cancelCtx, nil)
-			if err != nil {
-				s.logger.Warnw("failed to read temp sensor", "err", err)
-				continue
-			}
-			tempRaw, ok := readings["degrees_celsius"]
-			if !ok {
-				s.logger.Warn("temp sensor missing degrees_celsius reading")
-				continue
-			}
-			temp, err := toFloat64(tempRaw)
-			if err != nil {
-				s.logger.Warnw("could not parse temp reading", "err", err)
-				continue
-			}
-			if temp < s.cfg.MinTempC || temp > s.cfg.MaxTempC {
-				if s.textToSpeech != nil && time.Since(lastAnnounced) >= 30*time.Second {
-					msg := fmt.Sprintf(
-						"Temperature is currently %.1f degrees celsius, outside safe range of %.1f to %.1f degrees celsius.",
-						temp, s.cfg.MinTempC, s.cfg.MaxTempC,
-					)
-					if _, ttsErr := s.textToSpeech.DoCommand(s.cancelCtx, map[string]interface{}{"say": msg}); ttsErr != nil {
-						s.logger.Warnw("failed to announce temp warning", "err", ttsErr)
-					}
-					lastAnnounced = time.Now()
-				}
+func (s *buildCoordinator) checkTemp(ctx context.Context) (map[string]interface{}, error) {
+	if s.tempSensor == nil {
+		return nil, fmt.Errorf("no temp sensor configured")
+	}
+
+	const numReadings = 5
+	readings := make([]float64, 0, numReadings)
+	for i := 0; i < numReadings; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
 			}
 		}
+		raw, err := s.tempSensor.Readings(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read temp sensor: %w", err)
+		}
+		tempRaw, ok := raw["degrees_celsius"]
+		if !ok {
+			return nil, fmt.Errorf("temp sensor missing degrees_celsius reading")
+		}
+		temp, err := toFloat64(tempRaw)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse temp reading: %w", err)
+		}
+		readings = append(readings, temp)
 	}
+
+	// Trim min and max, average the remaining 3.
+	sort.Float64s(readings)
+	trimmed := readings[1 : numReadings-1]
+	var sum float64
+	for _, v := range trimmed {
+		sum += v
+	}
+	avg := sum / float64(len(trimmed))
+
+	inRange := avg >= s.cfg.MinTempC && avg <= s.cfg.MaxTempC
+	if !inRange && s.textToSpeech != nil {
+		msg := fmt.Sprintf(
+			"Temperature is currently %.1f degrees celsius, outside safe range of %.1f to %.1f degrees celsius.",
+			avg, s.cfg.MinTempC, s.cfg.MaxTempC,
+		)
+		if _, ttsErr := s.textToSpeech.DoCommand(ctx, map[string]interface{}{"say": msg}); ttsErr != nil {
+			s.logger.Warnw("failed to announce temp warning", "err", ttsErr)
+		}
+	}
+
+	return map[string]interface{}{
+		"temperature_celsius": avg,
+		"in_range":            inRange,
+	}, nil
 }
 
 func (s *buildCoordinator) Close(context.Context) error {
