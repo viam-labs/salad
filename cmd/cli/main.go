@@ -134,8 +134,7 @@ var grabCmd = &cobra.Command{
 	Use:   "grab-test",
 	Short: "Move arm to ingredient centroid in a bin using its snapshot point cloud",
 	Long: `Moves to the imaging position above the specified bin, captures its point cloud,
-computes the centroid of the ingredient mass, then moves the arm to that position.
-Use --dry-run to print the target position without moving.`,
+computes the centroid of the ingredient mass, then moves the arm to that position.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runGrab(globalAddress, globalAPIKey, globalAPIKeyID, grabFlags)
 	},
@@ -195,10 +194,10 @@ func init() {
 	grabCmd.Flags().IntVar(&grabFlags.Bin, "bin", 0, "bin number (0-5)")
 	grabCmd.Flags().StringVar(&grabFlags.ArmName, "arm", "left-arm", "arm component name")
 	grabCmd.Flags().StringVar(&grabFlags.CamName, "camera", "left-downsample-cam", "camera to capture point cloud from (captured live at imaging position)")
+	grabCmd.Flags().StringVar(&grabFlags.MeshFile, "mesh", "", "path to PLY mesh file (required)")
+	_ = grabCmd.MarkFlagRequired("mesh")
 	grabCmd.Flags().StringVar(&grabFlags.OutputDir, "output", "", "output directory (default: output/<timestamp>)")
-	grabCmd.Flags().Float64Var(&grabFlags.ZOffset, "z-offset", 0, "Z offset in mm applied to centroid (negative = lower into bin)")
 	grabCmd.Flags().Float64Var(&grabFlags.StepMM, "z-step", 40, "maximum Z change per move in mm when descending to target")
-	grabCmd.Flags().BoolVar(&grabFlags.DryRun, "dry-run", false, "print target position without moving")
 
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)

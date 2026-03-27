@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/golang/geo/r3"
@@ -109,24 +108,20 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 		// Each named position is an anchor covering a different Y band of the bin row.
 		// Tiles sweep Y only; anchor X and Z are held fixed.
 		for _, posName := range imagingPositions {
-			sw, err := waitAndGetSwitch(ctx, robotClient, posName, logger)
+			sw, err := toggleswitch.FromRobot(robotClient, posName)
 			if err != nil {
 				logger.Warnf("Skipping %q: %v", posName, err)
 				continue
 			}
 			logger.Infof("Moving to anchor %q", posName)
-			if err := retryOnDisconnect(func() error { return sw.SetPosition(ctx, 2, nil) }, logger); err != nil {
+			if err := sw.SetPosition(ctx, 2, nil); err != nil {
 				logger.Warnf("Skipping %q: move failed (%v)", posName, err)
 				continue
 			}
 			time.Sleep(flags.SleepDuration())
 
 			var endPose spatialmath.Pose
-			if err := retryOnDisconnect(func() error {
-				var e error
-				endPose, e = armComp.EndPosition(ctx, nil)
-				return e
-			}, logger); err != nil {
+			if endPose, err = armComp.EndPosition(ctx, nil); err != nil {
 				logger.Warnf("Skipping %q: could not read arm pose (%v)", posName, err)
 				continue
 			}
@@ -151,9 +146,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 					camPose := spatialmath.Compose(baseCamPose, anglePose)
 					armPose := spatialmath.Compose(camPose, camInArmInv)
 
-					moveErr := retryOnDisconnect(func() error {
-						return armComp.MoveToPosition(ctx, armPose, nil)
-					}, logger)
+					moveErr := armComp.MoveToPosition(ctx, armPose, nil)
 					if moveErr != nil {
 						unreachable++
 						logger.Warnf("  Tile %d (Y=%.0f %s): not reachable (%v)", tileIdx, y, av.label, moveErr)
@@ -163,11 +156,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 					time.Sleep(flags.SleepDuration())
 
 					var pc pointcloud.PointCloud
-					captureErr := retryOnDisconnect(func() error {
-						var e error
-						pc, e = cam.NextPointCloud(ctx, nil)
-						return e
-					}, logger)
+					pc, captureErr := cam.NextPointCloud(ctx, nil)
 					if captureErr != nil {
 						logger.Warnf("  Tile %d capture failed: %v", tileIdx, captureErr)
 						tileIdx++
@@ -254,49 +243,6 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 	}
 	logger.Infof("Step 4/4 mesh: wrote %s (%s)", meshPath, time.Since(t0).Round(time.Millisecond))
 	return nil
-}
-
-func retryOnDisconnect(fn func() error, logger logging.Logger) error {
-	const maxRetries = 3
-	for attempt := range maxRetries {
-		err := fn()
-		if err == nil {
-			return nil
-		}
-		if !isDisconnectError(err) {
-			return err
-		}
-		if attempt < maxRetries-1 {
-			logger.Warnf("  Connection lost, waiting to reconnect (attempt %d/%d)…", attempt+1, maxRetries)
-			time.Sleep(5 * time.Second)
-		}
-	}
-	return fmt.Errorf("failed after %d retries due to disconnection", maxRetries)
-}
-
-func waitAndGetSwitch(ctx context.Context, robotClient *client.RobotClient, name string, logger logging.Logger) (toggleswitch.Switch, error) {
-	const maxRetries = 3
-	for attempt := range maxRetries {
-		sw, err := toggleswitch.FromRobot(robotClient, name)
-		if err == nil {
-			return sw, nil
-		}
-		if !isDisconnectError(err) {
-			return nil, err
-		}
-		if attempt < maxRetries-1 {
-			logger.Warnf("  Connection lost getting switch %q, waiting to reconnect…", name)
-			time.Sleep(5 * time.Second)
-		}
-	}
-	return nil, fmt.Errorf("failed to get switch %q after retries", name)
-}
-
-func isDisconnectError(err error) bool {
-	s := err.Error()
-	return strings.Contains(s, "not connected") ||
-		strings.Contains(s, "context canceled") ||
-		strings.Contains(s, "SESSION_EXPIRED")
 }
 
 func writePCD(pc pointcloud.PointCloud, path string) error {
