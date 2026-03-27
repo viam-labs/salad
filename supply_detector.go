@@ -1,13 +1,10 @@
 package salad
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"image"
 	"image/color"
-	_ "image/jpeg"
-	_ "image/png"
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/logging"
@@ -113,15 +110,15 @@ func (s *supplyDetector) DoCommand(ctx context.Context, cmd map[string]interface
 }
 
 func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{}, error) {
-	imgBytes, _, err := s.cam.Image(ctx, "image/jpeg", nil)
+	images, _, err := s.cam.Images(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get image: %w", err)
+		return nil, fmt.Errorf("failed to get images: %w", err)
+	}
+	if len(images) == 0 {
+		return nil, fmt.Errorf("no images returned from camera")
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(imgBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode image: %w", err)
-	}
+	img := images[0].Image
 
 	result := make(map[string]interface{})
 
