@@ -85,6 +85,34 @@ func (q *OrderQueue) Dequeue() (Order, bool) {
 	return order, true
 }
 
+// SetStatus updates the status of an order by ID.
+// Returns true if the order was found and updated.
+func (q *OrderQueue) SetStatus(id string, status string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i, o := range q.orders {
+		if o.ID == id {
+			q.orders[i].Status = status
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveByID removes an order by ID from the queue.
+// Returns the removed order and true, or a zero Order and false if not found.
+func (q *OrderQueue) RemoveByID(id string) (Order, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i, o := range q.orders {
+		if o.ID == id {
+			q.orders = append(q.orders[:i], q.orders[i+1:]...)
+			return o, true
+		}
+	}
+	return Order{}, false
+}
+
 // CancelByID removes an order by ID if its status is "queued".
 // Returns true if the order was found and cancelled.
 func (q *OrderQueue) CancelByID(id string) bool {

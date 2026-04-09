@@ -265,18 +265,17 @@ func (s *buildCoordinator) getQueueSnapshot() map[string]interface{} {
 			"customer_name": o.CustomerName,
 			"status":        o.Status,
 		}
-		// Match the actively building order by ID.
-		if o.ID == activeOrderID && currentStatus != "idle" && currentStatus != "" {
-			entry["status"] = "building"
+		// The building order stays in the queue with status "building".
+		if o.ID == activeOrderID && o.Status == "building" {
 			entry["progress"] = currentProgress
 			entry["current_step"] = currentStatus
 			entry["estimated_remaining_sec"] = avgSecs * (1.0 - currentProgress/100.0)
 		} else {
 			entry["position"] = position
 			entry["estimated_wait_sec"] = float64(position) * avgSecs
+			position++
 		}
 		orderList = append(orderList, entry)
-		position++
 	}
 
 	// Append recently completed orders for board display.
@@ -750,12 +749,13 @@ func (s *buildCoordinator) processQueue() {
 		}
 
 		for {
-			order, ok := s.queue.Dequeue()
-			if !ok {
+			order, ok := s.queue.Peek()
+			if !ok || order.Status != "queued" {
 				break
 			}
 
-			remaining := s.queue.Len()
+			s.queue.SetStatus(order.ID, "building")
+			remaining := s.queue.Len() - 1 // exclude the building order
 			s.logger.Infof("processing order %s for %s — %d order(s) waiting",
 				order.ID, order.CustomerName, remaining)
 
@@ -817,12 +817,14 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
 		s.updateStatus("idle", 0)
+		s.queue.RemoveByID(order.ID)
 		return
 	}
 
 	if err != nil {
 		s.logger.Errorf("Order %s for %s failed: %v", order.ID, order.CustomerName, err)
 		s.updateStatus("idle", 0)
+		s.queue.RemoveByID(order.ID)
 		return
 	}
 
@@ -833,6 +835,7 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 	s.avgBuildSecs = s.avgBuildSecs + (elapsed-s.avgBuildSecs)/float64(s.buildCount)
 	s.mu.Unlock()
 
+	s.queue.RemoveByID(order.ID)
 	s.queue.MarkComplete(order)
 	s.logger.Infof("Order %s complete for %s: %v (took %.0fs)", order.ID, order.CustomerName, result, elapsed)
 }
