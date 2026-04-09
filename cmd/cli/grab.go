@@ -230,7 +230,7 @@ func findGrabTargets(
 			r3.Vector{X: c.x, Y: c.y, Z: c.z + hoverDistanceMM},
 			&spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90},
 		)
-		if _, err := planTo(ctx, logger, fs, worldState, startState, endEffectorFrame, hoverPose); err != nil {
+		if _, err := planTo(ctx, logger, fs, worldState, startState, endEffectorFrame, hoverPose, nil); err != nil {
 			logger.Debugf("Candidate (%.0f,%.0f,%.0f): plan failed (%v), skipping", c.x, c.y, c.z, err)
 			continue
 		}
@@ -328,15 +328,15 @@ func attemptGrabWithDepthStepping(
 		return false, false, fmt.Errorf("opening gripper before approach: %w", err)
 	}
 
-	// Approach to hover using fsGrab (no static mesh obstacles).
-	// The tongs at Theta=90 extend in ±Y and would collide with the mesh representation
-	// of the narrow bin walls even when the hover is physically above the bin opening.
-	// The arm's kinematic self-collision model is still enforced by fsGrab.
+	// Approach to hover above bin: unconstrained so the arm can swing freely from
+	// wherever it starts (e.g. scale or home). The tongs at Theta=90 extend in ±Y
+	// and would collide with the mesh of the narrow bin walls even at hover height,
+	// so we use fsGrab (no static mesh obstacles).
 	approachState, err := currentArmPlanState(ctx, armComp, fsGrab)
 	if err != nil {
 		return false, false, fmt.Errorf("reading arm state for approach: %w", err)
 	}
-	approachTraj, err := planTo(ctx, logger, fsGrab, nil, approachState, endEffectorFrame, hoverPose)
+	approachTraj, err := planTo(ctx, logger, fsGrab, nil, approachState, endEffectorFrame, hoverPose, nil)
 	if err != nil {
 		logger.Infof("Approach to hover failed (%v) — skipping position", err)
 		return false, true, nil
@@ -349,6 +349,8 @@ func attemptGrabWithDepthStepping(
 		r3.Vector{X: flags.ScaleDropX, Y: flags.ScaleDropY, Z: flags.ScaleDropZ + flags.ScaleDropHoverMM},
 		&spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90},
 	)
+
+	linC := linearConstraints()
 
 	// Depth-stepping loop: each attempt goes deeper, stops when weight threshold met.
 	for attempt := range flags.MaxAttemptsPerPos {
@@ -367,11 +369,12 @@ func attemptGrabWithDepthStepping(
 			return false, false, fmt.Errorf("opening gripper: %w", err)
 		}
 
-		grabState, err := currentArmPlanState(ctx, armComp, fs)
+		// Descent: linear — straight down into the bin from hover.
+		grabState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
 			return false, false, fmt.Errorf("reading arm state for grab: %w", err)
 		}
-		grabTraj, err := planTo(ctx, logger, fsGrab, nil, grabState, endEffectorFrame, grabPose)
+		grabTraj, err := planTo(ctx, logger, fsGrab, nil, grabState, endEffectorFrame, grabPose, linC)
 		if err != nil {
 			logger.Infof("Attempt %d: descent unreachable — skipping position", attempt+1)
 			return false, true, nil
@@ -388,12 +391,12 @@ func attemptGrabWithDepthStepping(
 			return false, false, fmt.Errorf("stopping gripper before retreat: %w", err)
 		}
 
-		// Retreat to bin hover (gripper closed) before traveling to scale.
+		// Retreat: linear — straight up out of the bin back to hover.
 		retreatState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
 			return false, false, fmt.Errorf("reading arm state for retreat: %w", err)
 		}
-		retreatTraj, err := planTo(ctx, logger, fsGrab, nil, retreatState, endEffectorFrame, hoverPose)
+		retreatTraj, err := planTo(ctx, logger, fsGrab, nil, retreatState, endEffectorFrame, hoverPose, linC)
 		if err != nil {
 			return false, false, fmt.Errorf("planning retreat to bin hover: %w", err)
 		}
@@ -401,12 +404,12 @@ func attemptGrabWithDepthStepping(
 			return false, false, fmt.Errorf("executing retreat to bin hover: %w", err)
 		}
 
-		// Move to hover above scale (gripper still closed).
+		// Transit to scale hover: linear — straight line at height between hover positions.
 		scaleApproachState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
 			return false, false, fmt.Errorf("reading arm state for scale approach: %w", err)
 		}
-		scaleTraj, err := planTo(ctx, logger, fsGrab, nil, scaleApproachState, endEffectorFrame, scalePose)
+		scaleTraj, err := planTo(ctx, logger, fsGrab, nil, scaleApproachState, endEffectorFrame, scalePose, linC)
 		if err != nil {
 			return false, false, fmt.Errorf("planning to scale: %w", err)
 		}
@@ -432,6 +435,20 @@ func attemptGrabWithDepthStepping(
 		if delta >= flags.WeightThresholdG {
 			return true, false, nil
 		}
+
+		// Return from scale hover back to bin hover before the next descent attempt.
+		// Linear keeps the path predictable at height between the two positions.
+		returnState, err := currentArmPlanState(ctx, armComp, fsGrab)
+		if err != nil {
+			return false, false, fmt.Errorf("reading arm state for return to bin hover: %w", err)
+		}
+		returnTraj, err := planTo(ctx, logger, fsGrab, nil, returnState, endEffectorFrame, hoverPose, linC)
+		if err != nil {
+			return false, false, fmt.Errorf("planning return to bin hover: %w", err)
+		}
+		if err := executeTraj(ctx, armComp, returnTraj, flags.ArmName); err != nil {
+			return false, false, fmt.Errorf("executing return to bin hover: %w", err)
+		}
 	}
 
 	return false, false, nil
@@ -445,6 +462,7 @@ func planTo(
 	startState *armplanning.PlanState,
 	frameName string,
 	targetPose spatialmath.Pose,
+	constraints *motionplan.Constraints,
 ) (motionplan.Trajectory, error) {
 	goalState := armplanning.NewPlanState(
 		referenceframe.FrameSystemPoses{
@@ -457,11 +475,22 @@ func planTo(
 		WorldState:  worldState,
 		StartState:  startState,
 		Goals:       []*armplanning.PlanState{goalState},
+		Constraints: constraints,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return plan.Trajectory(), nil
+}
+
+// linearConstraints returns a Constraints with a single LinearConstraint using
+// reasonable tolerances for straight-line cartesian moves.
+func linearConstraints() *motionplan.Constraints {
+	return &motionplan.Constraints{
+		LinearConstraint: []motionplan.LinearConstraint{
+			{LineToleranceMm: 1.0, OrientationToleranceDegs: 2.0},
+		},
+	}
 }
 
 // executeTraj extracts joint configurations for the arm from each trajectory step and
