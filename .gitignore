@@ -60,6 +60,8 @@ dist-ssr
 downloads/*
 output/*
 
-cli
-
+*.ply
+*.json
 *.pcd
+
+/cli
