@@ -53,11 +53,15 @@ type FilterFlags struct {
 }
 
 type MeshifyFlags struct {
-	InputPath     string
-	OutputPath    string
-	KDTreeKNN     int
-	OrientNN      int
-	LODMultiplier int
+	InputPath        string
+	OutputPath       string
+	KDTreeKNN        int
+	OrientNN         int
+	LODMultiplier    int
+	VoxelSize        float64
+	SmoothIterations int
+	Viz              bool
+	VizURL           string
 }
 
 type CropFlags struct {
@@ -162,12 +166,15 @@ func init() {
 	_ = filterCmd.MarkFlagRequired("output")
 
 	meshifyCmd.Flags().StringVar(&meshifyFlags.InputPath, "input", "", "input PCD file (required)")
-	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (required)")
-	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 30, "KNN for normal estimation")
+	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (default: output/<timestamp>/mesh.ply)")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 60, "KNN for normal estimation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.OrientNN, "orient-nn", 50, "KNN for normal orientation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.LODMultiplier, "lod-multiplier", 0, "Poisson reconstruction depth (8-11, higher=finer; 0=default 9)")
+	meshifyCmd.Flags().Float64Var(&meshifyFlags.VoxelSize, "voxel-size", 0.0, "voxel size for downsampling before meshing (0=skip)")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.SmoothIterations, "smooth-iterations", 0, "Taubin smoothing iterations (0=default 15)")
+	meshifyCmd.Flags().BoolVar(&meshifyFlags.Viz, "viz", false, "display mesh in motion-tools visualizer after generation")
+	meshifyCmd.Flags().StringVar(&meshifyFlags.VizURL, "viz-url", "", "motion-tools visualizer URL (default: http://localhost:3000, implies --viz)")
 	_ = meshifyCmd.MarkFlagRequired("input")
-	_ = meshifyCmd.MarkFlagRequired("output")
 
 	cropCmd.Flags().StringVar(&cropFlags.InputPath, "input", "", "input PCD file (required)")
 	cropCmd.Flags().StringVar(&cropFlags.OutputPath, "output", "", "output PCD file (required)")
