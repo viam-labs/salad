@@ -62,5 +62,6 @@ output/*
 
 *.ply
 *.json
+*.pcd
 
 /cli
