@@ -16,11 +16,17 @@ type Order struct {
 	EnqueuedAt   time.Time      `json:"enqueued_at"`
 }
 
+type completedOrder struct {
+	Order       Order
+	CompletedAt time.Time
+}
+
 // OrderQueue is a thread-safe FIFO order queue.
 type OrderQueue struct {
-	mu      sync.Mutex
-	orders  []Order
-	notify  chan struct{} // buffered(1), poked on enqueue to wake consumer
+	mu        sync.Mutex
+	orders    []Order
+	completed []completedOrder // recently completed orders for board display
+	notify    chan struct{}    // buffered(1), poked on enqueue to wake consumer
 }
 
 // NewOrderQueue creates a new empty order queue.
@@ -116,4 +122,31 @@ func (q *OrderQueue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.orders)
+}
+
+const completedRetention = 30 * time.Second
+
+// MarkComplete adds an order to the completed list for board display.
+func (q *OrderQueue) MarkComplete(order Order) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	order.Status = "complete"
+	q.completed = append(q.completed, completedOrder{Order: order, CompletedAt: time.Now()})
+}
+
+// ListCompleted returns recently completed orders, pruning any older than 30 seconds.
+func (q *OrderQueue) ListCompleted() []Order {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	cutoff := time.Now().Add(-completedRetention)
+	var kept []completedOrder
+	var result []Order
+	for _, co := range q.completed {
+		if co.CompletedAt.After(cutoff) {
+			kept = append(kept, co)
+			result = append(result, co.Order)
+		}
+	}
+	q.completed = kept
+	return result
 }

@@ -124,6 +124,7 @@ type buildCoordinator struct {
 	status          string
 	progress        float64
 	customerName    string
+	currentOrderID  string
 	buildCancelFunc func()
 	buildDone       chan struct{}
 
@@ -254,7 +255,7 @@ func (s *buildCoordinator) getQueueSnapshot() map[string]interface{} {
 	s.mu.RLock()
 	currentStatus := s.status
 	currentProgress := s.progress
-	currentCustomer := s.customerName
+	activeOrderID := s.currentOrderID
 	avgSecs := s.avgBuildSecs
 	s.mu.RUnlock()
 
@@ -266,8 +267,8 @@ func (s *buildCoordinator) getQueueSnapshot() map[string]interface{} {
 			"customer_name": o.CustomerName,
 			"status":        o.Status,
 		}
-		// The first order in queue is the one being built (if status is not idle).
-		if position == 1 && currentCustomer == o.CustomerName && currentStatus != "idle" && currentStatus != "" {
+		// Match the actively building order by ID.
+		if o.ID == activeOrderID && currentStatus != "idle" && currentStatus != "" {
 			entry["status"] = "building"
 			entry["progress"] = currentProgress
 			entry["current_step"] = currentStatus
@@ -278,6 +279,15 @@ func (s *buildCoordinator) getQueueSnapshot() map[string]interface{} {
 		}
 		orderList = append(orderList, entry)
 		position++
+	}
+
+	// Append recently completed orders for board display.
+	for _, co := range s.queue.ListCompleted() {
+		orderList = append(orderList, map[string]interface{}{
+			"id":            co.ID,
+			"customer_name": co.CustomerName,
+			"status":        "complete",
+		})
 	}
 
 	return map[string]interface{}{
@@ -306,7 +316,11 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 				"order_id": orderID,
 			}, nil
 		}
-		return nil, fmt.Errorf("order %s not found or already being built", orderID)
+		return map[string]interface{}{
+			"status":   "error",
+			"order_id": orderID,
+			"error":    "order not found or already being built",
+		}, nil
 	}
 	if _, ok := cmd["clear_queue"]; ok {
 		n := s.queue.Clear()
@@ -738,17 +752,16 @@ func (s *buildCoordinator) processQueue() {
 		}
 
 		for {
-			order, ok := s.queue.Peek()
+			order, ok := s.queue.Dequeue()
 			if !ok {
 				break
 			}
 
-			remaining := s.queue.Len() - 1
+			remaining := s.queue.Len()
 			s.logger.Infof("processing order %s for %s — %d order(s) waiting",
 				order.ID, order.CustomerName, remaining)
 
 			s.safeExecuteOrder(order)
-			s.queue.Dequeue()
 		}
 	}
 }
@@ -786,12 +799,14 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 	s.status = "building"
 	s.progress = 0
 	s.customerName = order.CustomerName
+	s.currentOrderID = order.ID
 	s.mu.Unlock()
 
 	defer func() {
 		s.mu.Lock()
 		s.buildCancelFunc = nil
 		s.customerName = ""
+		s.currentOrderID = ""
 		close(s.buildDone)
 		s.buildDone = nil
 		s.mu.Unlock()
@@ -820,6 +835,7 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 	s.avgBuildSecs = s.avgBuildSecs + (elapsed-s.avgBuildSecs)/float64(s.buildCount)
 	s.mu.Unlock()
 
+	s.queue.MarkComplete(order)
 	s.logger.Infof("Order %s complete for %s: %v (took %.0fs)", order.ID, order.CustomerName, result, elapsed)
 }
 
