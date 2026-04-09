@@ -42,4 +42,6 @@ def create_poisson_mesh(pcd, depth=9, density_quantile=0.02):
         mesh.remove_vertices_by_mask(densities < thresh)
 
     mesh.compute_vertex_normals()
+    if len(mesh.vertices) == 0:
+        raise RuntimeError("Poisson reconstruction produced an empty mesh")
     return mesh
