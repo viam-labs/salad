@@ -20,6 +20,7 @@ type SegmentFlags struct {
 	VizURL             string
 	CellSizeMM         float64
 	DividerZPercentile float64
+	DividerGradientMM  float64
 	DividerDilation    int
 	MinBinAreaMM2      float64
 }
@@ -32,19 +33,22 @@ var segmentCmd = &cobra.Command{
 	Long: `Loads a PLY mesh of the fridge and segments it into individual bin zones.
 
 Each zone is the section of the mesh that represents one bin's floor region. The
-fridge is scanned from above; dividers appear as high-Z ridges between lower bin
-surfaces. A height-map connected-component algorithm identifies each region.
+fridge is scanned from above; dividers appear as ridges between lower bin surfaces.
+A height-map connected-component algorithm identifies each region using two barrier
+criteria:
 
-Divider detection uses a Z-percentile threshold. Because Poisson reconstruction
-smooths out thin dividers and may leave small gaps, the divider mask is dilated
-before connected-component analysis to ensure bins are reliably separated.
+  1. Absolute: cells whose max Z is above --divider-z-percentile are treated as walls.
+  2. Gradient: cells that rise above their lowest neighbour by --divider-gradient mm
+     are treated as ridge tops (catches thin dividers regardless of absolute Z).
 
-The result is written to a JSON file (default: <mesh>.zones.json). Each zone
-includes its XY footprint bounds and the actual mesh triangles from the source
-mesh that belong to it.
+The combined barrier mask is dilated by --divider-dilation cells to close gaps
+left by Poisson reconstruction before BFS labelling.
+
+The result is written to <mesh>.zones.json. Each zone contains its XY footprint
+bounds and the actual mesh triangles from the source mesh that belong to it.
 
 If --viz is set, each zone is drawn in a distinct colour in the motion-tools
-visualiser alongside the source mesh for visual verification.`,
+visualiser alongside the source mesh.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSegment(segmentFlags)
 	},
@@ -54,15 +58,33 @@ func runSegment(flags SegmentFlags) error {
 	opts := segmentation.Options{
 		CellSizeMM:         flags.CellSizeMM,
 		DividerZPercentile: flags.DividerZPercentile,
+		DividerGradientMM:  flags.DividerGradientMM,
 		DividerDilation:    flags.DividerDilation,
 		MinBinAreaMM2:      flags.MinBinAreaMM2,
 	}
 
 	fmt.Printf("Segmenting %s\n", flags.MeshPath)
-	result, err := segmentation.SegmentFridgeBins(flags.MeshPath, opts)
+
+	t0 := time.Now()
+	fmt.Printf("  Loading mesh and running segmentation...\n")
+	result, stats, err := segmentation.SegmentFridgeBins(flags.MeshPath, opts)
+	elapsed := time.Since(t0)
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("  Done in %s\n\n", elapsed.Round(time.Millisecond))
+	fmt.Printf("  Grid:       %d × %d cells (%g mm resolution)\n", stats.GridCols, stats.GridRows, opts.CellSizeMM)
+	fmt.Printf("  Triangles:  %d\n", stats.TriangleCount)
+	fmt.Printf("  Z range:    [%.1f, %.1f] mm  threshold=%.1f mm (p%.0f)\n",
+		stats.ZMin, stats.ZMax, stats.ZThreshold, opts.DividerZPercentile*100)
+	fmt.Printf("  Gradient:   ≥%.1f mm rise above lowest neighbour\n", opts.DividerGradientMM)
+	fmt.Printf("  Barriers:   %d raw → %d after dilation=%d  (%.0f%% of %d cells)\n",
+		stats.BarrierCellsRaw, stats.BarrierCellsDilated, opts.DividerDilation,
+		100*float64(stats.BarrierCellsDilated)/float64(stats.OccupiedCells),
+		stats.OccupiedCells)
+	fmt.Printf("  Components: %d total → %d after min-area filter (%.0f mm²)\n\n",
+		stats.ComponentsTotal, stats.ComponentsAfterFilter, opts.MinBinAreaMM2)
 
 	fmt.Printf("Detected %d zone(s):\n\n", len(result.Zones))
 	fmt.Printf("  %-4s  %-10s  %-10s  %-10s  %-10s  %-12s  %-12s  %-9s\n",
@@ -80,10 +102,13 @@ func runSegment(flags SegmentFlags) error {
 		ext := filepath.Ext(flags.MeshPath)
 		outPath = strings.TrimSuffix(flags.MeshPath, ext) + ".zones.json"
 	}
+
+	fmt.Printf("Writing %s...\n", outPath)
+	tWrite := time.Now()
 	if err := segmentation.SaveZones(result, outPath); err != nil {
 		return err
 	}
-	fmt.Printf("Wrote %s\n", outPath)
+	fmt.Printf("Wrote %s (%.1f s)\n", outPath, time.Since(tWrite).Seconds())
 
 	if flags.Viz {
 		return visualizeZones(result, flags.VizURL, flags.MeshPath)
@@ -92,7 +117,6 @@ func runSegment(flags SegmentFlags) error {
 }
 
 // zoneVizColors is the palette used to distinguish individual zones in motion-tools.
-// Colors are chosen to be visually distinct against a grey mesh.
 var zoneVizColors = []string{
 	"red", "blue", "green", "orange", "purple",
 	"cyan", "yellow", "pink", "teal", "chocolate",
@@ -119,6 +143,7 @@ func visualizeZones(result *segmentation.ZonesResult, vizURL, meshPath string) e
 	for _, zone := range result.Zones {
 		label := fmt.Sprintf("zone-%d", zone.ID)
 		color := zoneVizColors[zone.ID%len(zoneVizColors)]
+		fmt.Printf("  Drawing zone %d (%d triangles, color=%s)...\n", zone.ID, len(zone.Mesh.Faces), color)
 		zoneMesh := zone.Mesh.ToSpatialMesh(label)
 		if err := vizClient.DrawGeometry(zoneMesh, color); err != nil {
 			return fmt.Errorf("drawing zone %d: %w", zone.ID, err)
