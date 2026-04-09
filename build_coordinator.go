@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
@@ -36,6 +37,11 @@ type BuildCoordinatorConfig struct {
 	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
+	AutoBuild         *bool                              `json:"auto-build"`
+}
+
+func (cfg *BuildCoordinatorConfig) autoBuildEnabled() bool {
+	return cfg.AutoBuild != nil && *cfg.AutoBuild
 }
 
 func init() {
@@ -120,6 +126,11 @@ type buildCoordinator struct {
 	customerName    string
 	buildCancelFunc func()
 	buildDone       chan struct{}
+
+	queue         *OrderQueue
+	queueStop     chan struct{}
+	avgBuildSecs  float64 // rolling average of build durations in seconds
+	buildCount    int     // number of completed builds for averaging
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -142,6 +153,9 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
 		status:               "idle",
+		queue:                NewOrderQueue(),
+		queueStop:            make(chan struct{}),
+		avgBuildSecs:         240, // default estimate until real data
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -180,6 +194,14 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
+
+	if conf.autoBuildEnabled() {
+		s.logger.Infof("Auto-build enabled, starting queue consumer")
+		go s.processQueue()
+	} else {
+		s.logger.Infof("Auto-build disabled, queue consumer not started")
+	}
+
 	return s, nil
 }
 
@@ -599,7 +621,104 @@ func toFloat64(v interface{}) (float64, error) {
 	}
 }
 
+// processQueue is the background consumer goroutine. It runs orders from the
+// queue one at a time in FIFO order.
+func (s *buildCoordinator) processQueue() {
+	for {
+		select {
+		case <-s.queueStop:
+			return
+		case <-s.queue.notify:
+		}
+
+		for {
+			order, ok := s.queue.Peek()
+			if !ok {
+				break
+			}
+
+			remaining := s.queue.Len() - 1
+			s.logger.Infof("processing order %s for %s — %d order(s) waiting",
+				order.ID, order.CustomerName, remaining)
+
+			s.safeExecuteOrder(order)
+			s.queue.Dequeue()
+		}
+	}
+}
+
+// safeExecuteOrder wraps executeQueuedOrder with panic recovery so that a
+// single failing order cannot kill the queue-processing goroutine.
+func (s *buildCoordinator) safeExecuteOrder(order Order) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Errorf("panic while processing order %s for %s: %v — skipping",
+				order.ID, order.CustomerName, r)
+		}
+	}()
+	s.executeQueuedOrder(order)
+}
+
+// executeQueuedOrder runs a single queued order through the full build pipeline.
+func (s *buildCoordinator) executeQueuedOrder(order Order) {
+	start := time.Now()
+	waitTime := start.Sub(order.EnqueuedAt).Round(time.Second)
+	s.logger.Infof("starting order %s for %s — waited %s in queue",
+		order.ID, order.CustomerName, waitTime)
+
+	// Convert ingredients from map[string]int to map[string]interface{} for executeBuild.
+	ingredientMap := make(map[string]interface{}, len(order.Ingredients))
+	for k, v := range order.Ingredients {
+		ingredientMap[k] = v
+	}
+
+	// Set up build context and state (mirrors doBuildSalad).
+	s.mu.Lock()
+	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
+	s.buildCancelFunc = buildCancelFunc
+	s.buildDone = make(chan struct{})
+	s.status = "building"
+	s.progress = 0
+	s.customerName = order.CustomerName
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.buildCancelFunc = nil
+		s.customerName = ""
+		close(s.buildDone)
+		s.buildDone = nil
+		s.mu.Unlock()
+	}()
+
+	result, err := s.executeBuild(buildCtx, ingredientMap)
+	if buildCtx.Err() != nil {
+		s.logger.Infof("Order %s stopped, resetting hardware", order.ID)
+		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
+			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
+		}
+		s.updateStatus("idle", 0)
+		return
+	}
+
+	if err != nil {
+		s.logger.Errorf("Order %s for %s failed: %v", order.ID, order.CustomerName, err)
+		s.updateStatus("idle", 0)
+		return
+	}
+
+	// Update rolling average build duration.
+	elapsed := time.Since(start).Seconds()
+	s.mu.Lock()
+	s.buildCount++
+	s.avgBuildSecs = s.avgBuildSecs + (elapsed-s.avgBuildSecs)/float64(s.buildCount)
+	s.mu.Unlock()
+
+	s.logger.Infof("Order %s complete for %s: %v (took %.0fs)", order.ID, order.CustomerName, result, elapsed)
+}
+
 func (s *buildCoordinator) Close(context.Context) error {
+	close(s.queueStop)
 	s.cancelFunc()
 	return nil
 }
