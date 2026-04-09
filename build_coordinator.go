@@ -209,7 +209,113 @@ func (s *buildCoordinator) Name() resource.Name {
 	return s.name
 }
 
+// enqueueOrder validates the order payload and adds it to the queue.
+func (s *buildCoordinator) enqueueOrder(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
+	ingredientMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("queue_order value must be a map of ingredient name to servings count")
+	}
+	if len(ingredientMap) == 0 {
+		return nil, fmt.Errorf("queue_order requires at least one ingredient")
+	}
+
+	// Validate ingredients and convert to map[string]int.
+	ingredients := make(map[string]int, len(ingredientMap))
+	for name, servingsRaw := range ingredientMap {
+		if _, exists := s.ingredients[name]; !exists {
+			return nil, fmt.Errorf("unknown ingredient %q, not in configuration", name)
+		}
+		servings, err := toFloat64(servingsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid servings value for ingredient %q: %w", name, err)
+		}
+		if servings <= 0 {
+			return nil, fmt.Errorf("servings for ingredient %q must be positive", name)
+		}
+		ingredients[name] = int(servings)
+	}
+
+	order := NewOrder(customerName, ingredients)
+	pos := s.queue.Enqueue(order)
+
+	s.logger.Infof("Order %s queued at position %d for %s", order.ID, pos, customerName)
+
+	return map[string]interface{}{
+		"status":         "queued",
+		"order_id":       order.ID,
+		"queue_position": pos,
+	}, nil
+}
+
+// getQueueSnapshot returns the full queue state for the board display.
+func (s *buildCoordinator) getQueueSnapshot() map[string]interface{} {
+	orders := s.queue.List()
+
+	s.mu.RLock()
+	currentStatus := s.status
+	currentProgress := s.progress
+	currentCustomer := s.customerName
+	avgSecs := s.avgBuildSecs
+	s.mu.RUnlock()
+
+	orderList := make([]interface{}, 0, len(orders))
+	position := 1
+	for _, o := range orders {
+		entry := map[string]interface{}{
+			"id":            o.ID,
+			"customer_name": o.CustomerName,
+			"status":        o.Status,
+		}
+		// The first order in queue is the one being built (if status is not idle).
+		if position == 1 && currentCustomer == o.CustomerName && currentStatus != "idle" && currentStatus != "" {
+			entry["status"] = "building"
+			entry["progress"] = currentProgress
+			entry["current_step"] = currentStatus
+			entry["estimated_remaining_sec"] = avgSecs * (1.0 - currentProgress/100.0)
+		} else {
+			entry["position"] = position
+			entry["estimated_wait_sec"] = float64(position) * avgSecs
+		}
+		orderList = append(orderList, entry)
+		position++
+	}
+
+	return map[string]interface{}{
+		"orders":                 orderList,
+		"avg_build_duration_sec": avgSecs,
+	}
+}
+
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if val, ok := cmd["queue_order"]; ok {
+		customerName, _ := cmd["customer_name"].(string)
+		return s.enqueueOrder(ctx, val, customerName)
+	}
+	if _, ok := cmd["get_queue"]; ok {
+		return s.getQueueSnapshot(), nil
+	}
+	if val, ok := cmd["cancel_order"]; ok {
+		orderID, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("cancel_order value must be an order ID string")
+		}
+		if s.queue.CancelByID(orderID) {
+			s.logger.Infof("Order %s cancelled", orderID)
+			return map[string]interface{}{
+				"status":   "cancelled",
+				"order_id": orderID,
+			}, nil
+		}
+		return nil, fmt.Errorf("order %s not found or already being built", orderID)
+	}
+	if _, ok := cmd["clear_queue"]; ok {
+		n := s.queue.Clear()
+		s.logger.Infof("Queue cleared, removed %d orders", n)
+		return map[string]interface{}{
+			"status":  "cleared",
+			"removed": n,
+		}, nil
+	}
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
 		return s.doBuildSalad(ctx, val, customerName)
@@ -236,7 +342,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
+	return nil, fmt.Errorf("unknown command, expected 'queue_order', 'get_queue', 'cancel_order', 'clear_queue', 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
 }
 
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
