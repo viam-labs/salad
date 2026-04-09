@@ -17,7 +17,7 @@ const (
 	defaultCropMaxX = 1000.0
 	defaultCropMinY = -math.MaxFloat64
 	defaultCropMaxY = 1650.0
-	defaultCropMinZ = -math.MaxFloat64
+	defaultCropMinZ = 100.0
 	defaultCropMaxZ = 275.0
 )
 
