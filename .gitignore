@@ -29,6 +29,9 @@ go.work.sum
 bin
 *tar.gz
 
+# salad-cli binary when built inside cmd/cli (e.g. go build -o cli)
+cmd/cli/cli
+
 # vite
 #
 
