@@ -391,10 +391,6 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 		labelToIdx[zi.label] = i
 	}
 
-	// Expansion pass: grow each seed zone outward via multi-source BFS, stopping
-	// only at hard walls (absolute Z threshold). This fills the divider slopes that
-	// the gradient criterion marked as barriers, giving each zone full bin coverage.
-	// The boundary between adjacent zones falls at the midpoint of each divider slope.
 	isHardBarrier := func(r, c int) bool {
 		return !grid[r][c].hasData || grid[r][c].maxZ >= zThreshold
 	}
@@ -442,8 +438,6 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 		zoneFaces[idx] = append(zoneFaces[idx], f.verts)
 	}
 
-	// Recompute XY bounds from expanded labels so MinX/MaxX/MinY/MaxY reflect the
-	// full zone extent rather than just the seed.
 	expandedBounds := make([][4]float64, len(zoneInfos))
 	for i := range expandedBounds {
 		expandedBounds[i] = [4]float64{math.MaxFloat64, -math.MaxFloat64, math.MaxFloat64, -math.MaxFloat64}
