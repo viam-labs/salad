@@ -8,17 +8,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	vizClient "github.com/viam-labs/motion-tools/client/client"
 	"go.viam.com/rdk/logging"
-	"go.viam.com/rdk/spatialmath"
 
 	"salad/segmentation"
 )
 
 type SegmentFlags struct {
-	MeshPath  string
-	OutputDir string
-	Viz       bool
+	MeshPath           string
+	OutputDir          string
+	Viz                bool
 	VizURL             string
 	CellSizeMM         float64
 	DividerZPercentile float64
@@ -102,43 +100,5 @@ func runSegment(flags SegmentFlags) error {
 	if flags.Viz {
 		return visualizeZones(logger, result, flags.VizURL, flags.MeshPath)
 	}
-	return nil
-}
-
-var zoneVizColors = []string{
-	"red", "blue", "green", "orange", "purple",
-	"cyan", "yellow", "pink", "teal", "chocolate",
-}
-
-func visualizeZones(logger logging.Logger, result *segmentation.ZonesResult, vizURL, meshPath string) error {
-	vizClient.SetURL(vizURL)
-	if err := vizClient.RemoveAllSpatialObjects(); err != nil {
-		return fmt.Errorf("clearing visualizer: %w", err)
-	}
-
-	// Draw the source mesh in light grey as a reference background.
-	srcMesh, err := spatialmath.NewMeshFromPLYFile(meshPath)
-	if err != nil {
-		return fmt.Errorf("loading mesh for viz: %w", err)
-	}
-	srcMesh.SetLabel("fridge-mesh")
-	if err := vizClient.DrawGeometry(srcMesh, "lightgrey"); err != nil {
-		return fmt.Errorf("drawing mesh: %w", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	// Draw each zone as its actual sub-mesh in a distinct colour.
-	for _, zone := range result.Zones {
-		label := fmt.Sprintf("zone-%d", zone.ID)
-		color := zoneVizColors[zone.ID%len(zoneVizColors)]
-		logger.Infof("Drawing zone %d (%d triangles, color=%s)...", zone.ID, len(zone.Mesh.Faces), color)
-		zoneMesh := zone.Mesh.ToSpatialMesh(label)
-		if err := vizClient.DrawGeometry(zoneMesh, color); err != nil {
-			return fmt.Errorf("drawing zone %d: %w", zone.ID, err)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	logger.Infof("Sent %d zone(s) to %s", len(result.Zones), vizURL)
 	return nil
 }

@@ -39,6 +39,7 @@ var imagingPositions = []string{
 
 type DisplayFlags struct {
 	LocalFiles string
+	Zones      bool
 	VizURL     string
 	ClearFirst bool
 	ShowAll    bool
@@ -109,7 +110,7 @@ Per-position PCDs and the merged result are written to the output directory for 
 
 var displayCmd = &cobra.Command{
 	Use:   "display",
-	Short: "Display local point clouds and meshes in motion-tools visualizer",
+	Short: "Display point clouds, meshes, and/or segment zones in motion-tools visualizer",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDisplay(displayFlags)
 	},
@@ -157,7 +158,8 @@ func init() {
 	scanCmd.Flags().Float64Var(&scanFlags.SleepSeconds, "sleep", 2.0, "seconds to wait after each arm move")
 	scanCmd.Flags().Float64Var(&scanFlags.ZOffsetMM, "z-offset", -200.0, "Z offset in mm applied to every tile (negative = lower/closer to bins)")
 	scanCmd.Flags().Float64Var(&scanFlags.YMaxOffset, "y-max-offset", 750.0, "upper Y offset in mm from each anchor (increase to reach further end of bins)")
-	displayCmd.Flags().StringVar(&displayFlags.LocalFiles, "local-files", "output", "directory containing .pcd, .ply, and/or .stl files to display")
+	displayCmd.Flags().StringVar(&displayFlags.LocalFiles, "local-files", "output", "directory containing assets to display (.pcd, .ply, .stl; use with --zones for zones.json in this folder)")
+	displayCmd.Flags().BoolVar(&displayFlags.Zones, "zones", false, "load zones.json from --local-files and draw segmented zones in the visualizer")
 	displayCmd.Flags().StringVar(&displayFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	displayCmd.Flags().BoolVar(&displayFlags.ClearFirst, "clear-first", true, "clear visualizer objects before drawing")
 	displayCmd.Flags().BoolVar(&displayFlags.ShowAll, "all", false, "display both point clouds and meshes (default if neither --pcd nor --mesh is set)")
@@ -204,6 +206,40 @@ func init() {
 	segmentCmd.Flags().Float64Var(&segmentFlags.MinZoneAreaMM2, "min-zone-area", defaults.MinZoneAreaMM2, "minimum zone footprint area in mm² (smaller components discarded as noise)")
 	segmentCmd.Flags().Float64Var(&segmentFlags.MaxZoneAreaMM2, "max-zone-area", defaults.MaxZoneAreaMM2, "maximum zone footprint area in mm² (larger components rejected as non-bin regions; 0=disabled)")
 
+	grabCmd.Flags().StringVar(&grabFlags.ZonesPath, "zones", "output/new_best/zones.json", "path to zones.json from segment command")
+	grabCmd.Flags().StringVar(&grabFlags.MeshPath, "mesh", "output/new_best/mesh.ply", "path to bin mesh PLY file")
+	grabCmd.Flags().IntVar(&grabFlags.ZoneID, "zone-id", 0, "ID of the zone to grab from")
+	grabCmd.Flags().StringVar(&grabFlags.ArmName, "arm", "left-arm", "arm component name")
+	grabCmd.Flags().StringVar(&grabFlags.EndEffectorFrame, "end-effector", "", "end-effector frame name for motion planning (defaults to arm name)")
+	grabCmd.Flags().StringVar(&grabFlags.GripperName, "gripper", "left-gripper", "gripper component name")
+	grabCmd.Flags().StringVar(&grabFlags.CameraName, "camera", "left-downsample-cam", "camera component name")
+	grabCmd.Flags().StringVar(&grabFlags.ScaleName, "scale", "scale", "scale sensor component name")
+	grabCmd.Flags().Float64Var(&grabFlags.SeparationMM, "separation-mm", 80.0, "minimum XY distance (mm) between grab targets")
+	grabCmd.Flags().Float64Var(&grabFlags.HoverDistanceMM, "hover-mm", 100.0, "hover height (mm) above target Z for approach and retreat")
+	grabCmd.Flags().Float64Var(&grabFlags.DepthIncrementMM, "depth-increment-mm", 15.0, "how much deeper (mm) to go on each failed attempt")
+	grabCmd.Flags().IntVar(&grabFlags.MaxAttemptsPerPos, "max-attempts", 3, "max grab attempts per target position before moving on")
+	grabCmd.Flags().Float64Var(&grabFlags.WeightThresholdG, "weight-threshold-g", 10.0, "minimum weight gain (g) to consider a grab successful")
+	grabCmd.Flags().Float64Var(&grabFlags.ScaleDropX, "scale-drop-x", 320.0, "X position (mm) of scale surface in world frame")
+	grabCmd.Flags().Float64Var(&grabFlags.ScaleDropY, "scale-drop-y", 456.0, "Y position (mm) of scale surface in world frame")
+	grabCmd.Flags().Float64Var(&grabFlags.ScaleDropZ, "scale-drop-z", 0.0, "Z position (mm) of scale surface in world frame")
+	grabCmd.Flags().Float64Var(&grabFlags.ScaleDropHoverMM, "scale-drop-hover-mm", 400.0, "hover height (mm) above scale surface before opening gripper")
+
+	grabRandomCmd.Flags().StringVar(&grabRandomFlags.ZonesPath, "zones", "output/new_best/zones.json", "path to zones.json from segment command")
+	grabRandomCmd.Flags().StringVar(&grabRandomFlags.MeshPath, "mesh", "output/new_best/mesh.ply", "path to bin mesh PLY file")
+	grabRandomCmd.Flags().IntVar(&grabRandomFlags.ZoneID, "zone-id", 0, "ID of the zone to grab from")
+	grabRandomCmd.Flags().StringVar(&grabRandomFlags.ArmName, "arm", "left-arm", "arm component name")
+	grabRandomCmd.Flags().StringVar(&grabRandomFlags.EndEffectorFrame, "end-effector", "", "end-effector frame name for motion planning (defaults to arm name)")
+	grabRandomCmd.Flags().StringVar(&grabRandomFlags.GripperName, "gripper", "left-gripper", "gripper component name")
+	grabRandomCmd.Flags().StringVar(&grabRandomFlags.ScaleName, "scale", "scale", "scale sensor component name")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.HoverDistanceMM, "hover-mm", 50.0, "hover height (mm) above the bin rim for approach and retreat")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.DepthIncrementMM, "depth-increment-mm", 15.0, "how much deeper (mm) to go on each failed attempt")
+	grabRandomCmd.Flags().IntVar(&grabRandomFlags.MaxAttemptsPerPos, "max-attempts", 3, "max grab attempts per target position before moving on")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.WeightThresholdG, "weight-threshold-g", 10.0, "minimum weight gain (g) to consider a grab successful")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.ScaleDropX, "scale-drop-x", 320.0, "X position (mm) of scale surface in world frame")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.ScaleDropY, "scale-drop-y", 456.0, "Y position (mm) of scale surface in world frame")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.ScaleDropZ, "scale-drop-z", 0.0, "Z position (mm) of scale surface in world frame")
+	grabRandomCmd.Flags().Float64Var(&grabRandomFlags.ScaleDropHoverMM, "scale-drop-hover-mm", 250.0, "hover height (mm) above scale surface before opening gripper")
+
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
@@ -211,6 +247,8 @@ func init() {
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(framesCmd)
 	rootCmd.AddCommand(segmentCmd)
+	rootCmd.AddCommand(grabCmd)
+	rootCmd.AddCommand(grabRandomCmd)
 }
 
 func main() {

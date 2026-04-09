@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,16 +10,29 @@ import (
 	"time"
 
 	vizClient "github.com/viam-labs/motion-tools/client/client"
+	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/spatialmath"
+
+	"salad/segmentation"
 )
 
 var meshDrawColors = []string{
 	"lightblue", "lightgreen", "lightyellow", "plum", "wheat", "lightpink",
 }
 
+var zoneVizColors = []string{
+	"red", "blue", "green", "orange", "purple",
+	"cyan", "yellow", "pink", "teal", "chocolate",
+}
+
 func runDisplay(flags DisplayFlags) error {
-	files, err := resolveDisplayPaths(flags)
+	localFiles := flags.LocalFiles
+	if localFiles == "" {
+		return fmt.Errorf("--local-files directory is required")
+	}
+
+	files, err := resolveDisplayPaths(localFiles, flags.Zones)
 	if err != nil {
 		return err
 	}
@@ -44,7 +58,25 @@ func runDisplay(flags DisplayFlags) error {
 			filtered = append(filtered, f)
 		}
 	}
-	if len(filtered) == 0 {
+
+	var zonesResult *segmentation.ZonesResult
+	var zonesJSONResolved, zonesMeshPath string
+	if flags.Zones {
+		zonesJSON := filepath.Join(localFiles, "zones.json")
+		loaded, err := loadZonesFromJSON(zonesJSON)
+		if err != nil {
+			return err
+		}
+		meshPath, err := resolveSourceMeshPath(zonesJSON, loaded.SourceMesh)
+		if err != nil {
+			return err
+		}
+		zonesResult = &loaded
+		zonesJSONResolved = zonesJSON
+		zonesMeshPath = meshPath
+	}
+
+	if len(filtered) == 0 && !flags.Zones {
 		return fmt.Errorf("no files to display for selected filters (pcd=%v mesh=%v)", showPCD, showMesh)
 	}
 
@@ -55,45 +87,122 @@ func runDisplay(flags DisplayFlags) error {
 		}
 	}
 
-	fmt.Printf("Drawing %d file(s) (.pcd / .ply / .stl) from %s to %s\n", len(filtered), flags.LocalFiles, flags.VizURL)
-	for i, f := range filtered {
-		label := displayLabel(flags.LocalFiles, f.path)
-		switch f.kind {
-		case displayKindPCD:
-			pc, err := pointcloud.NewFromFile(f.path, "")
-			if err != nil {
-				return fmt.Errorf("failed to load point cloud %q: %w", f.path, err)
-			}
-			if err := vizClient.DrawPointCloud(label, pc, nil); err != nil {
-				return fmt.Errorf("failed to draw point cloud %q: %w", f.path, err)
-			}
-		case displayKindPLY:
-			mesh, err := spatialmath.NewMeshFromPLYFile(f.path)
-			if err != nil {
-				return fmt.Errorf("failed to load mesh %q: %w", f.path, err)
-			}
-			mesh.SetLabel(label)
-			color := meshDrawColors[i%len(meshDrawColors)]
-			if err := vizClient.DrawGeometry(mesh, color); err != nil {
-				return fmt.Errorf("failed to draw mesh %q: %w", f.path, err)
-			}
-		case displayKindSTL:
-			mesh, err := spatialmath.NewMeshFromSTLFile(f.path)
-			if err != nil {
-				return fmt.Errorf("failed to load mesh %q: %w", f.path, err)
-			}
-			mesh.SetLabel(label)
-			color := meshDrawColors[i%len(meshDrawColors)]
-			if err := vizClient.DrawGeometry(mesh, color); err != nil {
-				return fmt.Errorf("failed to draw mesh %q: %w", f.path, err)
-			}
-		default:
-			return fmt.Errorf("unsupported display kind for %q", f.path)
+	logger := logging.NewLogger("display")
+
+	if zonesResult != nil {
+		fmt.Printf("Drawing zones from %s (source mesh %s) to %s\n", zonesJSONResolved, zonesMeshPath, flags.VizURL)
+		if err := visualizeZones(logger, zonesResult, flags.VizURL, zonesMeshPath); err != nil {
+			return err
 		}
-		time.Sleep(300 * time.Millisecond)
+	}
+
+	if len(filtered) > 0 {
+		fmt.Printf("Drawing %d file(s) (.pcd / .ply / .stl) from %s to %s\n", len(filtered), localFiles, flags.VizURL)
+		for i, f := range filtered {
+			label := displayLabel(localFiles, f.path)
+			switch f.kind {
+			case displayKindPCD:
+				pc, err := pointcloud.NewFromFile(f.path, "")
+				if err != nil {
+					return fmt.Errorf("failed to load point cloud %q: %w", f.path, err)
+				}
+				if err := vizClient.DrawPointCloud(label, pc, nil); err != nil {
+					return fmt.Errorf("failed to draw point cloud %q: %w", f.path, err)
+				}
+			case displayKindPLY:
+				mesh, err := spatialmath.NewMeshFromPLYFile(f.path)
+				if err != nil {
+					return fmt.Errorf("failed to load mesh %q: %w", f.path, err)
+				}
+				mesh.SetLabel(label)
+				color := meshDrawColors[i%len(meshDrawColors)]
+				if err := vizClient.DrawGeometry(mesh, color); err != nil {
+					return fmt.Errorf("failed to draw mesh %q: %w", f.path, err)
+				}
+			case displayKindSTL:
+				mesh, err := spatialmath.NewMeshFromSTLFile(f.path)
+				if err != nil {
+					return fmt.Errorf("failed to load mesh %q: %w", f.path, err)
+				}
+				mesh.SetLabel(label)
+				color := meshDrawColors[i%len(meshDrawColors)]
+				if err := vizClient.DrawGeometry(mesh, color); err != nil {
+					return fmt.Errorf("failed to draw mesh %q: %w", f.path, err)
+				}
+			default:
+				return fmt.Errorf("unsupported display kind for %q", f.path)
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
 	}
 
 	fmt.Println("Display complete.")
+	return nil
+}
+
+func loadZonesFromJSON(path string) (segmentation.ZonesResult, error) {
+	var result segmentation.ZonesResult
+	f, err := os.Open(path)
+	if err != nil {
+		return result, fmt.Errorf("open zones %q: %w", path, err)
+	}
+	defer f.Close()
+	if err := json.NewDecoder(f).Decode(&result); err != nil {
+		return result, fmt.Errorf("decode zones %q: %w", path, err)
+	}
+	if len(result.Zones) == 0 {
+		return result, fmt.Errorf("zones file %q contains no zones", path)
+	}
+	return result, nil
+}
+
+func resolveSourceMeshPath(zonesJSONPath, sourceMesh string) (string, error) {
+	if sourceMesh == "" {
+		return "", fmt.Errorf("zones file %q has empty source_mesh", zonesJSONPath)
+	}
+	tryPaths := []string{sourceMesh}
+	zonesDir := filepath.Dir(zonesJSONPath)
+	tryPaths = append(tryPaths, filepath.Join(zonesDir, filepath.Base(sourceMesh)))
+	tryPaths = append(tryPaths, filepath.Join(zonesDir, "mesh.ply"))
+	for _, p := range tryPaths {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("could not find source mesh for zones (tried %v)", tryPaths)
+}
+
+func visualizeZones(logger logging.Logger, result *segmentation.ZonesResult, vizURL, meshPath string) error {
+	vizClient.SetURL(vizURL)
+	if err := vizClient.RemoveAllSpatialObjects(); err != nil {
+		return fmt.Errorf("clearing visualizer: %w", err)
+	}
+
+	srcMesh, err := spatialmath.NewMeshFromPLYFile(meshPath)
+	if err != nil {
+		return fmt.Errorf("loading mesh for viz: %w", err)
+	}
+	srcMesh.SetLabel("fridge-mesh")
+	if err := vizClient.DrawGeometry(srcMesh, "lightgrey"); err != nil {
+		return fmt.Errorf("drawing mesh: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	for _, zone := range result.Zones {
+		label := fmt.Sprintf("zone-%d", zone.ID)
+		color := zoneVizColors[zone.ID%len(zoneVizColors)]
+		logger.Infof("Drawing zone %d (%d triangles, color=%s)...", zone.ID, len(zone.Mesh.Faces), color)
+		zoneMesh := zone.Mesh.ToSpatialMesh(label)
+		if err := vizClient.DrawGeometry(zoneMesh, color); err != nil {
+			return fmt.Errorf("drawing zone %d: %w", zone.ID, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	logger.Infof("Sent %d zone(s) to %s", len(result.Zones), vizURL)
 	return nil
 }
 
@@ -120,21 +229,21 @@ type displayFile struct {
 	modTime int64
 }
 
-func resolveDisplayPaths(flags DisplayFlags) ([]displayFile, error) {
-	if flags.LocalFiles == "" {
+func resolveDisplayPaths(localFiles string, allowEmpty bool) ([]displayFile, error) {
+	if localFiles == "" {
 		return nil, fmt.Errorf("--local-files directory is required")
 	}
 
-	info, err := os.Stat(flags.LocalFiles)
+	info, err := os.Stat(localFiles)
 	if err != nil {
-		return nil, fmt.Errorf("failed to access --local-files %q: %w", flags.LocalFiles, err)
+		return nil, fmt.Errorf("failed to access --local-files %q: %w", localFiles, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("--local-files must be a directory, got %q", flags.LocalFiles)
+		return nil, fmt.Errorf("--local-files must be a directory, got %q", localFiles)
 	}
 
 	var matches []displayFile
-	err = filepath.WalkDir(flags.LocalFiles, func(path string, d os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(localFiles, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -165,10 +274,10 @@ func resolveDisplayPaths(flags DisplayFlags) ([]displayFile, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan folder %q: %w", flags.LocalFiles, err)
+		return nil, fmt.Errorf("failed to scan folder %q: %w", localFiles, err)
 	}
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no .pcd, .ply, or .stl files found under %q", flags.LocalFiles)
+	if len(matches) == 0 && !allowEmpty {
+		return nil, fmt.Errorf("no .pcd, .ply, or .stl files found under %q", localFiles)
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
