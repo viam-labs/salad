@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"salad/segmentation"
 )
 
 type ScanFlags struct {
@@ -67,6 +69,11 @@ type CropFlags struct {
 	MinY, MaxY float64
 	MinZ, MaxZ float64
 }
+
+// TODO: meshify and segment should be moved to a Viam resource/module accessible
+// via DoCommand once mesh-based segmentation has been validated as an effective
+// input to automated bin grabbing. Running both from the CLI is
+// sufficient for initial setup purposes in the meantime.
 
 var (
 	// Persistent flags available to all subcommands.
@@ -180,12 +187,25 @@ func init() {
 	_ = cropCmd.MarkFlagRequired("input")
 	_ = cropCmd.MarkFlagRequired("output")
 
+	defaults := segmentation.DefaultOptions()
+	segmentCmd.Flags().StringVar(&segmentFlags.MeshPath, "mesh", "mesh.ply", "path to the fridge PLY mesh file")
+	segmentCmd.Flags().StringVar(&segmentFlags.OutputDir, "output", "", "output directory (default: output/<timestamp>)")
+	segmentCmd.Flags().BoolVar(&segmentFlags.Viz, "viz", false, "display each zone in a distinct color in the motion-tools visualizer")
+	segmentCmd.Flags().StringVar(&segmentFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
+	segmentCmd.Flags().Float64Var(&segmentFlags.CellSizeMM, "cell-size", defaults.CellSizeMM, "height-map grid cell size in mm (smaller = finer boundaries)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.DividerZPercentile, "divider-z-percentile", defaults.DividerZPercentile, "Z percentile: cells above this are walls/dividers (absolute criterion); [0,1]")
+	segmentCmd.Flags().Float64Var(&segmentFlags.DividerGradientMM, "divider-gradient", defaults.DividerGradientMM, "min Z rise (mm) above lowest neighbour to treat a cell as a divider ridge (0 = disable)")
+	segmentCmd.Flags().IntVar(&segmentFlags.DividerDilation, "divider-dilation", defaults.DividerDilation, "cells to dilate barrier mask by (closes reconstruction gaps)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.MinZoneAreaMM2, "min-zone-area", defaults.MinZoneAreaMM2, "minimum zone footprint area in mm² (smaller components discarded as noise)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.MaxZoneAreaMM2, "max-zone-area", defaults.MaxZoneAreaMM2, "maximum zone footprint area in mm² (larger components rejected as non-bin regions; 0=disabled)")
+
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(framesCmd)
+	rootCmd.AddCommand(segmentCmd)
 }
 
 func main() {
