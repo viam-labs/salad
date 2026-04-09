@@ -76,10 +76,11 @@ type Options struct {
 	// Must be in [0, 1]. Default: 0.80.
 	DividerZPercentile float64
 
-	// DividerGradientMM is the minimum Z rise (mm) a cell must have above its
-	// lowest occupied neighbour to be treated as a divider ridge (gradient criterion).
-	// This catches thin dividers whose absolute Z may not be unusually high.
-	// Set to 0 to disable gradient detection. Default: 15.0.
+	// DividerGradientMM is the minimum margin (mm) by which a cell must exceed
+	// ALL of its occupied neighbours to be treated as a divider ridge top.
+	// Only local maxima — cells that are at least DividerGradientMM above every
+	// occupied neighbour — are marked, keeping barriers narrow and preserving the
+	// bin floor area. Set to 0 to disable gradient detection. Default: 15.0.
 	DividerGradientMM float64
 
 	// DividerDilation is the number of height-map cells by which the combined
@@ -87,10 +88,16 @@ type Options struct {
 	// Default: 2.
 	DividerDilation int
 
-	// MinBinAreaMM2 is the minimum bin footprint area in mm².
+	// MinZoneAreaMM2 is the minimum zone footprint area in mm².
 	// Components smaller than this are discarded as noise.
 	// Default: 5000.0 (roughly 50 mm × 100 mm).
-	MinBinAreaMM2 float64
+	MinZoneAreaMM2 float64
+
+	// MaxZoneAreaMM2 is the maximum zone footprint area in mm².
+	// Components larger than this are discarded as non-bin regions (e.g. open
+	// corridors or background floor areas that don't represent individual bins).
+	// Set to 0 to disable the upper bound. Default: 100000.0.
+	MaxZoneAreaMM2 float64
 }
 
 // DefaultOptions returns sensible defaults for fridge segmentation.
@@ -100,7 +107,8 @@ func DefaultOptions() Options {
 		DividerZPercentile: 0.80,
 		DividerGradientMM:  15.0,
 		DividerDilation:    2,
-		MinBinAreaMM2:      5000.0,
+		MinZoneAreaMM2:     5000.0,
+		MaxZoneAreaMM2:     100000.0,
 	}
 }
 
@@ -246,7 +254,11 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 	stats.ZThreshold = zThreshold
 
 	// --- Build barrier mask: absolute-Z OR gradient criterion ---
-	// Pre-compute neighbour Z lookups for gradient detection.
+	//
+	// Gradient criterion: a cell is a divider/wall if it rises at least
+	// DividerGradientMM above its lowest occupied neighbour. This reliably detects
+	// the slopes and crests of divider ridges regardless of absolute Z, forming
+	// continuous barriers that BFS cannot cross.
 	isDivider := make([][]bool, rows)
 	for r := range isDivider {
 		isDivider[r] = make([]bool, cols)
@@ -264,7 +276,8 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 				isDivider[r][c] = true
 				continue
 			}
-			// Gradient criterion: rise above lowest occupied neighbour.
+			// Gradient criterion: rises at least DividerGradientMM above its
+			// lowest occupied neighbour.
 			if opts.DividerGradientMM > 0 {
 				minNeighZ := math.MaxFloat64
 				for _, d := range dirs4 {
@@ -351,7 +364,7 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 	}
 	stats.ComponentsTotal = len(componentCells)
 
-	// --- Filter small components and compute XY bounds ---
+	// --- Filter components by area and compute XY bounds ---
 	type zoneInfo struct {
 		label      int
 		minX, maxX float64
@@ -361,7 +374,8 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 
 	cellArea := opts.CellSizeMM * opts.CellSizeMM
 	for label, cells := range componentCells {
-		if float64(len(cells))*cellArea < opts.MinBinAreaMM2 {
+		area := float64(len(cells)) * cellArea
+		if area < opts.MinZoneAreaMM2 {
 			continue
 		}
 		minBinX, minBinY := math.MaxFloat64, math.MaxFloat64
@@ -382,6 +396,14 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 				maxBinY = y
 			}
 		}
+		// Reject zones that are too large to represent a single bin
+		// (e.g. open corridors or background floor areas).
+		if opts.MaxZoneAreaMM2 > 0 {
+			footprint := (maxBinX - minBinX) * (maxBinY - minBinY)
+			if footprint > opts.MaxZoneAreaMM2 {
+				continue
+			}
+		}
 		zoneInfos = append(zoneInfos, zoneInfo{
 			label: label,
 			minX:  minBinX, maxX: maxBinX,
@@ -392,18 +414,43 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 
 	if len(zoneInfos) == 0 {
 		return nil, stats, fmt.Errorf(
-			"no zones detected (z_threshold=%.1fmm, gradient=%.1fmm, min_area=%.0fmm²)\n"+
+			"no zones detected (z_threshold=%.1fmm, gradient=%.1fmm, min_area=%.0fmm², max_area=%.0fmm²)\n"+
 				"  Z range: [%.1f, %.1f]mm  barrier cells: %d/%d (%.0f%%)\n"+
-				"  try: lower --divider-z-percentile, lower --divider-gradient, or adjust --min-bin-area",
-			zThreshold, opts.DividerGradientMM, opts.MinBinAreaMM2,
+				"  try: lower --divider-z-percentile, lower --divider-gradient, or adjust area bounds",
+			zThreshold, opts.DividerGradientMM, opts.MinZoneAreaMM2, opts.MaxZoneAreaMM2,
 			stats.ZMin, stats.ZMax,
 			stats.BarrierCellsDilated, stats.OccupiedCells,
 			100*float64(stats.BarrierCellsDilated)/float64(stats.OccupiedCells),
 		)
 	}
 
-	// Sort left-to-right (X then Y) for stable IDs.
+	// Sort zones by the axis along which their centres are most spread out.
+	// This produces a stable front-to-back (or left-to-right) ordering regardless
+	// of which world axis the bins happen to run along.
+	var sumX, sumY float64
+	for _, zi := range zoneInfos {
+		sumX += (zi.minX + zi.maxX) / 2
+		sumY += (zi.minY + zi.maxY) / 2
+	}
+	meanX := sumX / float64(len(zoneInfos))
+	meanY := sumY / float64(len(zoneInfos))
+	var varX, varY float64
+	for _, zi := range zoneInfos {
+		dx := (zi.minX+zi.maxX)/2 - meanX
+		dy := (zi.minY+zi.maxY)/2 - meanY
+		varX += dx * dx
+		varY += dy * dy
+	}
+	sortByY := varY > varX
 	sort.Slice(zoneInfos, func(i, j int) bool {
+		if sortByY {
+			ci := (zoneInfos[i].minY + zoneInfos[i].maxY) / 2
+			cj := (zoneInfos[j].minY + zoneInfos[j].maxY) / 2
+			if math.Abs(ci-cj) > opts.CellSizeMM {
+				return ci < cj
+			}
+			return (zoneInfos[i].minX+zoneInfos[i].maxX)/2 < (zoneInfos[j].minX+zoneInfos[j].maxX)/2
+		}
 		ci := (zoneInfos[i].minX + zoneInfos[i].maxX) / 2
 		cj := (zoneInfos[j].minX + zoneInfos[j].maxX) / 2
 		if math.Abs(ci-cj) > opts.CellSizeMM {
