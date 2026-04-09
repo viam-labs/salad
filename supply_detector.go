@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/logging"
@@ -126,44 +127,54 @@ func (s *supplyDetector) DoCommand(ctx context.Context, cmd map[string]interface
 }
 
 func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{}, error) {
-	img, err := camera.DecodeImageFromCamera(ctx, s.cam, []string{"image/jpeg"}, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image: %w", err)
-	}
-
 	result := make(map[string]interface{})
 
 	if s.visionSvc != nil {
 		detections, err := s.visionSvc.DetectionsFromCamera(ctx, s.cfg.Camera, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get detections: %w", err)
+			s.logger.Warnf("Vision service failed, falling back to hardcoded bins: %v", err)
+		} else {
+			for _, det := range detections {
+				label := det.Label()
+
+				if label == "empty" {
+					bb := det.BoundingBox()
+					if bb == nil {
+						s.logger.Warnf("Empty detection has no bounding box, skipping")
+						continue
+					}
+					name, ok := findBinByOverlap(bb, s.cfg.Bins)
+					if !ok {
+						s.logger.Warnf("Empty detection at (%d,%d)-(%d,%d) doesn't overlap any configured bin", bb.Min.X, bb.Min.Y, bb.Max.X, bb.Max.Y)
+						continue
+					}
+					s.logger.Debugf("Detection: %s = empty (resolved via bounding box)", name)
+					result[name] = "empty"
+					continue
+				}
+
+				parts := strings.SplitN(label, " ", 2)
+				if len(parts) != 2 {
+					s.logger.Warnf("Skipping detection with unparseable label %q", label)
+					continue
+				}
+				level, ingredient := parts[0], parts[1]
+				switch level {
+				case "full", "low":
+					s.logger.Debugf("Detection: %s = %s", ingredient, level)
+					result[ingredient] = level
+				default:
+					s.logger.Warnf("Skipping detection with unknown level %q in label %q", level, label)
+				}
+			}
+			return result, nil
 		}
-		for _, det := range detections {
-			bb := det.BoundingBox()
-			if bb == nil {
-				continue
-			}
-			bin := SupplyBinConfig{
-				Name: det.Label(),
-				X1:   bb.Min.X,
-				Y1:   bb.Min.Y,
-				X2:   bb.Max.X,
-				Y2:   bb.Max.Y,
-			}
-			ratio, err := s.nonSteelRatio(img, bin)
-			if err != nil {
-				s.logger.Warnf("Failed to analyze detection '%s': %v", bin.Name, err)
-				result[bin.Name] = "unknown"
-				continue
-			}
-			s.logger.Debugf("Detection '%s': non-steel ratio = %.2f (threshold: %.2f)", bin.Name, ratio, s.cfg.LowThreshold)
-			if ratio < s.cfg.LowThreshold {
-				result[bin.Name] = "low"
-			} else {
-				result[bin.Name] = "available"
-			}
-		}
-		return result, nil
+	}
+
+	// Fallback: hardcoded bins + steel color analysis
+	img, err := camera.DecodeImageFromCamera(ctx, s.cam, []string{"image/jpeg"}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image: %w", err)
 	}
 
 	for _, bin := range s.cfg.Bins {
@@ -173,9 +184,7 @@ func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{
 			result[bin.Name] = "unknown"
 			continue
 		}
-
 		s.logger.Debugf("Bin '%s': non-steel ratio = %.2f (threshold: %.2f)", bin.Name, ratio, s.cfg.LowThreshold)
-
 		if ratio < s.cfg.LowThreshold {
 			result[bin.Name] = "low"
 		} else {
@@ -184,6 +193,21 @@ func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{
 	}
 
 	return result, nil
+}
+
+func findBinByOverlap(bb *image.Rectangle, bins []SupplyBinConfig) (string, bool) {
+	best := ""
+	bestArea := 0
+	for _, bin := range bins {
+		binRect := image.Rect(bin.X1, bin.Y1, bin.X2, bin.Y2)
+		inter := bb.Intersect(binRect)
+		area := inter.Dx() * inter.Dy()
+		if area > bestArea {
+			bestArea = area
+			best = bin.Name
+		}
+	}
+	return best, bestArea > 0
 }
 
 // nonSteelRatio returns the fraction of pixels in the ROI that are NOT steel-colored.
