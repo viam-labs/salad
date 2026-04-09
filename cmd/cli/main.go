@@ -59,6 +59,8 @@ type MeshifyFlags struct {
 	KDTreeKNN     int
 	OrientNN      int
 	LODMultiplier int
+	Viz           bool
+	VizURL        string
 }
 
 type CropFlags struct {
@@ -170,12 +172,13 @@ func init() {
 	_ = filterCmd.MarkFlagRequired("output")
 
 	meshifyCmd.Flags().StringVar(&meshifyFlags.InputPath, "input", "", "input PCD file (required)")
-	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (required)")
+	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (default: output/<timestamp>/mesh.ply)")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 30, "KNN for normal estimation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.OrientNN, "orient-nn", 50, "KNN for normal orientation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.LODMultiplier, "lod-multiplier", 0, "Poisson reconstruction depth (8-11, higher=finer; 0=default 9)")
+	meshifyCmd.Flags().BoolVar(&meshifyFlags.Viz, "viz", false, "display the output mesh in the motion-tools visualizer")
+	meshifyCmd.Flags().StringVar(&meshifyFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	_ = meshifyCmd.MarkFlagRequired("input")
-	_ = meshifyCmd.MarkFlagRequired("output")
 
 	cropCmd.Flags().StringVar(&cropFlags.InputPath, "input", "", "input PCD file (required)")
 	cropCmd.Flags().StringVar(&cropFlags.OutputPath, "output", "", "output PCD file (default: output/<timestamp>/cropped.pcd)")
