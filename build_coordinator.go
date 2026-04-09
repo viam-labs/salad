@@ -128,9 +128,8 @@ type buildCoordinator struct {
 	buildCancelFunc func()
 	buildDone       chan struct{}
 
-	queue         *OrderQueue
-	queueStop     chan struct{}
-	avgBuildSecs  float64 // rolling average of build durations in seconds
+	queue        *OrderQueue
+	avgBuildSecs float64 // rolling average of build durations in seconds
 	buildCount    int     // number of completed builds for averaging
 }
 
@@ -154,9 +153,8 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
 		status:               "idle",
-		queue:                NewOrderQueue(),
-		queueStop:            make(chan struct{}),
-		avgBuildSecs:         240, // default estimate until real data
+		queue:        NewOrderQueue(),
+		avgBuildSecs: 240, // default estimate until real data
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -746,7 +744,7 @@ func toFloat64(v interface{}) (float64, error) {
 func (s *buildCoordinator) processQueue() {
 	for {
 		select {
-		case <-s.queueStop:
+		case <-s.cancelCtx.Done():
 			return
 		case <-s.queue.notify:
 		}
@@ -840,7 +838,6 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 }
 
 func (s *buildCoordinator) Close(context.Context) error {
-	close(s.queueStop)
 	s.cancelFunc()
 	return nil
 }
