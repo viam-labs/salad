@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,15 +16,16 @@ import (
 )
 
 type SegmentFlags struct {
-	MeshPath           string
-	OutputPath         string
-	Viz                bool
+	MeshPath  string
+	OutputDir string
+	Viz       bool
 	VizURL             string
 	CellSizeMM         float64
 	DividerZPercentile float64
 	DividerGradientMM  float64
 	DividerDilation    int
-	MinBinAreaMM2      float64
+	MinZoneAreaMM2     float64
+	MaxZoneAreaMM2     float64
 }
 
 var segmentFlags SegmentFlags
@@ -43,7 +45,8 @@ func runSegment(flags SegmentFlags) error {
 		DividerZPercentile: flags.DividerZPercentile,
 		DividerGradientMM:  flags.DividerGradientMM,
 		DividerDilation:    flags.DividerDilation,
-		MinBinAreaMM2:      flags.MinBinAreaMM2,
+		MinZoneAreaMM2:     flags.MinZoneAreaMM2,
+		MaxZoneAreaMM2:     flags.MaxZoneAreaMM2,
 	}
 
 	logger.Infof("Segmenting %s", flags.MeshPath)
@@ -66,8 +69,8 @@ func runSegment(flags SegmentFlags) error {
 		stats.BarrierCellsRaw, stats.BarrierCellsDilated, opts.DividerDilation,
 		100*float64(stats.BarrierCellsDilated)/float64(stats.OccupiedCells),
 		stats.OccupiedCells)
-	logger.Infof("Components: %d total → %d after min-area filter (%.0f mm²)",
-		stats.ComponentsTotal, stats.ComponentsAfterFilter, opts.MinBinAreaMM2)
+	logger.Infof("Components: %d total → %d after area filter [%.0f, %.0f] mm²",
+		stats.ComponentsTotal, stats.ComponentsAfterFilter, opts.MinZoneAreaMM2, opts.MaxZoneAreaMM2)
 
 	logger.Infof("Detected %d zone(s):", len(result.Zones))
 	logger.Infof("%-4s  %-10s  %-10s  %-10s  %-10s  %-12s  %-12s  %-9s",
@@ -80,12 +83,15 @@ func runSegment(flags SegmentFlags) error {
 	}
 	logger.Info("")
 
-	outPath := flags.OutputPath
-	if outPath == "" {
-		ext := filepath.Ext(flags.MeshPath)
-		outPath = strings.TrimSuffix(flags.MeshPath, ext) + ".zones.json"
+	outputDir := flags.OutputDir
+	if outputDir == "" {
+		outputDir = filepath.Join("output", time.Now().Format("20060102-150405"))
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create output directory %q: %w", outputDir, err)
 	}
 
+	outPath := filepath.Join(outputDir, "zones.json")
 	logger.Infof("Writing %s...", outPath)
 	tWrite := time.Now()
 	if err := segmentation.SaveZones(result, outPath); err != nil {
