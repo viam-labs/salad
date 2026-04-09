@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"salad/meshification"
+
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/camera"
@@ -249,7 +251,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 
 	t0 = time.Now()
 	meshPath := filepath.Join(outputDir, "mesh.ply")
-	if err := execMeshifier(croppedPath, meshPath, 30, 50, 0); err != nil {
+	if err := meshification.Run(croppedPath, meshPath, meshification.DefaultConfig()); err != nil {
 		return fmt.Errorf("failed to build mesh: %w", err)
 	}
 	logger.Infof("Step 4/4 mesh: wrote %s (%s)", meshPath, time.Since(t0).Round(time.Millisecond))
