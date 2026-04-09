@@ -492,3 +492,147 @@ body {
   max-width: 400px;
   color: var(--gray-text);
 }
+
+/* Queue Board */
+.queue-board {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.queue-board h1 {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.queue-empty {
+  text-align: center;
+  color: #888;
+  font-size: 1.2rem;
+  padding: 3rem 0;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 12px;
+  background: #f5f5f5;
+  transition: background 0.2s;
+}
+
+.queue-item--building {
+  background: #e8f5e9;
+  border: 2px solid #4caf50;
+}
+
+.queue-item--mine {
+  background: #e3f2fd;
+  border: 2px solid #2196f3;
+}
+
+.queue-item--mine.queue-item--building {
+  background: #e8f5e9;
+  border: 2px solid #4caf50;
+}
+
+.queue-item-position {
+  font-size: 1.5rem;
+  font-weight: bold;
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.queue-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-item-name {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.queue-item-yours {
+  color: #2196f3;
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+.queue-item-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge--building {
+  background: #4caf50;
+  color: white;
+}
+
+.badge--queued {
+  background: #ff9800;
+  color: white;
+}
+
+.queue-item-step {
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.queue-item-wait {
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.queue-item-progress-bg {
+  margin-top: 0.5rem;
+  height: 6px;
+  background: #ddd;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.queue-item-progress-fill {
+  height: 100%;
+  background: #4caf50;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.btn-cancel {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #e53935;
+  border-radius: 8px;
+  background: white;
+  color: #e53935;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-cancel:hover {
+  background: #e53935;
+  color: white;
+}
+
+.btn-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
