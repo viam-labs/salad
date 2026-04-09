@@ -1,6 +1,7 @@
 package segmentation
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -21,7 +22,7 @@ type ZoneMesh struct {
 }
 
 // ToSpatialMesh converts a ZoneMesh into a *spatialmath.Mesh for use with the
-// motion-tools visualizer and collision checking.
+// motion-tools visualiser and collision checking.
 func (zm ZoneMesh) ToSpatialMesh(label string) *spatialmath.Mesh {
 	triangles := make([]*spatialmath.Triangle, 0, len(zm.Faces))
 	for _, f := range zm.Faces {
@@ -50,23 +51,40 @@ type ZonesResult struct {
 	Zones       []Zone    `json:"zones"`
 }
 
+// SegmentStats contains diagnostic information from a segmentation run for
+// display by the CLI. It is not written to the JSON output file.
+type SegmentStats struct {
+	TriangleCount         int
+	GridRows, GridCols    int
+	OccupiedCells         int
+	ZMin, ZMax            float64
+	ZThreshold            float64
+	BarrierCellsRaw       int // before dilation
+	BarrierCellsDilated   int // after dilation
+	ComponentsTotal       int
+	ComponentsAfterFilter int
+}
+
 // Options controls segmentation behaviour.
 type Options struct {
 	// CellSizeMM is the resolution of the 2D height-map grid in millimetres.
-	// Smaller values detect finer bin boundaries but increase memory and runtime.
 	// Default: 5.0
 	CellSizeMM float64
 
-	// DividerZPercentile is the percentile of occupied-cell max-Z values used to
-	// separate divider peaks (high Z) from bin content surfaces (low Z).
-	// Must be in [0, 1]. Default: 0.75.
-	// Increase toward 1.0 if bins are over-segmented. Decrease toward 0.5 if bins merge.
+	// DividerZPercentile is the percentile of occupied-cell max-Z values above
+	// which a cell is considered a divider or wall (absolute criterion).
+	// Must be in [0, 1]. Default: 0.80.
 	DividerZPercentile float64
 
-	// DividerDilation is the number of height-map cells by which the divider mask is
-	// dilated before connected-component analysis. Dilation closes gaps left by
-	// Poisson-reconstruction smoothing so that dividers form continuous barriers.
-	// Default: 4.
+	// DividerGradientMM is the minimum Z rise (mm) a cell must have above its
+	// lowest occupied neighbour to be treated as a divider ridge (gradient criterion).
+	// This catches thin dividers whose absolute Z may not be unusually high.
+	// Set to 0 to disable gradient detection. Default: 15.0.
+	DividerGradientMM float64
+
+	// DividerDilation is the number of height-map cells by which the combined
+	// divider mask is dilated to close small reconstruction gaps.
+	// Default: 2.
 	DividerDilation int
 
 	// MinBinAreaMM2 is the minimum bin footprint area in mm².
@@ -79,71 +97,77 @@ type Options struct {
 func DefaultOptions() Options {
 	return Options{
 		CellSizeMM:         5.0,
-		DividerZPercentile: 0.75,
-		DividerDilation:    4,
+		DividerZPercentile: 0.80,
+		DividerGradientMM:  15.0,
+		DividerDilation:    2,
 		MinBinAreaMM2:      5000.0,
 	}
 }
 
 // SegmentFridgeBins loads a PLY mesh and segments it into bin zones.
 //
-// Algorithm:
-//  1. Projects mesh triangle vertices onto a 2D grid, recording max Z per cell (height map).
-//  2. Derives a Z threshold from DividerZPercentile of occupied-cell heights.
-//  3. Marks cells above the threshold as dividers/walls.
-//  4. Dilates the divider mask by DividerDilation cells to close gaps caused by Poisson
-//     reconstruction smoothing.
-//  5. Runs BFS connected-component labeling on the remaining open cells (4-connectivity).
-//  6. Filters out components smaller than MinBinAreaMM2.
-//  7. Assigns each mesh triangle to a zone based on which component contains its centroid.
-//  8. Returns one Zone per remaining component, sorted left-to-right (X then Y).
-func SegmentFridgeBins(meshPath string, opts Options) (*ZonesResult, error) {
+// Barrier detection uses two criteria (either is sufficient):
+//  1. Absolute: cell maxZ ≥ DividerZPercentile threshold
+//  2. Gradient: cell maxZ exceeds its lowest occupied neighbour by ≥ DividerGradientMM
+//     This catches thin divider ridges whose absolute Z may not be unusually high.
+//
+// The combined barrier mask is then dilated by DividerDilation cells to close
+// gaps left by Poisson reconstruction, before BFS labelling.
+func SegmentFridgeBins(meshPath string, opts Options) (*ZonesResult, SegmentStats, error) {
 	mesh, err := spatialmath.NewMeshFromPLYFile(meshPath)
 	if err != nil {
-		return nil, fmt.Errorf("loading mesh %q: %w", meshPath, err)
+		return nil, SegmentStats{}, fmt.Errorf("loading mesh %q: %w", meshPath, err)
 	}
 
 	triangles := mesh.Triangles()
 	if len(triangles) == 0 {
-		return nil, fmt.Errorf("mesh %q has no triangles", meshPath)
+		return nil, SegmentStats{}, fmt.Errorf("mesh %q has no triangles", meshPath)
 	}
 
-	zones, err := segmentTriangles(triangles, opts)
+	zones, stats, err := segmentTriangles(triangles, opts)
 	if err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 
-	return &ZonesResult{
+	result := &ZonesResult{
 		SourceMesh:  meshPath,
 		GeneratedAt: time.Now(),
 		Zones:       zones,
-	}, nil
+	}
+	return result, stats, nil
 }
 
-// SaveZones writes a ZonesResult to a JSON file.
+// SaveZones writes a ZonesResult to a JSON file using a buffered streaming encoder.
+// The output is compact (no indentation) for speed and manageable file size.
 func SaveZones(result *ZonesResult, path string) error {
-	data, err := json.MarshalIndent(result, "", "  ")
+	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("marshaling zones: %w", err)
+		return fmt.Errorf("creating %q: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("writing %q: %w", path, err)
+	defer f.Close()
+
+	bw := bufio.NewWriterSize(f, 1<<20) // 1 MiB write buffer
+	enc := json.NewEncoder(bw)
+	if err := enc.Encode(result); err != nil {
+		return fmt.Errorf("encoding zones: %w", err)
 	}
-	return nil
+	return bw.Flush()
 }
 
 // segmentTriangles performs height-map segmentation on the given mesh triangles.
-func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, error) {
+func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, SegmentStats, error) {
+	var stats SegmentStats
 	if opts.CellSizeMM <= 0 {
-		return nil, fmt.Errorf("CellSizeMM must be > 0, got %v", opts.CellSizeMM)
+		return nil, stats, fmt.Errorf("CellSizeMM must be > 0, got %v", opts.CellSizeMM)
 	}
 	if opts.DividerZPercentile < 0 || opts.DividerZPercentile > 1 {
-		return nil, fmt.Errorf("DividerZPercentile must be in [0,1], got %v", opts.DividerZPercentile)
+		return nil, stats, fmt.Errorf("DividerZPercentile must be in [0,1], got %v", opts.DividerZPercentile)
 	}
 
-	// Extract vertices from triangles.
+	// --- Extract vertices from triangles ---
 	type face struct{ verts [3]r3.Vector }
 	faces := make([]face, len(triangles))
+	stats.TriangleCount = len(triangles)
 
 	minX, minY := math.MaxFloat64, math.MaxFloat64
 	maxX, maxY := -math.MaxFloat64, -math.MaxFloat64
@@ -169,39 +193,38 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 
 	cols := int((maxX-minX)/opts.CellSizeMM) + 1
 	rows := int((maxY-minY)/opts.CellSizeMM) + 1
+	stats.GridCols = cols
+	stats.GridRows = rows
 
 	// --- Build 2D height map (max Z per cell) ---
 	type cell struct {
 		maxZ    float64
 		hasData bool
 	}
+	const noZ = -math.MaxFloat64
 	grid := make([][]cell, rows)
 	for r := range grid {
 		grid[r] = make([]cell, cols)
 		for c := range grid[r] {
-			grid[r][c].maxZ = -math.MaxFloat64
+			grid[r][c].maxZ = noZ
 		}
-	}
-
-	addPt := func(p r3.Vector) {
-		c := int((p.X - minX) / opts.CellSizeMM)
-		r := int((p.Y - minY) / opts.CellSizeMM)
-		if c < 0 || c >= cols || r < 0 || r >= rows {
-			return
-		}
-		if p.Z > grid[r][c].maxZ {
-			grid[r][c].maxZ = p.Z
-		}
-		grid[r][c].hasData = true
 	}
 
 	for _, f := range faces {
 		for _, p := range f.verts {
-			addPt(p)
+			c := int((p.X - minX) / opts.CellSizeMM)
+			r := int((p.Y - minY) / opts.CellSizeMM)
+			if c < 0 || c >= cols || r < 0 || r >= rows {
+				continue
+			}
+			if p.Z > grid[r][c].maxZ {
+				grid[r][c].maxZ = p.Z
+			}
+			grid[r][c].hasData = true
 		}
 	}
 
-	// --- Compute Z threshold via percentile of occupied-cell max-Z values ---
+	// --- Compute Z threshold via percentile ---
 	var zValues []float64
 	for r := range grid {
 		for c := range grid[r] {
@@ -211,29 +234,77 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 		}
 	}
 	if len(zValues) == 0 {
-		return nil, fmt.Errorf("no occupied cells in height map")
+		return nil, stats, fmt.Errorf("no occupied cells in height map")
 	}
 	sort.Float64s(zValues)
+	stats.OccupiedCells = len(zValues)
+	stats.ZMin = zValues[0]
+	stats.ZMax = zValues[len(zValues)-1]
+
 	threshIdx := int(float64(len(zValues)-1) * opts.DividerZPercentile)
 	zThreshold := zValues[threshIdx]
+	stats.ZThreshold = zThreshold
 
-	// --- Build divider mask: cells at or above the Z threshold ---
+	// --- Build barrier mask: absolute-Z OR gradient criterion ---
+	// Pre-compute neighbour Z lookups for gradient detection.
 	isDivider := make([][]bool, rows)
 	for r := range isDivider {
 		isDivider[r] = make([]bool, cols)
-		for c := range isDivider[r] {
-			if grid[r][c].hasData && grid[r][c].maxZ >= zThreshold {
+	}
+
+	dirs4 := [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
+
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			if !grid[r][c].hasData {
+				continue
+			}
+			// Absolute criterion: above Z threshold.
+			if grid[r][c].maxZ >= zThreshold {
 				isDivider[r][c] = true
+				continue
+			}
+			// Gradient criterion: rise above lowest occupied neighbour.
+			if opts.DividerGradientMM > 0 {
+				minNeighZ := math.MaxFloat64
+				for _, d := range dirs4 {
+					nr, nc := r+d[0], c+d[1]
+					if nr < 0 || nr >= rows || nc < 0 || nc >= cols {
+						continue
+					}
+					if grid[nr][nc].hasData && grid[nr][nc].maxZ < minNeighZ {
+						minNeighZ = grid[nr][nc].maxZ
+					}
+				}
+				if minNeighZ < math.MaxFloat64 && grid[r][c].maxZ-minNeighZ >= opts.DividerGradientMM {
+					isDivider[r][c] = true
+				}
 			}
 		}
 	}
 
-	// --- Dilate divider mask to close gaps from Poisson reconstruction smoothing ---
+	// Count raw barrier cells for stats.
+	for r := range isDivider {
+		for c := range isDivider[r] {
+			if isDivider[r][c] {
+				stats.BarrierCellsRaw++
+			}
+		}
+	}
+
+	// --- Dilate barrier mask to close reconstruction gaps ---
 	if opts.DividerDilation > 0 {
 		isDivider = dilateMask(isDivider, rows, cols, opts.DividerDilation)
 	}
+	for r := range isDivider {
+		for c := range isDivider[r] {
+			if isDivider[r][c] {
+				stats.BarrierCellsDilated++
+			}
+		}
+	}
 
-	// --- BFS connected-component labeling on open (non-divider, occupied) cells ---
+	// --- BFS connected-component labelling on open cells ---
 	labels := make([][]int, rows)
 	for r := range labels {
 		labels[r] = make([]int, cols)
@@ -250,7 +321,7 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 	}
 
 	type coord struct{ r, c int }
-	dirs := []coord{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
+	dirs := [4]coord{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}
 
 	nextLabel := 0
 	componentCells := map[int][]coord{}
@@ -278,22 +349,21 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 			}
 		}
 	}
+	stats.ComponentsTotal = len(componentCells)
 
 	// --- Filter small components and compute XY bounds ---
 	type zoneInfo struct {
-		label            int
-		minX, maxX       float64
-		minY, maxY       float64
+		label      int
+		minX, maxX float64
+		minY, maxY float64
 	}
 	var zoneInfos []zoneInfo
 
 	cellArea := opts.CellSizeMM * opts.CellSizeMM
 	for label, cells := range componentCells {
-		area := float64(len(cells)) * cellArea
-		if area < opts.MinBinAreaMM2 {
+		if float64(len(cells))*cellArea < opts.MinBinAreaMM2 {
 			continue
 		}
-
 		minBinX, minBinY := math.MaxFloat64, math.MaxFloat64
 		maxBinX, maxBinY := -math.MaxFloat64, -math.MaxFloat64
 		for _, cc := range cells {
@@ -318,16 +388,21 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 			minY: minBinY, maxY: maxBinY,
 		})
 	}
+	stats.ComponentsAfterFilter = len(zoneInfos)
 
 	if len(zoneInfos) == 0 {
-		return nil, fmt.Errorf(
-			"no zones detected (z_threshold=%.1f, min_area=%.0f mm²); "+
-				"try adjusting --divider-z-percentile, --divider-dilation, or --min-bin-area",
-			zThreshold, opts.MinBinAreaMM2,
+		return nil, stats, fmt.Errorf(
+			"no zones detected (z_threshold=%.1fmm, gradient=%.1fmm, min_area=%.0fmm²)\n"+
+				"  Z range: [%.1f, %.1f]mm  barrier cells: %d/%d (%.0f%%)\n"+
+				"  try: lower --divider-z-percentile, lower --divider-gradient, or adjust --min-bin-area",
+			zThreshold, opts.DividerGradientMM, opts.MinBinAreaMM2,
+			stats.ZMin, stats.ZMax,
+			stats.BarrierCellsDilated, stats.OccupiedCells,
+			100*float64(stats.BarrierCellsDilated)/float64(stats.OccupiedCells),
 		)
 	}
 
-	// Sort left-to-right (X then Y) for stable numbering.
+	// Sort left-to-right (X then Y) for stable IDs.
 	sort.Slice(zoneInfos, func(i, j int) bool {
 		ci := (zoneInfos[i].minX + zoneInfos[i].maxX) / 2
 		cj := (zoneInfos[j].minX + zoneInfos[j].maxX) / 2
@@ -364,7 +439,7 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 		zoneFaces[idx] = append(zoneFaces[idx], f.verts)
 	}
 
-	// --- Build Zone structs with their sub-meshes ---
+	// --- Build Zone structs ---
 	zones := make([]Zone, len(zoneInfos))
 	for i, zi := range zoneInfos {
 		zones[i] = Zone{
@@ -377,11 +452,10 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 		}
 	}
 
-	return zones, nil
+	return zones, stats, nil
 }
 
 // dilateMask expands every true cell in mask by radius cells in all directions.
-// Used to close gaps in divider ridges left by Poisson reconstruction smoothing.
 func dilateMask(mask [][]bool, rows, cols, radius int) [][]bool {
 	result := make([][]bool, rows)
 	for r := range result {
@@ -392,12 +466,13 @@ func dilateMask(mask [][]bool, rows, cols, radius int) [][]bool {
 			if !mask[r][c] {
 				continue
 			}
-			for dr := -radius; dr <= radius; dr++ {
-				for dc := -radius; dc <= radius; dc++ {
-					nr, nc := r+dr, c+dc
-					if nr >= 0 && nr < rows && nc >= 0 && nc < cols {
-						result[nr][nc] = true
-					}
+			rLo := max(0, r-radius)
+			rHi := min(rows-1, r+radius)
+			cLo := max(0, c-radius)
+			cHi := min(cols-1, c+radius)
+			for nr := rLo; nr <= rHi; nr++ {
+				for nc := cLo; nc <= cHi; nc++ {
+					result[nr][nc] = true
 				}
 			}
 		}
@@ -409,7 +484,7 @@ func dilateMask(mask [][]bool, rows, cols, radius int) [][]bool {
 // Duplicate vertices are deduplicated so that the mesh is compact.
 func buildZoneMesh(faces [][3]r3.Vector) ZoneMesh {
 	type key [3]float64
-	vertIdx := make(map[key]int)
+	vertIdx := make(map[key]int, len(faces)*2)
 	var vertices [][3]float64
 	var faceIndices [][3]int
 
@@ -425,14 +500,12 @@ func buildZoneMesh(faces [][3]r3.Vector) ZoneMesh {
 	}
 
 	for _, f := range faces {
-		i0 := getOrAdd(f[0])
-		i1 := getOrAdd(f[1])
-		i2 := getOrAdd(f[2])
-		faceIndices = append(faceIndices, [3]int{i0, i1, i2})
+		faceIndices = append(faceIndices, [3]int{
+			getOrAdd(f[0]),
+			getOrAdd(f[1]),
+			getOrAdd(f[2]),
+		})
 	}
 
-	return ZoneMesh{
-		Vertices: vertices,
-		Faces:    faceIndices,
-	}
+	return ZoneMesh{Vertices: vertices, Faces: faceIndices}
 }

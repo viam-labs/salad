@@ -193,8 +193,9 @@ func init() {
 	segmentCmd.Flags().BoolVar(&segmentFlags.Viz, "viz", false, "display each zone in a distinct color in the motion-tools visualizer")
 	segmentCmd.Flags().StringVar(&segmentFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	segmentCmd.Flags().Float64Var(&segmentFlags.CellSizeMM, "cell-size", defaults.CellSizeMM, "height-map grid cell size in mm (smaller = finer boundaries)")
-	segmentCmd.Flags().Float64Var(&segmentFlags.DividerZPercentile, "divider-z-percentile", defaults.DividerZPercentile, "Z percentile threshold separating dividers (high) from bin surfaces (low); [0,1]")
-	segmentCmd.Flags().IntVar(&segmentFlags.DividerDilation, "divider-dilation", defaults.DividerDilation, "cells to dilate divider mask by (closes gaps in Poisson-reconstructed dividers)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.DividerZPercentile, "divider-z-percentile", defaults.DividerZPercentile, "Z percentile: cells above this are walls/dividers (absolute criterion); [0,1]")
+	segmentCmd.Flags().Float64Var(&segmentFlags.DividerGradientMM, "divider-gradient", defaults.DividerGradientMM, "min Z rise (mm) above lowest neighbour to treat a cell as a divider ridge (0 = disable)")
+	segmentCmd.Flags().IntVar(&segmentFlags.DividerDilation, "divider-dilation", defaults.DividerDilation, "cells to dilate barrier mask by (closes reconstruction gaps)")
 	segmentCmd.Flags().Float64Var(&segmentFlags.MinBinAreaMM2, "min-bin-area", defaults.MinBinAreaMM2, "minimum zone footprint area in mm² (smaller components discarded as noise)")
 
 	rootCmd.AddCommand(scanCmd)
