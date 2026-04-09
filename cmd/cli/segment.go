@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	vizClient "github.com/viam-labs/motion-tools/client/client"
+	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/spatialmath"
 
 	"salad/segmentation"
@@ -36,6 +37,7 @@ var segmentCmd = &cobra.Command{
 }
 
 func runSegment(flags SegmentFlags) error {
+	logger := logging.NewLogger("segment")
 	opts := segmentation.Options{
 		CellSizeMM:         flags.CellSizeMM,
 		DividerZPercentile: flags.DividerZPercentile,
@@ -44,39 +46,39 @@ func runSegment(flags SegmentFlags) error {
 		MinBinAreaMM2:      flags.MinBinAreaMM2,
 	}
 
-	fmt.Printf("Segmenting %s\n", flags.MeshPath)
+	logger.Infof("Segmenting %s", flags.MeshPath)
 
 	t0 := time.Now()
-	fmt.Printf("  Loading mesh and running segmentation...\n")
+	logger.Infof("Loading mesh and running segmentation...")
 	result, stats, err := segmentation.SegmentFridgeBins(flags.MeshPath, opts)
 	elapsed := time.Since(t0)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("  Done in %s\n\n", elapsed.Round(time.Millisecond))
-	fmt.Printf("  Grid:       %d × %d cells (%g mm resolution)\n", stats.GridCols, stats.GridRows, opts.CellSizeMM)
-	fmt.Printf("  Triangles:  %d\n", stats.TriangleCount)
-	fmt.Printf("  Z range:    [%.1f, %.1f] mm  threshold=%.1f mm (p%.0f)\n",
+	logger.Infof("Done in %s", elapsed.Round(time.Millisecond))
+	logger.Infof("Grid:       %d × %d cells (%g mm resolution)", stats.GridCols, stats.GridRows, opts.CellSizeMM)
+	logger.Infof("Triangles:  %d", stats.TriangleCount)
+	logger.Infof("Z range:    [%.1f, %.1f] mm  threshold=%.1f mm (p%.0f)",
 		stats.ZMin, stats.ZMax, stats.ZThreshold, opts.DividerZPercentile*100)
-	fmt.Printf("  Gradient:   ≥%.1f mm rise above lowest neighbour\n", opts.DividerGradientMM)
-	fmt.Printf("  Barriers:   %d raw → %d after dilation=%d  (%.0f%% of %d cells)\n",
+	logger.Infof("Gradient:   ≥%.1f mm rise above lowest neighbour", opts.DividerGradientMM)
+	logger.Infof("Barriers:   %d raw → %d after dilation=%d  (%.0f%% of %d cells)",
 		stats.BarrierCellsRaw, stats.BarrierCellsDilated, opts.DividerDilation,
 		100*float64(stats.BarrierCellsDilated)/float64(stats.OccupiedCells),
 		stats.OccupiedCells)
-	fmt.Printf("  Components: %d total → %d after min-area filter (%.0f mm²)\n\n",
+	logger.Infof("Components: %d total → %d after min-area filter (%.0f mm²)",
 		stats.ComponentsTotal, stats.ComponentsAfterFilter, opts.MinBinAreaMM2)
 
-	fmt.Printf("Detected %d zone(s):\n\n", len(result.Zones))
-	fmt.Printf("  %-4s  %-10s  %-10s  %-10s  %-10s  %-12s  %-12s  %-9s\n",
+	logger.Infof("Detected %d zone(s):", len(result.Zones))
+	logger.Infof("%-4s  %-10s  %-10s  %-10s  %-10s  %-12s  %-12s  %-9s",
 		"ID", "MinX", "MaxX", "MinY", "MaxY", "Width(mm)", "Depth(mm)", "Triangles")
-	fmt.Printf("  %s\n", strings.Repeat("-", 87))
+	logger.Infof("%s", strings.Repeat("-", 87))
 	for _, z := range result.Zones {
-		fmt.Printf("  %-4d  %-10.1f  %-10.1f  %-10.1f  %-10.1f  %-12.1f  %-12.1f  %-9d\n",
+		logger.Infof("%-4d  %-10.1f  %-10.1f  %-10.1f  %-10.1f  %-12.1f  %-12.1f  %-9d",
 			z.ID, z.MinX, z.MaxX, z.MinY, z.MaxY,
 			z.MaxX-z.MinX, z.MaxY-z.MinY, len(z.Mesh.Faces))
 	}
-	fmt.Println()
+	logger.Info("")
 
 	outPath := flags.OutputPath
 	if outPath == "" {
@@ -84,26 +86,25 @@ func runSegment(flags SegmentFlags) error {
 		outPath = strings.TrimSuffix(flags.MeshPath, ext) + ".zones.json"
 	}
 
-	fmt.Printf("Writing %s...\n", outPath)
+	logger.Infof("Writing %s...", outPath)
 	tWrite := time.Now()
 	if err := segmentation.SaveZones(result, outPath); err != nil {
 		return err
 	}
-	fmt.Printf("Wrote %s (%.1f s)\n", outPath, time.Since(tWrite).Seconds())
+	logger.Infof("Wrote %s (%.1f s)", outPath, time.Since(tWrite).Seconds())
 
 	if flags.Viz {
-		return visualizeZones(result, flags.VizURL, flags.MeshPath)
+		return visualizeZones(logger, result, flags.VizURL, flags.MeshPath)
 	}
 	return nil
 }
 
-// zoneVizColors is the palette used to distinguish individual zones in motion-tools.
 var zoneVizColors = []string{
 	"red", "blue", "green", "orange", "purple",
 	"cyan", "yellow", "pink", "teal", "chocolate",
 }
 
-func visualizeZones(result *segmentation.ZonesResult, vizURL, meshPath string) error {
+func visualizeZones(logger logging.Logger, result *segmentation.ZonesResult, vizURL, meshPath string) error {
 	vizClient.SetURL(vizURL)
 	if err := vizClient.RemoveAllSpatialObjects(); err != nil {
 		return fmt.Errorf("clearing visualizer: %w", err)
@@ -124,7 +125,7 @@ func visualizeZones(result *segmentation.ZonesResult, vizURL, meshPath string) e
 	for _, zone := range result.Zones {
 		label := fmt.Sprintf("zone-%d", zone.ID)
 		color := zoneVizColors[zone.ID%len(zoneVizColors)]
-		fmt.Printf("  Drawing zone %d (%d triangles, color=%s)...\n", zone.ID, len(zone.Mesh.Faces), color)
+		logger.Infof("Drawing zone %d (%d triangles, color=%s)...", zone.ID, len(zone.Mesh.Faces), color)
 		zoneMesh := zone.Mesh.ToSpatialMesh(label)
 		if err := vizClient.DrawGeometry(zoneMesh, color); err != nil {
 			return fmt.Errorf("drawing zone %d: %w", zone.ID, err)
@@ -132,6 +133,6 @@ func visualizeZones(result *segmentation.ZonesResult, vizURL, meshPath string) e
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	fmt.Printf("Sent %d zone(s) to %s\n", len(result.Zones), vizURL)
+	logger.Infof("Sent %d zone(s) to %s", len(result.Zones), vizURL)
 	return nil
 }
