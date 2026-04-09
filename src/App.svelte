@@ -48,7 +48,8 @@
       orderId = result.order_id;
       screen = "queue";
     } catch (err) {
-      console.error("Failed to queue order:", err);
+      error = err instanceof Error ? err.message : String(err);
+      screen = "error";
     }
   }
 
