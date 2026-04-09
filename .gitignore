@@ -60,6 +60,4 @@ dist-ssr
 downloads/*
 output/*
 
-cli
-
 *.ply
