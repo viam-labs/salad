@@ -73,7 +73,7 @@
 {/if}
 
 {#if screen !== "loading" && screen !== "error" && screen !== "building"}
-  <button class="camera-fab" onclick={openCamera}>&#x1F4F7;</button>
+  <button class="camera-fab" onclick={openCamera}>📷</button>
 {/if}
 
 {#if showCamera}
@@ -92,7 +92,7 @@
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
     >
-      <button class="camera-modal-close" onclick={closeCamera}>&#x2715;</button>
+      <button class="camera-modal-close" onclick={closeCamera}>✕</button>
       <video class="camera-modal-video" use:attachStream autoplay playsinline></video>
     </div>
   </div>
