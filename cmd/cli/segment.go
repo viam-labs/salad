@@ -30,25 +30,6 @@ var segmentFlags SegmentFlags
 var segmentCmd = &cobra.Command{
 	Use:   "segment",
 	Short: "Segment a fridge mesh into individual bin zones",
-	Long: `Loads a PLY mesh of the fridge and segments it into individual bin zones.
-
-Each zone is the section of the mesh that represents one bin's floor region. The
-fridge is scanned from above; dividers appear as ridges between lower bin surfaces.
-A height-map connected-component algorithm identifies each region using two barrier
-criteria:
-
-  1. Absolute: cells whose max Z is above --divider-z-percentile are treated as walls.
-  2. Gradient: cells that rise above their lowest neighbour by --divider-gradient mm
-     are treated as ridge tops (catches thin dividers regardless of absolute Z).
-
-The combined barrier mask is dilated by --divider-dilation cells to close gaps
-left by Poisson reconstruction before BFS labelling.
-
-The result is written to <mesh>.zones.json. Each zone contains its XY footprint
-bounds and the actual mesh triangles from the source mesh that belong to it.
-
-If --viz is set, each zone is drawn in a distinct colour in the motion-tools
-visualiser alongside the source mesh.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSegment(segmentFlags)
 	},
