@@ -38,8 +38,7 @@
           if (myOrder?.status === "building" && onBuilding) {
             onBuilding(myOrder.customer_name);
           }
-          // If our order is no longer in the queue (completed or gone), go to complete.
-          if (!myOrder && onComplete) {
+          if (myOrder?.status === "complete" && onComplete) {
             onComplete();
           }
         }
