@@ -19,15 +19,14 @@ import (
 )
 
 type GrabRandomFlags struct {
-	ZonesPath        string
-	MeshPath         string
-	ZoneID           int
-	ArmName          string
-	EndEffectorFrame string
-	GripperName      string
-	ScaleName        string
+	ZonesPath         string
+	MeshPath          string
+	ZoneID            int
+	ArmName           string
+	EndEffectorFrame  string
+	GripperName       string
+	ScaleName         string
 	HoverDistanceMM   float64
-	DepthIncrementMM  float64
 	MaxAttemptsPerPos int
 	WeightThresholdG  float64
 	ScaleDropX        float64
@@ -129,8 +128,9 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 	}
 
 	floorZ, rimZ, target := binCenterTarget(zone, mesh)
-	logger.Infof("Target: center (%.0f, %.0f) rimZ=%.0f floorZ=%.0f hoverZ=%.0f",
-		target.x, target.y, rimZ, floorZ, target.z+flags.HoverDistanceMM)
+	depthIncrementMM := (rimZ - floorZ) / float64(flags.MaxAttemptsPerPos)
+	logger.Infof("Target: center (%.0f, %.0f) rimZ=%.0f floorZ=%.0f hoverZ=%.0f depthIncrement=%.1fmm",
+		target.x, target.y, rimZ, floorZ, target.z+flags.HoverDistanceMM, depthIncrementMM)
 
 	gf := GrabFlags{
 		ArmName:           flags.ArmName,
@@ -138,7 +138,7 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 		GripperName:       flags.GripperName,
 		ScaleName:         flags.ScaleName,
 		HoverDistanceMM:   flags.HoverDistanceMM,
-		DepthIncrementMM:  flags.DepthIncrementMM,
+		DepthIncrementMM:  depthIncrementMM,
 		MaxAttemptsPerPos: flags.MaxAttemptsPerPos,
 		WeightThresholdG:  flags.WeightThresholdG,
 		ScaleDropX:        flags.ScaleDropX,
