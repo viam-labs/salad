@@ -338,12 +338,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	result, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"prepare_bowl": true,
+		"grab_bowl": true,
 	})
 	if err != nil {
 		return map[string]interface{}{
 			"success": false,
-			"message": fmt.Sprintf("Failed to prepare bowl: %v", err),
+			"message": fmt.Sprintf("Failed to grab bowl: %v", err),
 		}, nil
 	}
 
@@ -414,6 +414,17 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 		completedServings += target.servings
 	}
+
+	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		"grab_lid": true,
+	})
+	if err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to grab lid: %v", err),
+		}, nil
+	}
+
 	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
@@ -463,12 +474,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	// chefs kiss
-	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
-		"chefs_kiss": true,
-	}); err != nil {
-		s.logger.Errorf("Failed to perform chefs kiss: %v", err)
-	}
+	// // chefs kiss
+	// if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
+	// 	"chefs_kiss": true,
+	// }); err != nil {
+	// 	s.logger.Errorf("Failed to perform chefs kiss: %v", err)
+	// }
 
 	return map[string]interface{}{
 		"success": true,
