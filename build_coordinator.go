@@ -837,7 +837,19 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 		s.mu.Unlock()
 	}()
 
-	result, err := s.executeBuild(buildCtx, ingredientMap)
+	var result map[string]interface{}
+	var err error
+	if s.simulate {
+		s.logger.Infof("Simulate mode: skipping robot commands for order %s", order.ID)
+		s.updateStatus("complete", 100)
+		result = map[string]interface{}{
+			"success":   true,
+			"message":   "Salad built and delivered successfully (simulated)",
+			"simulated": true,
+		}
+	} else {
+		result, err = s.executeBuild(buildCtx, ingredientMap)
+	}
 	if buildCtx.Err() != nil {
 		s.logger.Infof("Order %s stopped, resetting hardware", order.ID)
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
