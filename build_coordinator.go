@@ -474,12 +474,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	// chefs kiss
-	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
-		"chefs_kiss": true,
-	}); err != nil {
-		s.logger.Errorf("Failed to perform chefs kiss: %v", err)
-	}
+	// // chefs kiss
+	// if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
+	// 	"chefs_kiss": true,
+	// }); err != nil {
+	// 	s.logger.Errorf("Failed to perform chefs kiss: %v", err)
+	// }
 
 	return map[string]interface{}{
 		"success": true,
