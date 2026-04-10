@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
@@ -38,6 +39,11 @@ type BuildCoordinatorConfig struct {
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
 	TextToSpeech      string                             `json:"text-to-speech"`
 	Simulate          bool                               `json:"simulate"`
+	AutoBuild         *bool                              `json:"auto-build"`
+}
+
+func (cfg *BuildCoordinatorConfig) autoBuildEnabled() bool {
+	return cfg.AutoBuild != nil && *cfg.AutoBuild
 }
 
 func init() {
@@ -124,9 +130,14 @@ type buildCoordinator struct {
 	status          string
 	progress        float64
 	customerName    string
+	currentOrderID  string
 	simulate        bool
 	buildCancelFunc func()
 	buildDone       chan struct{}
+
+	queue        *OrderQueue
+	avgBuildSecs float64 // rolling average of build durations in seconds
+	buildCount    int     // number of completed builds for averaging
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -150,6 +161,8 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredientCategories: make(map[string]string),
 		status:               "idle",
 		simulate:             conf.Simulate,
+		queue:        NewOrderQueue(),
+		avgBuildSecs: 240, // default estimate until real data
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -196,6 +209,14 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
+
+	if conf.autoBuildEnabled() {
+		s.logger.Infof("Auto-build enabled, starting queue consumer")
+		go s.processQueue()
+	} else {
+		s.logger.Infof("Auto-build disabled, queue consumer not started")
+	}
+
 	return s, nil
 }
 
@@ -203,7 +224,125 @@ func (s *buildCoordinator) Name() resource.Name {
 	return s.name
 }
 
+// enqueueOrder validates the order payload and adds it to the queue.
+func (s *buildCoordinator) enqueueOrder(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
+	ingredientMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("queue_order value must be a map of ingredient name to servings count")
+	}
+	if len(ingredientMap) == 0 {
+		return nil, fmt.Errorf("queue_order requires at least one ingredient")
+	}
+
+	// Validate ingredients and convert to map[string]int.
+	ingredients := make(map[string]int, len(ingredientMap))
+	for name, servingsRaw := range ingredientMap {
+		if _, exists := s.ingredients[name]; !exists {
+			return nil, fmt.Errorf("unknown ingredient %q, not in configuration", name)
+		}
+		servings, err := toFloat64(servingsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid servings value for ingredient %q: %w", name, err)
+		}
+		if servings <= 0 {
+			return nil, fmt.Errorf("servings for ingredient %q must be positive", name)
+		}
+		ingredients[name] = int(servings)
+	}
+
+	order := NewOrder(customerName, ingredients)
+	pos := s.queue.Enqueue(order)
+
+	s.logger.Infof("Order %s queued at position %d for %s", order.ID, pos, customerName)
+
+	return map[string]interface{}{
+		"status":         "queued",
+		"order_id":       order.ID,
+		"queue_position": pos,
+	}, nil
+}
+
+// getQueueSnapshot returns the full queue state for the board display.
+func (s *buildCoordinator) getQueueSnapshot() map[string]interface{} {
+	orders := s.queue.List()
+
+	s.mu.RLock()
+	currentStatus := s.status
+	currentProgress := s.progress
+	activeOrderID := s.currentOrderID
+	avgSecs := s.avgBuildSecs
+	s.mu.RUnlock()
+
+	orderList := make([]interface{}, 0, len(orders))
+	position := 1
+	for _, o := range orders {
+		entry := map[string]interface{}{
+			"id":            o.ID,
+			"customer_name": o.CustomerName,
+			"status":        o.Status,
+		}
+		// The building order stays in the queue with status "building".
+		if o.ID == activeOrderID && o.Status == "building" {
+			entry["progress"] = currentProgress
+			entry["current_step"] = currentStatus
+			entry["estimated_remaining_sec"] = avgSecs * (1.0 - currentProgress/100.0)
+		} else {
+			entry["position"] = position
+			entry["estimated_wait_sec"] = float64(position) * avgSecs
+			position++
+		}
+		orderList = append(orderList, entry)
+	}
+
+	// Append recently completed orders for board display.
+	for _, co := range s.queue.ListCompleted() {
+		orderList = append(orderList, map[string]interface{}{
+			"id":            co.ID,
+			"customer_name": co.CustomerName,
+			"status":        "complete",
+		})
+	}
+
+	return map[string]interface{}{
+		"orders":                 orderList,
+		"avg_build_duration_sec": avgSecs,
+	}
+}
+
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if val, ok := cmd["queue_order"]; ok {
+		customerName, _ := cmd["customer_name"].(string)
+		return s.enqueueOrder(ctx, val, customerName)
+	}
+	if _, ok := cmd["get_queue"]; ok {
+		return s.getQueueSnapshot(), nil
+	}
+	if val, ok := cmd["cancel_order"]; ok {
+		orderID, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf("cancel_order value must be an order ID string")
+		}
+		if s.queue.CancelByID(orderID) {
+			s.logger.Infof("Order %s cancelled", orderID)
+			return map[string]interface{}{
+				"status":   "cancelled",
+				"order_id": orderID,
+			}, nil
+		}
+		return map[string]interface{}{
+			"status":   "error",
+			"order_id": orderID,
+			"error":    "order not found or already being built",
+		}, nil
+	}
+	if _, ok := cmd["clear_queue"]; ok {
+		n := s.queue.Clear()
+		s.logger.Infof("Queue cleared, removed %d orders", n)
+		return map[string]interface{}{
+			"status":  "cleared",
+			"removed": n,
+		}, nil
+	}
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
 		return s.doBuildSalad(ctx, val, customerName)
@@ -230,7 +369,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
+	return nil, fmt.Errorf("unknown command, expected 'queue_order', 'get_queue', 'cancel_order', 'clear_queue', 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
 }
 
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
@@ -624,6 +763,120 @@ func toFloat64(v interface{}) (float64, error) {
 	default:
 		return 0, fmt.Errorf("cannot convert %T to float64", v)
 	}
+}
+
+// processQueue is the background consumer goroutine. It runs orders from the
+// queue one at a time in FIFO order.
+func (s *buildCoordinator) processQueue() {
+	for {
+		select {
+		case <-s.cancelCtx.Done():
+			return
+		case <-s.queue.notify:
+		}
+
+		for {
+			order, ok := s.queue.Peek()
+			if !ok || order.Status != "queued" {
+				break
+			}
+
+			s.queue.SetStatus(order.ID, "building")
+			remaining := s.queue.Len() - 1 // exclude the building order
+			s.logger.Infof("processing order %s for %s — %d order(s) waiting",
+				order.ID, order.CustomerName, remaining)
+
+			s.safeExecuteOrder(order)
+		}
+	}
+}
+
+// safeExecuteOrder wraps executeQueuedOrder with panic recovery so that a
+// single failing order cannot kill the queue-processing goroutine.
+func (s *buildCoordinator) safeExecuteOrder(order Order) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Errorf("panic while processing order %s for %s: %v — skipping",
+				order.ID, order.CustomerName, r)
+		}
+	}()
+	s.executeQueuedOrder(order)
+}
+
+// executeQueuedOrder runs a single queued order through the full build pipeline.
+func (s *buildCoordinator) executeQueuedOrder(order Order) {
+	start := time.Now()
+	waitTime := start.Sub(order.EnqueuedAt).Round(time.Second)
+	s.logger.Infof("starting order %s for %s — waited %s in queue",
+		order.ID, order.CustomerName, waitTime)
+
+	// Convert ingredients from map[string]int to map[string]interface{} for executeBuild.
+	ingredientMap := make(map[string]interface{}, len(order.Ingredients))
+	for k, v := range order.Ingredients {
+		ingredientMap[k] = v
+	}
+
+	// Set up build context and state (mirrors doBuildSalad).
+	s.mu.Lock()
+	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
+	s.buildCancelFunc = buildCancelFunc
+	s.buildDone = make(chan struct{})
+	s.status = "building"
+	s.progress = 0
+	s.customerName = order.CustomerName
+	s.currentOrderID = order.ID
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.buildCancelFunc = nil
+		s.customerName = ""
+		s.currentOrderID = ""
+		close(s.buildDone)
+		s.buildDone = nil
+		s.mu.Unlock()
+	}()
+
+	var result map[string]interface{}
+	var err error
+	if s.simulate {
+		s.logger.Infof("Simulate mode: skipping robot commands for order %s", order.ID)
+		s.updateStatus("complete", 100)
+		result = map[string]interface{}{
+			"success":   true,
+			"message":   "Salad built and delivered successfully (simulated)",
+			"simulated": true,
+		}
+	} else {
+		result, err = s.executeBuild(buildCtx, ingredientMap)
+	}
+	if buildCtx.Err() != nil {
+		s.logger.Infof("Order %s stopped, resetting hardware", order.ID)
+		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
+			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
+		}
+		s.updateStatus("idle", 0)
+		s.queue.RemoveByID(order.ID)
+		return
+	}
+
+	if err != nil {
+		s.logger.Errorf("Order %s for %s failed: %v", order.ID, order.CustomerName, err)
+		s.updateStatus("idle", 0)
+		s.queue.RemoveByID(order.ID)
+		return
+	}
+
+	// Update rolling average build duration.
+	elapsed := time.Since(start).Seconds()
+	s.mu.Lock()
+	s.buildCount++
+	s.avgBuildSecs = s.avgBuildSecs + (elapsed-s.avgBuildSecs)/float64(s.buildCount)
+	s.mu.Unlock()
+
+	s.queue.RemoveByID(order.ID)
+	s.queue.MarkComplete(order)
+	s.logger.Infof("Order %s complete for %s: %v (took %.0fs)", order.ID, order.CustomerName, result, elapsed)
 }
 
 func (s *buildCoordinator) Close(context.Context) error {
