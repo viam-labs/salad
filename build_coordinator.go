@@ -463,6 +463,10 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
+		select {
+		case <-time.After(10 * time.Second):
+		case <-buildCtx.Done():
+		}
 		s.updateStatus("complete", 100)
 		result = map[string]interface{}{
 			"success":   true,
@@ -852,6 +856,10 @@ func (s *buildCoordinator) executeQueuedOrder(order Order) {
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for order %s", order.ID)
+		select {
+		case <-time.After(10 * time.Second):
+		case <-buildCtx.Done():
+		}
 		s.updateStatus("complete", 100)
 		result = map[string]interface{}{
 			"success":   true,
