@@ -36,6 +36,8 @@ type BuildCoordinatorConfig struct {
 	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
+	TextToSpeech      string                             `json:"text-to-speech"`
+	Simulate          bool                               `json:"simulate"`
 }
 
 func init() {
@@ -67,6 +69,9 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	}
 
 	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
+	if cfg.TextToSpeech != "" {
+		deps = append(deps, cfg.TextToSpeech)
+	}
 
 	for i, ing := range cfg.Ingredients {
 		if ing.Name == "" {
@@ -111,6 +116,7 @@ type buildCoordinator struct {
 	chefsKissControls    resource.Resource
 	scaleSensor          sensor.Sensor
 	dressingControls     resource.Resource
+	textToSpeech         resource.Resource
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 
@@ -118,6 +124,7 @@ type buildCoordinator struct {
 	status          string
 	progress        float64
 	customerName    string
+	simulate        bool
 	buildCancelFunc func()
 	buildDone       chan struct{}
 }
@@ -142,6 +149,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
 		status:               "idle",
+		simulate:             conf.Simulate,
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -167,6 +175,14 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("chefs kiss controls service %q not found in dependencies", conf.ChefsKissControls)
 	}
 	s.chefsKissControls = chefsKissControls
+
+	if conf.TextToSpeech != "" {
+		textToSpeech, ok := deps[genericservice.Named(conf.TextToSpeech)]
+		if !ok {
+			return nil, fmt.Errorf("text-to-speech service %q not found in dependencies", conf.TextToSpeech)
+		}
+		s.textToSpeech = textToSpeech
+	}
 
 	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
@@ -304,7 +320,19 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		s.mu.Unlock()
 	}()
 
-	result, err := s.executeBuild(buildCtx, value)
+	var result map[string]interface{}
+	var err error
+	if s.simulate {
+		s.logger.Infof("Simulate mode: skipping robot commands for build")
+		s.updateStatus("complete", 100)
+		result = map[string]interface{}{
+			"success":   true,
+			"message":   "Salad built and delivered successfully (simulated)",
+			"simulated": true,
+		}
+	} else {
+		result, err = s.executeBuild(buildCtx, value)
+	}
 	if buildCtx.Err() != nil {
 		s.logger.Infof("Build stopped, resetting hardware")
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
@@ -315,6 +343,16 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 			"success": false,
 			"message": "Build stopped",
 		}, nil
+	}
+
+	if err == nil && s.textToSpeech != nil {
+		msg := "Your salad is ready!"
+		if customerName != "" {
+			msg = customerName + "'s salad is ready!"
+		}
+		if _, ttsErr := s.textToSpeech.DoCommand(buildCtx, map[string]interface{}{"say": msg}); ttsErr != nil {
+			s.logger.Errorw("text-to-speech announcement failed", "err", ttsErr)
+		}
 	}
 
 	return result, err
