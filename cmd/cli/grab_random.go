@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"go.viam.com/rdk/components/arm"
@@ -27,12 +28,19 @@ type GrabRandomFlags struct {
 	GripperName       string
 	ScaleName         string
 	HoverDistanceMM   float64
-	MaxAttemptsPerPos int
+	InitialDepthMM    float64
+	FloorBufferMM     float64
+	MaxDepthPositions int
+	GrabSettleMs      int
+	ScaleSettleMs     int
+	MinDepositG       float64
 	WeightThresholdG  float64
-	ScaleDropX        float64
-	ScaleDropY        float64
-	ScaleDropZ        float64
-	ScaleDropHoverMM  float64
+	TargetWeightG     float64
+	ScaleDropX           float64
+	ScaleDropY           float64
+	ScaleDropZ           float64
+	ScaleApproachHoverMM float64
+	ScaleDropHoverMM     float64
 }
 
 var grabRandomFlags GrabRandomFlags
@@ -128,9 +136,24 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 	}
 
 	floorZ, rimZ, target := binCenterTarget(zone, mesh)
-	depthIncrementMM := (rimZ - floorZ) / float64(flags.MaxAttemptsPerPos)
-	logger.Infof("Target: center (%.0f, %.0f) rimZ=%.0f floorZ=%.0f hoverZ=%.0f depthIncrement=%.1fmm",
-		target.x, target.y, rimZ, floorZ, target.z+flags.HoverDistanceMM, depthIncrementMM)
+	// target.z stays at rimZ so hover = rimZ + HoverDistanceMM (always above the rim).
+	// InitialDepthMM is applied inside attemptGrabWithDepthStepping so it only affects
+	// the grab Z, not the retreat/hover height.
+	firstGrabZ := rimZ - flags.InitialDepthMM
+	maxGrabZ := floorZ + flags.FloorBufferMM
+	if firstGrabZ <= maxGrabZ {
+		// InitialDepthMM pushed the first grab Z at or below the floor buffer.
+		// Clamp to maxGrabZ so the arm at least tries at the safest reachable depth.
+		logger.Warnf("firstGrabZ=%.0f is at or below maxGrabZ=%.0f — clamping to maxGrabZ", firstGrabZ, maxGrabZ)
+		firstGrabZ = maxGrabZ
+	}
+	steps := flags.MaxDepthPositions - 1
+	if steps < 1 {
+		steps = 1
+	}
+	depthIncrementMM := (firstGrabZ - maxGrabZ) / float64(steps)
+	logger.Infof("Target: center (%.0f, %.0f) rimZ=%.0f floorZ=%.0f firstGrabZ=%.0f maxGrabZ=%.0f hoverZ=%.0f depthIncrement=%.1fmm",
+		target.x, target.y, rimZ, floorZ, firstGrabZ, maxGrabZ, target.z+flags.HoverDistanceMM, depthIncrementMM)
 
 	gf := GrabFlags{
 		ArmName:           flags.ArmName,
@@ -138,13 +161,20 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 		GripperName:       flags.GripperName,
 		ScaleName:         flags.ScaleName,
 		HoverDistanceMM:   flags.HoverDistanceMM,
+		InitialDepthMM:    flags.InitialDepthMM,
 		DepthIncrementMM:  depthIncrementMM,
-		MaxAttemptsPerPos: flags.MaxAttemptsPerPos,
+		MaxGrabZ:          maxGrabZ,
+		MaxDepthPositions: flags.MaxDepthPositions,
+		GrabSettleMs:      flags.GrabSettleMs,
+		ScaleSettleMs:     flags.ScaleSettleMs,
+		MinDepositG:       flags.MinDepositG,
 		WeightThresholdG:  flags.WeightThresholdG,
-		ScaleDropX:        flags.ScaleDropX,
-		ScaleDropY:        flags.ScaleDropY,
-		ScaleDropZ:        flags.ScaleDropZ,
-		ScaleDropHoverMM:  flags.ScaleDropHoverMM,
+		TargetWeightG:     flags.TargetWeightG,
+		ScaleDropX:           flags.ScaleDropX,
+		ScaleDropY:           flags.ScaleDropY,
+		ScaleDropZ:           flags.ScaleDropZ,
+		ScaleApproachHoverMM: flags.ScaleApproachHoverMM,
+		ScaleDropHoverMM:     flags.ScaleDropHoverMM,
 	}
 	return executeGrabLoop(ctx, logger, []grabTarget{target}, armComp, gripperComp, scaleSensor, fs, fsGrab, worldState, endEffectorFrame, gf)
 }
@@ -161,15 +191,20 @@ func binCenterTarget(zone *segmentation.Zone, fridgeMesh *spatialmath.Mesh) (flo
 	centerX := (zone.MinX + zone.MaxX) / 2
 	centerY := (zone.MinY + zone.MaxY) / 2
 
-	// Floor: min Z from zone mesh (scanned floor triangles).
-	floorZ = math.MaxFloat64
+	// Floor: 5th-percentile Z from zone mesh vertices.
+	// Using the absolute minimum would let a single low-Z reconstruction artifact
+	// pull floorZ far below the actual bin floor, making maxGrabZ too permissive.
+	// The 5th percentile discards outliers while still representing the true floor.
+	var zVals []float64
 	for _, v := range zone.Mesh.Vertices {
-		if v[2] < floorZ {
-			floorZ = v[2]
-		}
+		zVals = append(zVals, v[2])
 	}
-	if floorZ == math.MaxFloat64 {
+	if len(zVals) == 0 {
 		floorZ = 0
+	} else {
+		sort.Float64s(zVals)
+		idx := int(math.Floor(0.05 * float64(len(zVals)-1)))
+		floorZ = zVals[idx]
 	}
 
 	// Rim: max Z from the full fridge mesh near the zone XY bounds.

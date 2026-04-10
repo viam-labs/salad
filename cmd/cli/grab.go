@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/golang/geo/r3"
 	"github.com/spf13/cobra"
@@ -37,13 +38,20 @@ type GrabFlags struct {
 	ScaleName         string
 	SeparationMM      float64
 	HoverDistanceMM   float64
+	InitialDepthMM    float64
 	DepthIncrementMM  float64
-	MaxAttemptsPerPos int
+	MaxGrabZ          float64 // hard floor: grab Z will never go below this value (0 = no limit)
+	MaxDepthPositions int
+	GrabSettleMs      int
+	ScaleSettleMs     int
+	MinDepositG       float64
 	WeightThresholdG  float64
-	ScaleDropX        float64
-	ScaleDropY        float64
-	ScaleDropZ        float64
-	ScaleDropHoverMM  float64
+	TargetWeightG     float64
+	ScaleDropX           float64
+	ScaleDropY           float64
+	ScaleDropZ           float64
+	ScaleApproachHoverMM float64 // transit height: arm travels here before descending to drop
+	ScaleDropHoverMM     float64 // drop height: arm descends here before opening gripper
 }
 
 var grabFlags GrabFlags
@@ -255,11 +263,17 @@ func executeGrabLoop(
 	endEffectorFrame string,
 	flags GrabFlags,
 ) error {
+	totalWeight := 0.0
 	newGrabFailures := 0
 	lastProductiveIdx := -1
+	lastSuccessAttempt := 0
 	nextNewIdx := 0
 
 	for newGrabFailures < len(targets) {
+		if flags.TargetWeightG > 0 && totalWeight >= flags.TargetWeightG {
+			break
+		}
+
 		isRetry := lastProductiveIdx >= 0
 		var targetIdx int
 		if isRetry {
@@ -269,13 +283,15 @@ func executeGrabLoop(
 				break
 			}
 			targetIdx = nextNewIdx
+			lastSuccessAttempt = 0
 		}
 
 		target := targets[targetIdx]
-		logger.Infof("--- Target %d (%.0f,%.0f,%.0f) retry=%v ---", targetIdx, target.x, target.y, target.z, isRetry)
+		logger.Infof("--- Target %d (%.0f,%.0f,%.0f) retry=%v startAttempt=%d totalWeight=%.1fg ---",
+			targetIdx, target.x, target.y, target.z, isRetry, lastSuccessAttempt, totalWeight)
 
-		productive, skipPosition, err := attemptGrabWithDepthStepping(
-			ctx, logger, target, armComp, gripperComp, scaleSensor, fs, fsGrab, worldState, endEffectorFrame, flags,
+		weightDeposited, successAttempt, skipPosition, err := attemptGrabWithDepthStepping(
+			ctx, logger, target, armComp, gripperComp, scaleSensor, fs, fsGrab, worldState, endEffectorFrame, flags, lastSuccessAttempt,
 		)
 		if err != nil {
 			return err
@@ -285,26 +301,44 @@ func executeGrabLoop(
 		case skipPosition:
 			logger.Infof("Target %d: unreachable — abandoning", targetIdx)
 			lastProductiveIdx = -1
+			lastSuccessAttempt = 0
 			nextNewIdx++
 			newGrabFailures++
 
-		case productive:
-			logger.Infof("Target %d: productive — will retry", targetIdx)
+		case weightDeposited > 0:
+			// Any positive deposit: retry at the same depth.
+			// Only count toward the target total if it meets the threshold.
+			if weightDeposited >= flags.WeightThresholdG {
+				totalWeight += weightDeposited
+				logger.Infof("Target %d: deposited %.1fg (total %.1fg / target %.1fg) — retrying at same depth",
+					targetIdx, weightDeposited, totalWeight, flags.TargetWeightG)
+			} else {
+				logger.Infof("Target %d: partial deposit %.1fg (below weight threshold %.1fg) — retrying at same depth",
+					targetIdx, weightDeposited, flags.WeightThresholdG)
+			}
 			lastProductiveIdx = targetIdx
+			lastSuccessAttempt = successAttempt
 			newGrabFailures = 0
 
 		default:
 			logger.Infof("Target %d: exhausted all attempts without sufficient weight gain", targetIdx)
 			lastProductiveIdx = -1
+			lastSuccessAttempt = 0
 			nextNewIdx++
 			newGrabFailures++
 		}
 	}
 
-	logger.Infof("Grab loop complete")
+	logger.Infof("Grab loop complete — total weight deposited: %.1fg", totalWeight)
 	return nil
 }
 
+// attemptGrabWithDepthStepping steps through up to MaxDepthPositions distinct depth levels
+// starting from startAttempt. At each depth it grabs once; if a meaningful deposit is made
+// (>= MinDepositG) it returns immediately so the caller can retry at that same depth
+// indefinitely. Only a zero/noise deposit advances to the next depth.
+// Returns the weight deposited, the depth-position index that succeeded (-1 if none),
+// whether the position should be skipped entirely, and any fatal error.
 func attemptGrabWithDepthStepping(
 	ctx context.Context,
 	logger logging.Logger,
@@ -317,7 +351,8 @@ func attemptGrabWithDepthStepping(
 	worldState *referenceframe.WorldState,
 	endEffectorFrame string,
 	flags GrabFlags,
-) (productive bool, skipPosition bool, err error) {
+	startAttempt int,
+) (weightDeposited float64, successAttempt int, skipPosition bool, err error) {
 	hoverPose := spatialmath.NewPose(
 		r3.Vector{X: target.x, Y: target.y, Z: target.z + flags.HoverDistanceMM},
 		&spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90},
@@ -325,7 +360,7 @@ func attemptGrabWithDepthStepping(
 
 	// Open gripper before approaching so it is safe to enter the bin area.
 	if err := gripperComp.Open(ctx, nil); err != nil {
-		return false, false, fmt.Errorf("opening gripper before approach: %w", err)
+		return 0, -1, false, fmt.Errorf("opening gripper before approach: %w", err)
 	}
 
 	// Approach to hover above bin: unconstrained so the arm can swing freely from
@@ -334,124 +369,171 @@ func attemptGrabWithDepthStepping(
 	// so we use fsGrab (no static mesh obstacles).
 	approachState, err := currentArmPlanState(ctx, armComp, fsGrab)
 	if err != nil {
-		return false, false, fmt.Errorf("reading arm state for approach: %w", err)
+		return 0, -1, false, fmt.Errorf("reading arm state for approach: %w", err)
 	}
 	approachTraj, err := planTo(ctx, logger, fsGrab, nil, approachState, endEffectorFrame, hoverPose, nil)
 	if err != nil {
-		logger.Infof("Approach to hover failed (%v) — skipping position", err)
-		return false, true, nil
+		logger.Infof("Approach to hover (%.0f, %.0f, %.0f) failed (%v) — skipping position",
+			target.x, target.y, target.z+flags.HoverDistanceMM, err)
+		return 0, -1, true, nil
 	}
 	if err := executeTraj(ctx, armComp, approachTraj, flags.ArmName); err != nil {
-		return false, false, fmt.Errorf("executing approach to hover: %w", err)
+		return 0, -1, false, fmt.Errorf("executing approach to hover: %w", err)
 	}
 
-	scalePose := spatialmath.NewPose(
+	scaleApproachPose := spatialmath.NewPose(
+		r3.Vector{X: flags.ScaleDropX, Y: flags.ScaleDropY, Z: flags.ScaleDropZ + flags.ScaleApproachHoverMM},
+		&spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90},
+	)
+	scaleDropPose := spatialmath.NewPose(
 		r3.Vector{X: flags.ScaleDropX, Y: flags.ScaleDropY, Z: flags.ScaleDropZ + flags.ScaleDropHoverMM},
 		&spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90},
 	)
 
 	linC := linearConstraints()
 
-	// Depth-stepping loop: each attempt goes deeper, stops when weight threshold met.
-	for attempt := range flags.MaxAttemptsPerPos {
-		depth := float64(attempt) * flags.DepthIncrementMM
+	// Depth-stepping loop: starts at startAttempt so successful retries resume at the
+	// same depth rather than restarting from the rim.
+	for attempt := startAttempt; attempt < flags.MaxDepthPositions; attempt++ {
+		depth := flags.InitialDepthMM + float64(attempt)*flags.DepthIncrementMM
 		grabZ := target.z - depth
+		if flags.MaxGrabZ != 0 && grabZ < flags.MaxGrabZ {
+			logger.Infof("Attempt %d: grabZ=%.0f would go below floor buffer (maxGrabZ=%.0f) — stopping", attempt+1, grabZ, flags.MaxGrabZ)
+			break
+		}
 		grabPose := spatialmath.NewPose(
 			r3.Vector{X: target.x, Y: target.y, Z: grabZ},
 			&spatialmath.OrientationVectorDegrees{OZ: -1, Theta: 90},
 		)
 
-		logger.Infof("Attempt %d/%d: descending to Z=%.0f (depth offset=%.0fmm)",
-			attempt+1, flags.MaxAttemptsPerPos, grabZ, depth)
+		logger.Infof("Depth position %d/%d: descending to Z=%.0f (depth offset=%.0fmm)",
+			attempt+1, flags.MaxDepthPositions, grabZ, depth)
 
-		// Open gripper before descending (no-op on first attempt; re-opens after scale drop on subsequent attempts).
+		// Open gripper before descending (re-opens after each failed scale drop).
 		if err := gripperComp.Open(ctx, nil); err != nil {
-			return false, false, fmt.Errorf("opening gripper: %w", err)
+			return 0, -1, false, fmt.Errorf("opening gripper: %w", err)
 		}
 
 		// Descent: linear — straight down into the bin from hover.
 		grabState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
-			return false, false, fmt.Errorf("reading arm state for grab: %w", err)
+			return 0, -1, false, fmt.Errorf("reading arm state for grab: %w", err)
 		}
 		grabTraj, err := planTo(ctx, logger, fsGrab, nil, grabState, endEffectorFrame, grabPose, linC)
 		if err != nil {
 			logger.Infof("Attempt %d: descent unreachable — skipping position", attempt+1)
-			return false, true, nil
+			return 0, -1, true, nil
 		}
 		if err := executeTraj(ctx, armComp, grabTraj, flags.ArmName); err != nil {
-			return false, false, fmt.Errorf("executing descent: %w", err)
+			return 0, -1, false, fmt.Errorf("executing descent: %w", err)
+		}
+		if flags.GrabSettleMs > 0 {
+			time.Sleep(time.Duration(flags.GrabSettleMs) * time.Millisecond)
 		}
 
 		if _, err := gripperComp.Grab(ctx, nil); err != nil {
-			return false, false, fmt.Errorf("grabbing: %w", err)
+			return 0, -1, false, fmt.Errorf("grabbing: %w", err)
+		}
+		if flags.GrabSettleMs > 0 {
+			time.Sleep(time.Duration(flags.GrabSettleMs) * time.Millisecond)
 		}
 		// Hold closed — gripper stays closed until we are over the scale.
 		if err := gripperComp.Stop(ctx, nil); err != nil {
-			return false, false, fmt.Errorf("stopping gripper before retreat: %w", err)
+			return 0, -1, false, fmt.Errorf("stopping gripper before retreat: %w", err)
 		}
 
 		// Retreat: linear — straight up out of the bin back to hover.
 		retreatState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
-			return false, false, fmt.Errorf("reading arm state for retreat: %w", err)
+			return 0, -1, false, fmt.Errorf("reading arm state for retreat: %w", err)
 		}
 		retreatTraj, err := planTo(ctx, logger, fsGrab, nil, retreatState, endEffectorFrame, hoverPose, linC)
 		if err != nil {
-			return false, false, fmt.Errorf("planning retreat to bin hover: %w", err)
+			return 0, -1, false, fmt.Errorf("planning retreat to bin hover: %w", err)
 		}
+
+		// Pre-plan scale transit from the retreat end state so there is no planning
+		// delay between retreat completion and the arm moving toward the scale.
+		scaleTransitTraj, err := planTo(ctx, logger, fsGrab, nil,
+			trajEndState(retreatTraj, flags.ArmName, fsGrab), endEffectorFrame, scaleApproachPose, linC)
+		if err != nil {
+			return 0, -1, false, fmt.Errorf("planning transit to scale approach hover: %w", err)
+		}
+
 		if err := executeTraj(ctx, armComp, retreatTraj, flags.ArmName); err != nil {
-			return false, false, fmt.Errorf("executing retreat to bin hover: %w", err)
+			return 0, -1, false, fmt.Errorf("executing retreat to bin hover: %w", err)
+		}
+		if err := executeTraj(ctx, armComp, scaleTransitTraj, flags.ArmName); err != nil {
+			return 0, -1, false, fmt.Errorf("executing transit to scale approach hover: %w", err)
 		}
 
-		// Transit to scale hover: linear — straight line at height between hover positions.
-		scaleApproachState, err := currentArmPlanState(ctx, armComp, fsGrab)
+		// Descend to drop height: unconstrained — forcing a straight vertical line at the
+		// scale XY position can push the arm into awkward configurations that trigger the safety stop.
+		scaleDescentState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
-			return false, false, fmt.Errorf("reading arm state for scale approach: %w", err)
+			return 0, -1, false, fmt.Errorf("reading arm state for scale descent: %w", err)
 		}
-		scaleTraj, err := planTo(ctx, logger, fsGrab, nil, scaleApproachState, endEffectorFrame, scalePose, linC)
+		scaleDescentTraj, err := planTo(ctx, logger, fsGrab, nil, scaleDescentState, endEffectorFrame, scaleDropPose, nil)
 		if err != nil {
-			return false, false, fmt.Errorf("planning to scale: %w", err)
+			return 0, -1, false, fmt.Errorf("planning descent to scale drop height: %w", err)
 		}
-		if err := executeTraj(ctx, armComp, scaleTraj, flags.ArmName); err != nil {
-			return false, false, fmt.Errorf("moving to scale: %w", err)
+		if err := executeTraj(ctx, armComp, scaleDescentTraj, flags.ArmName); err != nil {
+			return 0, -1, false, fmt.Errorf("executing descent to scale drop height: %w", err)
 		}
 
-		// Read baseline, then open gripper to drop food on scale.
+		// Read baseline, open gripper, wait for food to settle, then read again.
 		weightBefore, err := readWeight(ctx, scaleSensor)
 		if err != nil {
-			return false, false, fmt.Errorf("reading scale before drop: %w", err)
+			return 0, -1, false, fmt.Errorf("reading scale before drop: %w", err)
 		}
 		if err := gripperComp.Open(ctx, nil); err != nil {
-			return false, false, fmt.Errorf("opening gripper over scale: %w", err)
+			return 0, -1, false, fmt.Errorf("opening gripper over scale: %w", err)
+		}
+		if flags.ScaleSettleMs > 0 {
+			time.Sleep(time.Duration(flags.ScaleSettleMs) * time.Millisecond)
 		}
 		weightAfter, err := readWeight(ctx, scaleSensor)
 		if err != nil {
-			return false, false, fmt.Errorf("reading scale after drop: %w", err)
+			return 0, -1, false, fmt.Errorf("reading scale after drop: %w", err)
 		}
 
 		delta := weightAfter - weightBefore
 		logger.Infof("Attempt %d: deposited %.1fg on scale (threshold %.1fg)", attempt+1, delta, flags.WeightThresholdG)
-		if delta >= flags.WeightThresholdG {
-			return true, false, nil
+		// Rise back to scale approach hover before returning or looping: ensures the arm
+		// is always at transit height when leaving the scale, whether the deposit succeeded or not.
+		scaleRiseState, err := currentArmPlanState(ctx, armComp, fsGrab)
+		if err != nil {
+			return 0, -1, false, fmt.Errorf("reading arm state for scale rise: %w", err)
+		}
+		scaleRiseTraj, err := planTo(ctx, logger, fsGrab, nil, scaleRiseState, endEffectorFrame, scaleApproachPose, nil)
+		if err != nil {
+			return 0, -1, false, fmt.Errorf("planning rise to scale approach hover: %w", err)
+		}
+		if err := executeTraj(ctx, armComp, scaleRiseTraj, flags.ArmName); err != nil {
+			return 0, -1, false, fmt.Errorf("executing rise to scale approach hover: %w", err)
 		}
 
-		// Return from scale hover back to bin hover before the next descent attempt.
-		// Linear keeps the path predictable at height between the two positions.
+		if delta >= flags.MinDepositG {
+			// Meaningful deposit: food is at this depth — return so executeGrabLoop
+			// retries at the same depth. Arm is already at transit height.
+			return delta, attempt, false, nil
+		}
+
+		// Return to bin hover: linear for the same reason.
 		returnState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
-			return false, false, fmt.Errorf("reading arm state for return to bin hover: %w", err)
+			return 0, -1, false, fmt.Errorf("reading arm state for return to bin hover: %w", err)
 		}
 		returnTraj, err := planTo(ctx, logger, fsGrab, nil, returnState, endEffectorFrame, hoverPose, linC)
 		if err != nil {
-			return false, false, fmt.Errorf("planning return to bin hover: %w", err)
+			return 0, -1, false, fmt.Errorf("planning return to bin hover: %w", err)
 		}
 		if err := executeTraj(ctx, armComp, returnTraj, flags.ArmName); err != nil {
-			return false, false, fmt.Errorf("executing return to bin hover: %w", err)
+			return 0, -1, false, fmt.Errorf("executing return to bin hover: %w", err)
 		}
 	}
 
-	return false, false, nil
+	return 0, -1, false, nil
 }
 
 func planTo(
@@ -508,6 +590,22 @@ func executeTraj(ctx context.Context, armComp arm.Arm, traj motionplan.Trajector
 		return nil
 	}
 	return armComp.GoToInputs(ctx, steps...)
+}
+
+// trajEndState returns a PlanState representing the final joint configuration of a trajectory.
+// Used to pre-plan the next move before executing the current one, eliminating planning delays.
+func trajEndState(traj motionplan.Trajectory, armName string, fs *referenceframe.FrameSystem) *armplanning.PlanState {
+	var last []referenceframe.Input
+	for _, step := range traj {
+		if inputs, ok := step[armName]; ok {
+			last = inputs
+		}
+	}
+	fsInputs := referenceframe.NewZeroInputs(fs)
+	if last != nil {
+		fsInputs[armName] = last
+	}
+	return armplanning.NewPlanState(nil, fsInputs)
 }
 
 // currentArmPlanState reads the arm's current joint positions and wraps them in a PlanState.
