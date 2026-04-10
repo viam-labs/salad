@@ -37,6 +37,7 @@ type BuildCoordinatorConfig struct {
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
 	TextToSpeech      string                             `json:"text-to-speech"`
+	Simulate          bool                               `json:"simulate"`
 }
 
 func init() {
@@ -123,6 +124,7 @@ type buildCoordinator struct {
 	status          string
 	progress        float64
 	customerName    string
+	simulate        bool
 	buildCancelFunc func()
 	buildDone       chan struct{}
 }
@@ -147,6 +149,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
 		status:               "idle",
+		simulate:             conf.Simulate,
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -317,7 +320,19 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		s.mu.Unlock()
 	}()
 
-	result, err := s.executeBuild(buildCtx, value)
+	var result map[string]interface{}
+	var err error
+	if s.simulate {
+		s.logger.Infof("Simulate mode: skipping robot commands for build")
+		s.updateStatus("complete", 100)
+		result = map[string]interface{}{
+			"success":   true,
+			"message":   "Salad built and delivered successfully (simulated)",
+			"simulated": true,
+		}
+	} else {
+		result, err = s.executeBuild(buildCtx, value)
+	}
 	if buildCtx.Err() != nil {
 		s.logger.Infof("Build stopped, resetting hardware")
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
