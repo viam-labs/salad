@@ -21,13 +21,24 @@ func init() {
 	)
 }
 
+type LilArmPoseConfig struct {
+	Name        string `json:"name"`
+	Above       string `json:"above"`
+	At          string `json:"at"`
+	CenterAbove string `json:"center-above"`
+	CenterAt    string `json:"center-at"`
+}
+
 type BowlControlsConfig struct {
-	RightGripper       string `json:"right-gripper"`
-	RightAboveBowl     string `json:"right-above-bowl"`
-	RightGrabBowl      string `json:"right-grab-bowl"`
-	RightAboveDelivery string `json:"right-above-delivery"`
-	RightBowlDelivery  string `json:"right-bowl-delivery"`
-	RightHome          string `json:"right-home"`
+	RightGripper       string             `json:"right-gripper"`
+	RightAboveBowl     string             `json:"right-above-bowl"`
+	RightGrabBowl      string             `json:"right-grab-bowl"`
+	RightAboveDelivery string             `json:"right-above-delivery"`
+	RightBowlDelivery  string             `json:"right-bowl-delivery"`
+	RightHome          string             `json:"right-home"`
+	LilArmGripper      string             `json:"lil-arm-gripper"`
+	LilArmHome         string             `json:"lil-arm-home"`
+	LilArmPoses        []LilArmPoseConfig `json:"lil-arm-poses"`
 }
 
 func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -59,12 +70,51 @@ func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error)
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
 	}
 
-	requiredDeps := []string{}
+	if cfg.LilArmGripper == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "lil-arm-gripper")
+	}
 
-	requiredDeps = append(requiredDeps, cfg.RightGripper)
-	requiredDeps = append(requiredDeps, cfg.RightAboveBowl, cfg.RightGrabBowl, cfg.RightAboveDelivery, cfg.RightBowlDelivery, cfg.RightHome)
+	if cfg.LilArmHome == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "lil-arm-home")
+	}
+
+	if len(cfg.LilArmPoses) == 0 {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "lil-arm-poses")
+	}
+
+	requiredDeps := []string{
+		cfg.RightGripper,
+		cfg.RightAboveBowl, cfg.RightGrabBowl, cfg.RightAboveDelivery, cfg.RightBowlDelivery, cfg.RightHome,
+		cfg.LilArmGripper, cfg.LilArmHome,
+	}
+
+	for i, pose := range cfg.LilArmPoses {
+		if pose.Name == "" {
+			return nil, nil, fmt.Errorf("%s.lil-arm-poses[%d]: 'name' field is required", path, i)
+		}
+		if pose.Above == "" {
+			return nil, nil, fmt.Errorf("%s.lil-arm-poses[%d]: 'above' field is required", path, i)
+		}
+		if pose.At == "" {
+			return nil, nil, fmt.Errorf("%s.lil-arm-poses[%d]: 'at' field is required", path, i)
+		}
+		if pose.CenterAbove == "" {
+			return nil, nil, fmt.Errorf("%s.lil-arm-poses[%d]: 'center-above' field is required", path, i)
+		}
+		if pose.CenterAt == "" {
+			return nil, nil, fmt.Errorf("%s.lil-arm-poses[%d]: 'center-at' field is required", path, i)
+		}
+		requiredDeps = append(requiredDeps, pose.Above, pose.At, pose.CenterAbove, pose.CenterAt)
+	}
 
 	return requiredDeps, []string{}, nil
+}
+
+type lilArmPoseSwitches struct {
+	abovePose       sw.Switch
+	atPose          sw.Switch
+	centerAbovePose sw.Switch
+	centerAtPose    sw.Switch
 }
 
 type bowlControls struct {
@@ -84,6 +134,10 @@ type bowlControls struct {
 	rightAboveDelivery sw.Switch
 	rightBowlDelivery  sw.Switch
 	rightHome          sw.Switch
+
+	lilArmGripper gripper.Gripper
+	lilArmHome    sw.Switch
+	lilArmPoses   map[string]*lilArmPoseSwitches
 }
 
 func newBowlControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -99,11 +153,12 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 
 	s := &bowlControls{
-		name:       name,
-		logger:     logger,
-		cfg:        conf,
-		cancelCtx:  cancelCtx,
-		cancelFunc: cancelFunc,
+		name:        name,
+		logger:      logger,
+		cfg:         conf,
+		cancelCtx:   cancelCtx,
+		cancelFunc:  cancelFunc,
+		lilArmPoses: make(map[string]*lilArmPoseSwitches),
 	}
 
 	rightGripperComponent, err := gripper.FromProvider(deps, conf.RightGripper)
@@ -142,6 +197,43 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 	}
 	s.rightHome = rightHomeSwitch
 
+	lilArmGripperComponent, err := gripper.FromProvider(deps, conf.LilArmGripper)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get lil-arm gripper '%s': %w", conf.LilArmGripper, err)
+	}
+	s.lilArmGripper = lilArmGripperComponent
+
+	lilArmHomeSwitch, err := sw.FromProvider(deps, conf.LilArmHome)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get lil-arm home switch '%s': %w", conf.LilArmHome, err)
+	}
+	s.lilArmHome = lilArmHomeSwitch
+
+	for _, poseCfg := range conf.LilArmPoses {
+		aboveSwitch, err := sw.FromProvider(deps, poseCfg.Above)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get above switch '%s' for lil-arm pose '%s': %w", poseCfg.Above, poseCfg.Name, err)
+		}
+		atSwitch, err := sw.FromProvider(deps, poseCfg.At)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get at switch '%s' for lil-arm pose '%s': %w", poseCfg.At, poseCfg.Name, err)
+		}
+		centerAboveSwitch, err := sw.FromProvider(deps, poseCfg.CenterAbove)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get center-above switch '%s' for lil-arm pose '%s': %w", poseCfg.CenterAbove, poseCfg.Name, err)
+		}
+		centerAtSwitch, err := sw.FromProvider(deps, poseCfg.CenterAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get center-at switch '%s' for lil-arm pose '%s': %w", poseCfg.CenterAt, poseCfg.Name, err)
+		}
+		s.lilArmPoses[poseCfg.Name] = &lilArmPoseSwitches{
+			abovePose:       aboveSwitch,
+			atPose:          atSwitch,
+			centerAbovePose: centerAboveSwitch,
+			centerAtPose:    centerAtSwitch,
+		}
+	}
+
 	s.logger.Infof("Bowl controls initialized")
 	return s, nil
 }
@@ -160,7 +252,13 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 	if _, ok := cmd["prepare_bowl"]; ok {
 		return s.doPrepareBowl(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', or 'reset' field")
+	if _, ok := cmd["grab_lid"]; ok {
+		return s.doGrabLid(ctx)
+	}
+	if _, ok := cmd["grab_bowl"]; ok {
+		return s.doGrabBowl(ctx)
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', or 'reset' field")
 }
 
 func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{}, error) {
@@ -274,11 +372,83 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}, nil
 }
 
+func (s *bowlControls) doGrabLid(ctx context.Context) (map[string]interface{}, error) {
+	s.logger.Infof("Executing grab_lid")
+	pose, ok := s.lilArmPoses["lid"]
+	if !ok {
+		return nil, fmt.Errorf("lil-arm pose 'lid' not found in configuration")
+	}
+	return s.doLilArmGrab(ctx, pose, "lid")
+}
+
+func (s *bowlControls) doGrabBowl(ctx context.Context) (map[string]interface{}, error) {
+	s.logger.Infof("Executing grab_bowl")
+	pose, ok := s.lilArmPoses["bowl"]
+	if !ok {
+		return nil, fmt.Errorf("lil-arm pose 'bowl' not found in configuration")
+	}
+	return s.doLilArmGrab(ctx, pose, "bowl")
+}
+
+func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string) (map[string]interface{}, error) {
+	if err := pose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-%s switch to position 2: %w", name, err)
+	}
+	s.logger.Debugf("Set above-%s switch to position 2", name)
+
+	if err := pose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set at-%s switch to position 2: %w", name, err)
+	}
+	s.logger.Debugf("Set at-%s switch to position 2", name)
+
+	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to grab %s: %w", name, err)
+	}
+	s.logger.Debugf("Grabbed %s", name)
+
+	if err := pose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-%s switch to position 2 (second time): %w", name, err)
+	}
+	s.logger.Debugf("Set above-%s switch to position 2 (second time)", name)
+
+	if err := pose.centerAbovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-above-%s switch to position 2: %w", name, err)
+	}
+	s.logger.Debugf("Set center-above-%s switch to position 2", name)
+
+	if err := pose.centerAtPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-at-%s switch to position 2: %w", name, err)
+	}
+	s.logger.Debugf("Set center-at-%s switch to position 2", name)
+
+	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
+	}
+	s.logger.Debugf("Opened lil-arm gripper")
+
+	if err := pose.centerAbovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-above-%s switch to position 2: %w", name, err)
+	}
+	s.logger.Debugf("Set center-above-%s switch to position 2", name)
+
+	s.logger.Infof("Successfully completed grab_%s", name)
+
+	return map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Successfully grabbed %s", name),
+	}, nil
+}
+
 func (s *bowlControls) reset(ctx context.Context) (map[string]interface{}, error) {
 	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
 	}
 	s.logger.Debugf("Set right-home switch to position 2")
+
+	if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set lil-arm home switch to position 2: %w", err)
+	}
+	s.logger.Debugf("Set lil-arm home switch to position 2")
 
 	return nil, nil
 }
