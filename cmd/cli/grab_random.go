@@ -41,6 +41,13 @@ type GrabRandomFlags struct {
 	ScaleDropZ           float64
 	ScaleApproachHoverMM float64
 	ScaleDropHoverMM     float64
+	OrientationOX    float64
+	OrientationOY    float64
+	OrientationOZ    float64
+	OrientationTheta float64
+	GripperLengthMM  float64
+	TipClearanceMM   float64
+	DescentOffsetMM  float64
 }
 
 var grabRandomFlags GrabRandomFlags
@@ -136,22 +143,66 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 	}
 
 	floorZ, rimZ, target := binCenterTarget(zone, mesh)
-	// target.z stays at rimZ so hover = rimZ + HoverDistanceMM (always above the rim).
-	// InitialDepthMM is applied inside attemptGrabWithDepthStepping so it only affects
-	// the grab Z, not the retreat/hover height.
-	firstGrabZ := rimZ - flags.InitialDepthMM
-	maxGrabZ := floorZ + flags.FloorBufferMM
-	if firstGrabZ <= maxGrabZ {
-		// InitialDepthMM pushed the first grab Z at or below the floor buffer.
-		// Clamp to maxGrabZ so the arm at least tries at the safest reachable depth.
-		logger.Warnf("firstGrabZ=%.0f is at or below maxGrabZ=%.0f — clamping to maxGrabZ", firstGrabZ, maxGrabZ)
+	target.centerX, target.centerY = target.x, target.y
+
+	// When the gripper is tilted, offset the descent position in the opposite direction of the tilt
+	// so that when the arm reorients inside the bin, the tip sweeps toward the bin center
+	// rather than into the far wall.
+	// If --descent-offset-mm is set, use it directly; otherwise auto-compute from gripper length.
+	if flags.GripperLengthMM > 0 || flags.DescentOffsetMM > 0 {
+		mag := math.Sqrt(flags.OrientationOX*flags.OrientationOX + flags.OrientationOY*flags.OrientationOY + flags.OrientationOZ*flags.OrientationOZ)
+		if mag > 0 {
+			offsetMM := flags.DescentOffsetMM
+			if offsetMM == 0 {
+				offsetMM = flags.GripperLengthMM
+			}
+			target.x -= flags.OrientationOX / mag * offsetMM
+			target.y -= flags.OrientationOY / mag * offsetMM
+		}
+	}
+
+	var maxGrabZ float64
+	if flags.GripperLengthMM > 0 {
+		// Wrist must stay at least (gripperLength + tipClearance) above the bin floor.
+		maxGrabZ = floorZ + flags.GripperLengthMM + flags.TipClearanceMM
+	} else {
+		maxGrabZ = floorZ + flags.FloorBufferMM
+	}
+
+	// firstGrabZ is the wrist position on the first attempt.
+	// When gripper-length-mm is set, initial-depth-mm means how far below the rim
+	// the TIP starts, so the wrist is offset up by gripperLength.
+	// Without gripper-length-mm, initial-depth-mm is the raw wrist offset below rim.
+	var firstGrabZ float64
+	if flags.GripperLengthMM > 0 {
+		firstGrabZ = (rimZ - flags.InitialDepthMM) + flags.GripperLengthMM
+	} else {
+		firstGrabZ = rimZ - flags.InitialDepthMM
+	}
+	if firstGrabZ < maxGrabZ {
+		logger.Warnf("firstGrabZ=%.0f is below maxGrabZ=%.0f — clamping to maxGrabZ", firstGrabZ, maxGrabZ)
 		firstGrabZ = maxGrabZ
 	}
+
 	steps := flags.MaxDepthPositions - 1
 	if steps < 1 {
 		steps = 1
 	}
-	depthIncrementMM := (firstGrabZ - maxGrabZ) / float64(steps)
+
+	// target.z is the wrist position on the first attempt; the grab loop descends
+	// from there to maxGrabZ over max-depth-positions steps.
+	var initialDepthForLoop float64
+	var depthIncrementMM float64
+	if firstGrabZ > rimZ {
+		// Wrist starts above rim (gripper extends down into bin).
+		// Step from firstGrabZ down to maxGrabZ.
+		target.z = firstGrabZ
+		initialDepthForLoop = 0
+		depthIncrementMM = (firstGrabZ - maxGrabZ) / float64(steps)
+	} else {
+		initialDepthForLoop = flags.InitialDepthMM
+		depthIncrementMM = (firstGrabZ - maxGrabZ) / float64(steps)
+	}
 	logger.Infof("Target: center (%.0f, %.0f) rimZ=%.0f floorZ=%.0f firstGrabZ=%.0f maxGrabZ=%.0f hoverZ=%.0f depthIncrement=%.1fmm",
 		target.x, target.y, rimZ, floorZ, firstGrabZ, maxGrabZ, target.z+flags.HoverDistanceMM, depthIncrementMM)
 
@@ -161,7 +212,7 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 		GripperName:       flags.GripperName,
 		ScaleName:         flags.ScaleName,
 		HoverDistanceMM:   flags.HoverDistanceMM,
-		InitialDepthMM:    flags.InitialDepthMM,
+		InitialDepthMM:    initialDepthForLoop,
 		DepthIncrementMM:  depthIncrementMM,
 		MaxGrabZ:          maxGrabZ,
 		MaxDepthPositions: flags.MaxDepthPositions,
@@ -175,6 +226,10 @@ func runGrabRandom(address, apiKey, apiKeyID string, flags GrabRandomFlags) erro
 		ScaleDropZ:           flags.ScaleDropZ,
 		ScaleApproachHoverMM: flags.ScaleApproachHoverMM,
 		ScaleDropHoverMM:     flags.ScaleDropHoverMM,
+		OrientationOX:    flags.OrientationOX,
+		OrientationOY:    flags.OrientationOY,
+		OrientationOZ:    flags.OrientationOZ,
+		OrientationTheta: flags.OrientationTheta,
 	}
 	return executeGrabLoop(ctx, logger, []grabTarget{target}, armComp, gripperComp, scaleSensor, fs, fsGrab, worldState, endEffectorFrame, gf)
 }
@@ -227,5 +282,5 @@ func binCenterTarget(zone *segmentation.Zone, fridgeMesh *spatialmath.Mesh) (flo
 		rimZ = floorZ
 	}
 
-	return floorZ, rimZ, grabTarget{centerX, centerY, rimZ}
+	return floorZ, rimZ, grabTarget{x: centerX, y: centerY, z: rimZ, centerX: centerX, centerY: centerY}
 }
