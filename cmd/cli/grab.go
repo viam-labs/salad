@@ -448,31 +448,41 @@ func attemptGrabWithDepthStepping(
 			return 0, -1, false, fmt.Errorf("opening gripper: %w", err)
 		}
 
-		// Descent: straight down into the bin.
+		// Descent: straight down into the bin; fall back to tilted grab orientation
+		// for positions only reachable with the tilt (e.g. close-in zones).
+		// When descending already tilted, skip the separate reorient step.
 		grabState, err := currentArmPlanState(ctx, armComp, fsGrab)
 		if err != nil {
 			return 0, -1, false, fmt.Errorf("reading arm state for grab: %w", err)
 		}
+		descendedTilted := false
 		grabTraj, err := planTo(ctx, logger, fsGrab, nil, grabState, endEffectorFrame, grabPoseDown, linC)
 		if err != nil {
-			logger.Infof("Attempt %d: descent unreachable — skipping position", attempt+1)
-			return 0, -1, true, nil
+			logger.Infof("Attempt %d: descent straight-down failed (%v) — retrying tilted", attempt+1, err)
+			grabTraj, err = planTo(ctx, logger, fsGrab, nil, grabState, endEffectorFrame, grabPose, linC)
+			if err != nil {
+				logger.Infof("Attempt %d: descent unreachable — skipping position", attempt+1)
+				return 0, -1, true, nil
+			}
+			descendedTilted = true
 		}
 		if err := executeTraj(ctx, armComp, grabTraj, flags.ArmName); err != nil {
 			return 0, -1, false, fmt.Errorf("executing descent: %w", err)
 		}
-		// Reorient to grab tilt inside the bin before closing gripper.
-		reorientState, err := currentArmPlanState(ctx, armComp, fsGrab)
-		if err != nil {
-			return 0, -1, false, fmt.Errorf("reading arm state for reorient: %w", err)
-		}
-		reorientTraj, err := planTo(ctx, logger, fsGrab, nil, reorientState, endEffectorFrame, grabPose, linC)
-		if err != nil {
-			logger.Infof("Attempt %d: reorient inside bin failed (%v) — skipping position", attempt+1, err)
-			return 0, -1, true, nil
-		}
-		if err := executeTraj(ctx, armComp, reorientTraj, flags.ArmName); err != nil {
-			return 0, -1, false, fmt.Errorf("executing reorient inside bin: %w", err)
+		// Reorient to grab tilt inside the bin before closing gripper (skip if already tilted).
+		if !descendedTilted {
+			reorientState, err := currentArmPlanState(ctx, armComp, fsGrab)
+			if err != nil {
+				return 0, -1, false, fmt.Errorf("reading arm state for reorient: %w", err)
+			}
+			reorientTraj, err := planTo(ctx, logger, fsGrab, nil, reorientState, endEffectorFrame, grabPose, linC)
+			if err != nil {
+				logger.Infof("Attempt %d: reorient inside bin failed (%v) — skipping position", attempt+1, err)
+				return 0, -1, true, nil
+			}
+			if err := executeTraj(ctx, armComp, reorientTraj, flags.ArmName); err != nil {
+				return 0, -1, false, fmt.Errorf("executing reorient inside bin: %w", err)
+			}
 		}
 		if flags.GrabSettleMs > 0 {
 			time.Sleep(time.Duration(flags.GrabSettleMs) * time.Millisecond)
