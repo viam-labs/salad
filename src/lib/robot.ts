@@ -1,6 +1,6 @@
 import * as VIAM from "@viamrobotics/sdk";
 import Cookies from "js-cookie";
-import type { Ingredient } from "./types";
+import type { Ingredient, QueueSnapshot } from "./types";
 
 let robotClient: VIAM.RobotClient;
 let coordinator: VIAM.GenericServiceClient;
@@ -70,4 +70,26 @@ export async function stopBuild(): Promise<void> {
 
 export function getCameraStream(): MediaStream {
   return cameraStream;
+}
+
+export async function queueOrder(
+  payload: Record<string, number>,
+  customerName?: string,
+): Promise<{ status: string; order_id: string; queue_position: number }> {
+  return (await coordinator.doCommand({
+    queue_order: payload,
+    ...(customerName ? { customer_name: customerName } : {}),
+  })) as unknown as { status: string; order_id: string; queue_position: number };
+}
+
+export async function getQueue(): Promise<QueueSnapshot> {
+  return (await coordinator.doCommand({
+    get_queue: true,
+  })) as unknown as QueueSnapshot;
+}
+
+export async function cancelOrder(orderId: string): Promise<{ status: string; order_id: string }> {
+  return (await coordinator.doCommand({
+    cancel_order: orderId,
+  })) as unknown as { status: string; order_id: string };
 }
