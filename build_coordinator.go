@@ -448,6 +448,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 			continue
 		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
+			s.logger.Errorf("Failed to add ingredient %q: %v", target.name, err)
 			continue
 		}
 		completedServings += target.servings
