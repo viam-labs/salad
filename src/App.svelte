@@ -11,6 +11,7 @@
   let order: Record<string, number> = $state({});
   let customerName = $state("");
   let error = $state("");
+  let buildError = $state("");
   let showCamera = $state(false);
 
   function attachStream(node: HTMLVideoElement) {
@@ -34,7 +35,13 @@
   function handleBuild(newOrder: Record<string, number>, name: string) {
     order = newOrder;
     customerName = name;
+    buildError = "";
     screen = "building";
+  }
+
+  function handleFailed(message: string) {
+    buildError = message;
+    screen = "ordering";
   }
 
   function handleComplete() {
@@ -77,6 +84,16 @@
   </div>
 {/if}
 
+<style>
+  .build-error-banner {
+    background: #c0392b;
+    color: white;
+    padding: 0.75rem 1rem;
+    text-align: center;
+    font-weight: 500;
+  }
+</style>
+
 {#if screen === "loading"}
   <div class="loading">Connecting&hellip;</div>
 {:else if screen === "error"}
@@ -85,9 +102,12 @@
     <p>{error}</p>
   </div>
 {:else if screen === "ordering"}
+  {#if buildError}
+    <div class="build-error-banner">Build failed: {buildError}</div>
+  {/if}
   <OrderingScreen {ingredients} onBuild={handleBuild} />
 {:else if screen === "building"}
-  <BuildingScreen {order} {customerName} onComplete={handleComplete} onStopped={handleNewOrder} />
+  <BuildingScreen {order} {customerName} onComplete={handleComplete} onStopped={handleNewOrder} onFailed={handleFailed} />
 {:else if screen === "complete"}
   <CompleteScreen {customerName} onNewOrder={handleNewOrder} />
 {/if}
