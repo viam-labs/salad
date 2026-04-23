@@ -157,7 +157,7 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 	if conf.ShakeArmService != nil && *conf.ShakeArmService != "" {
 		shakeArmService, err := genericservice.FromProvider(deps, *conf.ShakeArmService)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get shake-arm-service '%s': %w", conf.ShakeArmService, err)
+			return nil, fmt.Errorf("failed to get shake-arm-service '%s': %w", *conf.ShakeArmService, err)
 		}
 		s.shakeArmService = shakeArmService
 	}

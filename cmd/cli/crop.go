@@ -2,9 +2,23 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/golang/geo/r3"
+	vizClient "github.com/viam-labs/motion-tools/client/client"
 	"go.viam.com/rdk/pointcloud"
+)
+
+const (
+	defaultCropMinX = 550.0
+	defaultCropMaxX = 1000.0
+	defaultCropMinY = -math.MaxFloat64
+	defaultCropMaxY = 1650.0
+	defaultCropMinZ = 100.0
+	defaultCropMaxZ = 275.0
 )
 
 type CropBounds struct {
@@ -27,6 +41,14 @@ func cropPointCloud(pc pointcloud.PointCloud, b CropBounds) (pointcloud.PointClo
 }
 
 func runCrop(flags CropFlags) error {
+	if flags.OutputPath == "" {
+		dir := filepath.Join("output", time.Now().Format("20060102-150405"))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("failed to create output directory %q: %w", dir, err)
+		}
+		flags.OutputPath = filepath.Join(dir, "cropped.pcd")
+	}
+
 	fmt.Printf("Loading %s\n", flags.InputPath)
 	pc, err := pointcloud.NewFromFile(flags.InputPath, "")
 	if err != nil {
@@ -53,5 +75,15 @@ func runCrop(flags CropFlags) error {
 		return err
 	}
 	fmt.Printf("Wrote %s\n", flags.OutputPath)
+
+	if flags.Viz {
+		vizClient.SetURL(flags.VizURL)
+		if err := vizClient.RemoveAllSpatialObjects(); err != nil {
+			return fmt.Errorf("clearing visualizer: %w", err)
+		}
+		if err := vizClient.DrawPointCloud("cropped", out, nil); err != nil {
+			return fmt.Errorf("drawing point cloud: %w", err)
+		}
+	}
 	return nil
 }

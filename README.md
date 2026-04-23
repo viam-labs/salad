@@ -22,6 +22,10 @@ Once all ingredients are added, calls deliver_bowl.
     // required - name of the sensor used as a scale (must return a numeric reading)
     "scale-sensor" : "<sensor>",
 
+    // optional - name of a viam:beanjamin:text-to-speech service
+    // if set, announces completion after each build
+    "text-to-speech" : "<text-to-speech service>",
+
     // required - list of available ingredients
     // ingredient name must match a bin name in the grabber-controls config
     // category must be one of: "base", "protein", "topping", "dressing"
@@ -59,14 +63,15 @@ Once all ingredients are added, calls deliver_bowl.
 ### DoCommand
 
 #### build_salad
-Map of ingredient name to number of servings. Grabs each ingredient until the scale shows the target weight has been reached, then delivers the bowl.
+Map of ingredient name to number of servings. Grabs each ingredient until the scale shows the target weight has been reached, then delivers the bowl. Optionally include a customer name, which is shown in the UI during the build and used in the completion announcement if text-to-speech is configured.
 ```
 {
     "build_salad" : {
         "lettuce" : 2,
         "tomato" : 1,
         "croutons" : 1
-    }
+    },
+    "customer_name" : "Alice"  // optional
 }
 ```
 
@@ -81,7 +86,8 @@ Response:
 ```
 {
     "status" : "adding lettuce",  // "idle", "adding <ingredient>", "delivering salad", or "complete"
-    "progress" : 40.0             // percentage 0-100
+    "progress" : 40.0,            // percentage 0-100
+    "customer_name" : "Alice"     // name of the current order, empty string if not provided
 }
 ```
 

@@ -3,11 +3,12 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"salad/segmentation"
 )
 
 type ScanFlags struct {
@@ -58,6 +59,8 @@ type MeshifyFlags struct {
 	KDTreeKNN     int
 	OrientNN      int
 	LODMultiplier int
+	Viz           bool
+	VizURL        string
 }
 
 type CropFlags struct {
@@ -66,7 +69,14 @@ type CropFlags struct {
 	MinX, MaxX float64
 	MinY, MaxY float64
 	MinZ, MaxZ float64
+	Viz        bool
+	VizURL     string
 }
+
+// TODO: meshify and segment should be moved to a Viam resource/module accessible
+// via DoCommand once mesh-based segmentation has been validated as an effective
+// input to automated bin grabbing. Running both from the CLI is
+// sufficient for initial setup purposes in the meantime.
 
 var (
 	// Persistent flags available to all subcommands.
@@ -162,23 +172,37 @@ func init() {
 	_ = filterCmd.MarkFlagRequired("output")
 
 	meshifyCmd.Flags().StringVar(&meshifyFlags.InputPath, "input", "", "input PCD file (required)")
-	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (required)")
+	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (default: output/<timestamp>/mesh.ply)")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 30, "KNN for normal estimation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.OrientNN, "orient-nn", 50, "KNN for normal orientation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.LODMultiplier, "lod-multiplier", 0, "Poisson reconstruction depth (8-11, higher=finer; 0=default 9)")
+	meshifyCmd.Flags().BoolVar(&meshifyFlags.Viz, "viz", false, "display the output mesh in the motion-tools visualizer")
+	meshifyCmd.Flags().StringVar(&meshifyFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	_ = meshifyCmd.MarkFlagRequired("input")
-	_ = meshifyCmd.MarkFlagRequired("output")
 
 	cropCmd.Flags().StringVar(&cropFlags.InputPath, "input", "", "input PCD file (required)")
-	cropCmd.Flags().StringVar(&cropFlags.OutputPath, "output", "", "output PCD file (required)")
-	cropCmd.Flags().Float64Var(&cropFlags.MinX, "min-x", -math.MaxFloat64, "minimum X to keep (mm)")
-	cropCmd.Flags().Float64Var(&cropFlags.MaxX, "max-x", math.MaxFloat64, "maximum X to keep (mm)")
-	cropCmd.Flags().Float64Var(&cropFlags.MinY, "min-y", -math.MaxFloat64, "minimum Y to keep (mm)")
-	cropCmd.Flags().Float64Var(&cropFlags.MaxY, "max-y", math.MaxFloat64, "maximum Y to keep (mm)")
-	cropCmd.Flags().Float64Var(&cropFlags.MinZ, "min-z", -math.MaxFloat64, "minimum Z to keep (mm)")
-	cropCmd.Flags().Float64Var(&cropFlags.MaxZ, "max-z", math.MaxFloat64, "maximum Z to keep (mm)")
+	cropCmd.Flags().StringVar(&cropFlags.OutputPath, "output", "", "output PCD file (default: output/<timestamp>/cropped.pcd)")
+	cropCmd.Flags().Float64Var(&cropFlags.MinX, "min-x", defaultCropMinX, "minimum X to keep (mm)")
+	cropCmd.Flags().Float64Var(&cropFlags.MaxX, "max-x", defaultCropMaxX, "maximum X to keep (mm)")
+	cropCmd.Flags().Float64Var(&cropFlags.MinY, "min-y", defaultCropMinY, "minimum Y to keep (mm)")
+	cropCmd.Flags().Float64Var(&cropFlags.MaxY, "max-y", defaultCropMaxY, "maximum Y to keep (mm)")
+	cropCmd.Flags().Float64Var(&cropFlags.MinZ, "min-z", defaultCropMinZ, "minimum Z to keep (mm)")
+	cropCmd.Flags().Float64Var(&cropFlags.MaxZ, "max-z", defaultCropMaxZ, "maximum Z to keep (mm)")
+	cropCmd.Flags().BoolVar(&cropFlags.Viz, "viz", false, "display the cropped point cloud in the motion-tools visualizer")
+	cropCmd.Flags().StringVar(&cropFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	_ = cropCmd.MarkFlagRequired("input")
-	_ = cropCmd.MarkFlagRequired("output")
+
+	defaults := segmentation.DefaultOptions()
+	segmentCmd.Flags().StringVar(&segmentFlags.MeshPath, "mesh", "mesh.ply", "path to the fridge PLY mesh file")
+	segmentCmd.Flags().StringVar(&segmentFlags.OutputDir, "output", "", "output directory (default: output/<timestamp>)")
+	segmentCmd.Flags().BoolVar(&segmentFlags.Viz, "viz", false, "display each zone in a distinct color in the motion-tools visualizer")
+	segmentCmd.Flags().StringVar(&segmentFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
+	segmentCmd.Flags().Float64Var(&segmentFlags.CellSizeMM, "cell-size", defaults.CellSizeMM, "height-map grid cell size in mm (smaller = finer boundaries)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.DividerZPercentile, "divider-z-percentile", defaults.DividerZPercentile, "Z percentile: cells above this are walls/dividers (absolute criterion); [0,1]")
+	segmentCmd.Flags().Float64Var(&segmentFlags.DividerGradientMM, "divider-gradient", defaults.DividerGradientMM, "min Z rise (mm) above lowest neighbour to treat a cell as a divider ridge (0 = disable)")
+	segmentCmd.Flags().IntVar(&segmentFlags.DividerDilation, "divider-dilation", defaults.DividerDilation, "cells to dilate barrier mask by (closes reconstruction gaps)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.MinZoneAreaMM2, "min-zone-area", defaults.MinZoneAreaMM2, "minimum zone footprint area in mm² (smaller components discarded as noise)")
+	segmentCmd.Flags().Float64Var(&segmentFlags.MaxZoneAreaMM2, "max-zone-area", defaults.MaxZoneAreaMM2, "maximum zone footprint area in mm² (larger components rejected as non-bin regions; 0=disabled)")
 
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
@@ -186,6 +210,7 @@ func init() {
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(framesCmd)
+	rootCmd.AddCommand(segmentCmd)
 }
 
 func main() {
