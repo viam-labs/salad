@@ -64,6 +64,4 @@ downloads/*
 output/*
 
 *.ply
-*.json
-
 /cli

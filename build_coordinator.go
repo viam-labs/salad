@@ -461,16 +461,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		completedServings += target.servings
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"grab_lid": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to grab lid: %v", err),
-		}, nil
-	}
-
 	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
@@ -478,6 +468,25 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
+		}, nil
+	}
+
+	// if targets contains a dressing item
+	for _, target := range targets {
+		if target.category == "dressing" {
+			if err := s.addDressing(ctx); err != nil {
+				s.logger.Errorf("Failed to add dressing: %v", err)
+			}
+		}
+	}
+
+	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		"grab_lid": true,
+	})
+	if err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to grab lid: %v", err),
 		}, nil
 	}
 
@@ -510,15 +519,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}, nil
 	}
 	s.updateStatus("complete", 100)
-
-	// if targets contains a dressing item
-	for _, target := range targets {
-		if target.category == "dressing" {
-			if err := s.addDressing(ctx); err != nil {
-				s.logger.Errorf("Failed to add dressing: %v", err)
-			}
-		}
-	}
 
 	// // chefs kiss
 	// if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
