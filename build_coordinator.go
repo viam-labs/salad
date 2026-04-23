@@ -382,14 +382,19 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return nil, fmt.Errorf("build_salad requires at least one ingredient")
 	}
 
-	result, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"grab_bowl": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to grab bowl: %v", err),
-		}, nil
+	var result map[string]interface{}
+	lilArmControls, _ := s.bowlControls.(*bowlControls)
+
+	if lilArmControls != nil && lilArmControls.lilArmGripper != nil {
+		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+			"grab_bowl": true,
+		})
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Failed to grab bowl: %v", err),
+			}, nil
+		}
 	}
 
 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
@@ -480,14 +485,16 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"grab_lid": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to grab lid: %v", err),
-		}, nil
+	if lilArmControls != nil && lilArmControls.lilArmGripper != nil {
+		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+			"grab_lid": true,
+		})
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Failed to grab lid: %v", err),
+			}, nil
+		}
 	}
 
 	s.updateStatus("delivering salad", completedServings/totalSteps*100)
