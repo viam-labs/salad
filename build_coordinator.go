@@ -124,6 +124,7 @@ type buildCoordinator struct {
 	status          string
 	progress        float64
 	customerName    string
+	errorMsg        string
 	simulate        bool
 	buildCancelFunc func()
 	buildDone       chan struct{}
@@ -247,6 +248,7 @@ func (s *buildCoordinator) getStatus() map[string]interface{} {
 		"status":        s.status,
 		"progress":      s.progress,
 		"customer_name": s.customerName,
+		"error_msg":     s.errorMsg,
 	}
 }
 
@@ -303,6 +305,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	s.status = "preparing"
 	s.progress = 0
 	s.customerName = customerName
+	s.errorMsg = ""
 	s.mu.Unlock()
 
 	if customerName != "" {
@@ -342,6 +345,33 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
+		}, nil
+	}
+
+	buildFailed := false
+	var failMsg string
+	if err != nil {
+		buildFailed = true
+		failMsg = err.Error()
+	} else if result != nil {
+		if success, ok := result["success"].(bool); !ok || !success {
+			buildFailed = true
+			if msg, ok := result["message"].(string); ok {
+				failMsg = msg
+			}
+		}
+	}
+	if buildFailed {
+		s.mu.Lock()
+		s.status = "failed"
+		s.errorMsg = failMsg
+		s.mu.Unlock()
+		if result != nil {
+			return result, nil
+		}
+		return map[string]interface{}{
+			"success": false,
+			"message": failMsg,
 		}, nil
 	}
 
