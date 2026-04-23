@@ -7,9 +7,10 @@
     customerName: string;
     onComplete: () => void;
     onStopped: () => void;
+    onFailed: (message: string) => void;
   }
 
-  let { order, customerName, onComplete, onStopped }: Props = $props();
+  let { order, customerName, onComplete, onStopped, onFailed }: Props = $props();
 
   let status = $state("Starting\u2026");
   let progress = $state(0);
@@ -39,6 +40,9 @@
         } else if (result.status === "stopped") {
           clearInterval(interval);
           onStopped();
+        } else if (result.status === "failed") {
+          clearInterval(interval);
+          onFailed(result.error_msg ?? "Build failed");
         }
       } catch (err) {
         console.error("Status poll error:", err);

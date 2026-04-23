@@ -58,10 +58,11 @@ export async function buildSalad(
 export async function getStatus(): Promise<{
   status: string;
   progress: number;
+  error_msg?: string;
 }> {
   return (await coordinator.doCommand({
     status: true,
-  })) as unknown as { status: string; progress: number };
+  })) as unknown as { status: string; progress: number; error_msg?: string };
 }
 
 export async function stopBuild(): Promise<void> {
