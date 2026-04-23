@@ -508,6 +508,10 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if target.category == "dressing" {
 			if err := s.addDressing(ctx); err != nil {
 				s.logger.Errorf("Failed to add dressing: %v", err)
+				return map[string]interface{}{
+					"success": false,
+					"message": fmt.Sprintf("Failed to add dressing: %v", err),
+				}, nil
 			}
 		}
 	}
@@ -516,6 +520,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
 		"chefs_kiss": true,
 	}); err != nil {
+		// TODO: Should not fail silently
 		s.logger.Errorf("Failed to perform chefs kiss: %v", err)
 	}
 
