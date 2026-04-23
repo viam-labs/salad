@@ -367,6 +367,13 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 			"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 		}, nil
 	}
+	if _, err := s.readScaleWeight(ctx); err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Scale is not available, cannot start build: %v", err),
+		}, nil
+	}
+
 	ingredientMap, ok := value.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("build_salad value must be a map of ingredient name to servings count")
