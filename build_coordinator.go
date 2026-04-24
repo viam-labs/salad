@@ -500,15 +500,24 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 
 	ts := time.Now().Format("20060102-150405")
 
+	// Write the PCD to the stable path first so meshification uses a
+	// consistent location. Also write to the capture dir so it syncs to cloud.
+	const stablePCDPath = "/home/viam/merged.pcd"
+	const stableZonesPath = "/home/viam/zones.json"
+	if err := saladutils.WritePCD(pc, stablePCDPath); err != nil {
+		return fmt.Errorf("failed to write stable PCD: %w", err)
+	}
+	s.logger.Infof("Wrote %s (%d points)", stablePCDPath, pc.Size())
+
 	pcdPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s.pcd", ts))
 	if err := saladutils.WritePCD(pc, pcdPath); err != nil {
 		return fmt.Errorf("failed to write point cloud: %w", err)
 	}
-	s.logger.Infof("Wrote %s (%d points)", pcdPath, pc.Size())
+	s.logger.Infof("Wrote %s", pcdPath)
 
-	s.logger.Infof("Running meshifier on %s", pcdPath)
+	s.logger.Infof("Running meshifier on %s", stablePCDPath)
 	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
-	if err := saladutils.ExecMeshifier(ctx, pcdPath, meshPath, 30, 50, 0); err != nil {
+	if err := saladutils.ExecMeshifier(ctx, stablePCDPath, meshPath, 30, 50, 0); err != nil {
 		return fmt.Errorf("meshification failed: %w", err)
 	}
 	s.logger.Infof("Wrote mesh %s", meshPath)
@@ -524,17 +533,10 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	}
 	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), zonesPath)
 
-	// Write stable (non-timestamped) copies for the webapp to read.
-	// These live outside the capture directory so they are not synced to the cloud.
-	const stablePCDPath = "/home/viam/merged.pcd"
-	const stableZonesPath = "/home/viam/zones.json"
-	if err := saladutils.WritePCD(pc, stablePCDPath); err != nil {
-		return fmt.Errorf("failed to write stable PCD: %w", err)
-	}
 	if err := segmentation.SaveZones(result, stableZonesPath); err != nil {
 		return fmt.Errorf("failed to write stable zones: %w", err)
 	}
-	s.logger.Infof("Wrote stable files to /home/viam/")
+	s.logger.Infof("Wrote stable zones to %s", stableZonesPath)
 
 	s.mu.Lock()
 	s.lastPCDPath = stablePCDPath
