@@ -114,6 +114,21 @@ func SaveZones(result *ZonesResult, path string) error {
 	return bw.Flush()
 }
 
+// LoadZones reads a JSON file written by SaveZones.
+func LoadZones(path string) (*ZonesResult, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %q: %w", path, err)
+	}
+	defer f.Close()
+	var result ZonesResult
+	dec := json.NewDecoder(f)
+	if err := dec.Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding zones from %q: %w", path, err)
+	}
+	return &result, nil
+}
+
 func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, SegmentStats, error) {
 	var stats SegmentStats
 	if opts.CellSizeMM <= 0 {

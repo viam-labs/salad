@@ -44,6 +44,7 @@ type DisplayFlags struct {
 	ShowAll    bool
 	ShowPCD    bool
 	ShowMesh   bool
+	ShowZones  bool
 }
 
 type FilterFlags struct {
@@ -109,7 +110,7 @@ Per-position PCDs and the merged result are written to the output directory for 
 
 var displayCmd = &cobra.Command{
 	Use:   "display",
-	Short: "Display local point clouds and meshes in motion-tools visualizer",
+	Short: "Display local point clouds, meshes, and/or zone JSON in motion-tools visualizer",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDisplay(displayFlags)
 	},
@@ -163,6 +164,7 @@ func init() {
 	displayCmd.Flags().BoolVar(&displayFlags.ShowAll, "all", false, "display both point clouds and meshes (default if neither --pcd nor --mesh is set)")
 	displayCmd.Flags().BoolVar(&displayFlags.ShowPCD, "pcd", false, "display only point clouds (when combined with --mesh, shows both)")
 	displayCmd.Flags().BoolVar(&displayFlags.ShowMesh, "mesh", false, "display only meshes (when combined with --pcd, shows both)")
+	displayCmd.Flags().BoolVar(&displayFlags.ShowZones, "zones", false, "display zone meshes from zones.json or *-zones.json under --local-files")
 
 	filterCmd.Flags().StringVar(&filterFlags.InputPath, "input", "", "input PCD file (required)")
 	filterCmd.Flags().StringVar(&filterFlags.OutputPath, "output", "", "output PCD file (required)")

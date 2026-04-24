@@ -11,6 +11,8 @@ import (
 	vizClient "github.com/viam-labs/motion-tools/client/client"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/spatialmath"
+
+	"salad/segmentation"
 )
 
 var meshDrawColors = []string{
@@ -18,20 +20,24 @@ var meshDrawColors = []string{
 }
 
 func runDisplay(flags DisplayFlags) error {
-	files, err := resolveDisplayPaths(flags)
-	if err != nil {
-		return err
-	}
-
 	showPCD := flags.ShowPCD
 	showMesh := flags.ShowMesh
 	if flags.ShowAll {
 		showPCD = true
 		showMesh = true
 	}
-	if !showPCD && !showMesh && !flags.ShowAll {
+	if !showPCD && !showMesh && !flags.ShowAll && !flags.ShowZones {
 		showPCD = true
 		showMesh = true
+	}
+
+	files, err := walkDisplayFiles(flags.LocalFiles)
+	if err != nil {
+		return err
+	}
+	zonePaths, err := resolveZoneJSONPaths(flags.LocalFiles)
+	if err != nil {
+		return err
 	}
 
 	filtered := make([]displayFile, 0, len(files))
@@ -44,7 +50,15 @@ func runDisplay(flags DisplayFlags) error {
 			filtered = append(filtered, f)
 		}
 	}
-	if len(filtered) == 0 {
+
+	hasZones := flags.ShowZones && len(zonePaths) > 0
+	if flags.ShowZones && len(zonePaths) == 0 {
+		return fmt.Errorf("no zones.json or *-zones.json found under %q", flags.LocalFiles)
+	}
+	if len(filtered) == 0 && !hasZones {
+		if len(files) == 0 {
+			return fmt.Errorf("no .pcd, .ply, or .stl files found under %q", flags.LocalFiles)
+		}
 		return fmt.Errorf("no files to display for selected filters (pcd=%v mesh=%v)", showPCD, showMesh)
 	}
 
@@ -55,7 +69,9 @@ func runDisplay(flags DisplayFlags) error {
 		}
 	}
 
-	fmt.Printf("Drawing %d file(s) (.pcd / .ply / .stl) from %s to %s\n", len(filtered), flags.LocalFiles, flags.VizURL)
+	if len(filtered) > 0 {
+		fmt.Printf("Drawing %d file(s) (.pcd / .ply / .stl) from %s to %s\n", len(filtered), flags.LocalFiles, flags.VizURL)
+	}
 	for i, f := range filtered {
 		label := displayLabel(flags.LocalFiles, f.path)
 		switch f.kind {
@@ -93,6 +109,28 @@ func runDisplay(flags DisplayFlags) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 
+	if hasZones {
+		fmt.Printf("Drawing zone mesh(es) from %d file(s) under %s to %s\n", len(zonePaths), flags.LocalFiles, flags.VizURL)
+		colorIdx := 0
+		for _, zp := range zonePaths {
+			result, err := segmentation.LoadZones(zp)
+			if err != nil {
+				return fmt.Errorf("load zones %q: %w", zp, err)
+			}
+			base := strings.TrimSuffix(filepath.Base(zp), ".json")
+			for _, z := range result.Zones {
+				label := fmt.Sprintf("%s/zone-%d", base, z.ID)
+				color := zoneVizColors[colorIdx%len(zoneVizColors)]
+				colorIdx++
+				zoneMesh := z.Mesh.ToSpatialMesh(label)
+				if err := vizClient.DrawGeometry(zoneMesh, color); err != nil {
+					return fmt.Errorf("draw zone %s: %w", label, err)
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}
+
 	fmt.Println("Display complete.")
 	return nil
 }
@@ -120,21 +158,21 @@ type displayFile struct {
 	modTime int64
 }
 
-func resolveDisplayPaths(flags DisplayFlags) ([]displayFile, error) {
-	if flags.LocalFiles == "" {
+func walkDisplayFiles(localDir string) ([]displayFile, error) {
+	if localDir == "" {
 		return nil, fmt.Errorf("--local-files directory is required")
 	}
 
-	info, err := os.Stat(flags.LocalFiles)
+	info, err := os.Stat(localDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to access --local-files %q: %w", flags.LocalFiles, err)
+		return nil, fmt.Errorf("failed to access --local-files %q: %w", localDir, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("--local-files must be a directory, got %q", flags.LocalFiles)
+		return nil, fmt.Errorf("--local-files must be a directory, got %q", localDir)
 	}
 
 	var matches []displayFile
-	err = filepath.WalkDir(flags.LocalFiles, func(path string, d os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(localDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -165,10 +203,7 @@ func resolveDisplayPaths(flags DisplayFlags) ([]displayFile, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan folder %q: %w", flags.LocalFiles, err)
-	}
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no .pcd, .ply, or .stl files found under %q", flags.LocalFiles)
+		return nil, fmt.Errorf("failed to scan folder %q: %w", localDir, err)
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
@@ -178,4 +213,37 @@ func resolveDisplayPaths(flags DisplayFlags) ([]displayFile, error) {
 		return matches[i].modTime < matches[j].modTime
 	})
 	return matches, nil
+}
+
+func resolveZoneJSONPaths(localDir string) ([]string, error) {
+	if localDir == "" {
+		return nil, fmt.Errorf("--local-files directory is required")
+	}
+	info, err := os.Stat(localDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to access --local-files %q: %w", localDir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("--local-files must be a directory, got %q", localDir)
+	}
+
+	var paths []string
+	err = filepath.WalkDir(localDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := strings.ToLower(d.Name())
+		if name == "zones.json" || strings.HasSuffix(name, "-zones.json") {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan folder %q for zones JSON: %w", localDir, err)
+	}
+	sort.Strings(paths)
+	return paths, nil
 }

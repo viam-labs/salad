@@ -34,7 +34,10 @@ test:
 	go test ./...
 
 meshifier/deps/.installed: meshifier/requirements.txt
-	pip3 install --target meshifier/deps -r meshifier/requirements.txt
+	docker run --rm --platform linux/amd64 \
+		-v "$(CURDIR)/meshifier:/meshifier" \
+		python:3.12-slim \
+		pip install --target /meshifier/deps -r /meshifier/requirements.txt
 	touch meshifier/deps/.installed
 
 module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html meshifier/main.py meshifier/algos.py meshifier/deps/.installed
