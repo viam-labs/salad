@@ -10,6 +10,8 @@ import (
 	"github.com/golang/geo/r3"
 	vizClient "github.com/viam-labs/motion-tools/client/client"
 	"go.viam.com/rdk/pointcloud"
+
+	saladutils "salad/utils"
 )
 
 const (
@@ -71,7 +73,7 @@ func runCrop(flags CropFlags) error {
 	}
 	fmt.Printf("Kept %d / %d points after cropping (removed %d)\n", out.Size(), pc.Size(), pc.Size()-out.Size())
 
-	if err := writePCD(out, flags.OutputPath); err != nil {
+	if err := saladutils.WritePCD(out, flags.OutputPath); err != nil {
 		return err
 	}
 	fmt.Printf("Wrote %s\n", flags.OutputPath)
