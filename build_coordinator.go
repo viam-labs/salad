@@ -120,6 +120,9 @@ type buildCoordinator struct {
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 
+	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
+	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
+	// status shouldn't be strings - should be a constant enum type.
 	mu              sync.RWMutex
 	status          string
 	progress        float64
@@ -177,6 +180,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.chefsKissControls = chefsKissControls
 
+	// TODO: Make required.
 	if conf.TextToSpeech != "" {
 		textToSpeech, ok := deps[genericservice.Named(conf.TextToSpeech)]
 		if !ok {
@@ -291,6 +295,10 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
+
+	// TODO: Move inside state machine.
+	// Verify we're transitioning from a valid state.
+	// Also move to caller - will be easier to ensure ever DoCommand verifies sate before proceeding.
 	s.mu.Lock()
 	if s.buildCancelFunc != nil {
 		s.mu.Unlock()
@@ -314,6 +322,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		s.logger.Infof("New salad order received: %v", value)
 	}
 
+	// TODO: Move to a state machine function.
 	defer func() {
 		s.mu.Lock()
 		s.buildCancelFunc = nil
