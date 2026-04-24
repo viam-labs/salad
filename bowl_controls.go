@@ -268,18 +268,27 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		return s.doGrabBowl(ctx)
 	}
 	if _, ok := cmd["move_down_to_bowl"]; ok {
-		if err := s.moveDownToBowl(ctx); err != nil {
+		if err := s.moveDownTo(ctx, "bowl"); err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{"success": true}, nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', or 'reset' field")
+	if _, ok := cmd["move_down_to_lid"]; ok {
+		if err := s.moveDownTo(ctx, "lid"); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true}, nil
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', or 'reset' field")
 }
 
-func (s *bowlControls) moveDownToBowl(ctx context.Context) error {
-	// Start at right-above-bowl position
-	if err := s.rightGrabBowl.SetPosition(ctx, 2, nil); err != nil {
-		return fmt.Errorf("failed to set right-above-bowl switch: %w", err)
+func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
+	pose, ok := s.lilArmPoses[name]
+	if !ok {
+		return fmt.Errorf("lil-arm pose '%s' not found in configuration", name)
+	}
+	if err := pose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return fmt.Errorf("failed to set %s at-pose switch: %w", name, err)
 	}
 
 	for {
@@ -363,7 +372,7 @@ func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-above-bowl switch to position 2")
 
-	if err := s.moveDownToBowl(ctx); err != nil {
+	if err := s.moveDownTo(ctx, "bowl"); err != nil {
 		return nil, fmt.Errorf("failed to move down to bowl: %w", err)
 	}
 	s.logger.Debugf("Moved down to bowl")
@@ -400,7 +409,7 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-above-bowl switch to position 2")
 
-	if err := s.moveDownToBowl(ctx); err != nil {
+	if err := s.moveDownTo(ctx, "bowl"); err != nil {
 		return nil, fmt.Errorf("failed to move down to bowl: %w", err)
 	}
 	s.logger.Debugf("Moved down to bowl")
@@ -475,10 +484,10 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	}
 	s.logger.Debugf("Set above-%s switch to position 2", name)
 
-	if err := pose.atPose.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set at-%s switch to position 2: %w", name, err)
+	if err := s.moveDownTo(ctx, name); err != nil {
+		return nil, fmt.Errorf("failed to move down to %s: %w", name, err)
 	}
-	s.logger.Debugf("Set at-%s switch to position 2", name)
+	s.logger.Debugf("Moved down to %s", name)
 
 	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to grab %s: %w", name, err)
