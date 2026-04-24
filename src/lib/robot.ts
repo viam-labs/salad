@@ -65,6 +65,10 @@ export async function getStatus(): Promise<{
   })) as unknown as { status: string; progress: number; error_msg?: string };
 }
 
+export async function setupStation(): Promise<void> {
+  await coordinator.doCommand({ setup_station: true });
+}
+
 export async function stopBuild(): Promise<void> {
   await coordinator.doCommand({ stop: true });
 }

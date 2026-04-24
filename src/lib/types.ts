@@ -4,4 +4,4 @@ export interface Ingredient {
   category: string;
 }
 
-export type AppScreen = "loading" | "ordering" | "building" | "complete" | "error";
+export type AppScreen = "loading" | "ordering" | "building" | "complete" | "error" | "setup";
