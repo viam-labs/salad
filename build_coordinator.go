@@ -489,14 +489,21 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 		return fmt.Errorf("failed to create capture directory %q: %w", s.cfg.CaptureDir, err)
 	}
 
-	filename := fmt.Sprintf("setup-%s.pcd", time.Now().Format("20060102-150405"))
-	path := filepath.Join(s.cfg.CaptureDir, filename)
+	ts := time.Now().Format("20060102-150405")
 
-	if err := saladutils.WritePCD(pc, path); err != nil {
+	pcdPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s.pcd", ts))
+	if err := saladutils.WritePCD(pc, pcdPath); err != nil {
 		return fmt.Errorf("failed to write point cloud: %w", err)
 	}
+	s.logger.Infof("Wrote %s (%d points)", pcdPath, pc.Size())
 
-	s.logger.Infof("Wrote %s (%d points)", path, pc.Size())
+	s.logger.Infof("Running meshifier on %s", pcdPath)
+	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
+	if err := saladutils.ExecMeshifier(ctx, pcdPath, meshPath, 30, 50, 0); err != nil {
+		return fmt.Errorf("meshification failed: %w", err)
+	}
+	s.logger.Infof("Wrote mesh %s", meshPath)
+
 	return nil
 }
 
