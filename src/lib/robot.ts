@@ -1,6 +1,6 @@
 import * as VIAM from "@viamrobotics/sdk";
 import Cookies from "js-cookie";
-import type { Ingredient } from "./types";
+import type { Ingredient, SetupResult, ZonesResult } from "./types";
 
 let robotClient: VIAM.RobotClient;
 let coordinator: VIAM.GenericServiceClient;
@@ -75,4 +75,18 @@ export async function stopBuild(): Promise<void> {
 
 export function getCameraStream(): MediaStream {
   return cameraStream;
+}
+
+export async function getSetupResult(): Promise<SetupResult> {
+  const result = (await coordinator.doCommand({
+    get_setup_result: true,
+  })) as unknown as { pcd: string; zones: ZonesResult };
+
+  const binary = atob(result.pcd);
+  const pcd = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    pcd[i] = binary.charCodeAt(i);
+  }
+
+  return { pcd, zones: result.zones };
 }

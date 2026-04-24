@@ -16,7 +16,11 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
+    "@threlte/core": "^8.5.9",
+    "@viamrobotics/motion-tools": "^1.18.1",
     "@viamrobotics/sdk": "^0.66.0",
-    "js-cookie": "^3.0.5"
+    "js-cookie": "^3.0.5",
+    "tailwindcss": "^4.2.4",
+    "three": "^0.184.0"
   }
 }

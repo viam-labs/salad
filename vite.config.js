@@ -4,4 +4,12 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 export default defineConfig({
   base: "./",
   plugins: [svelte()],
+  assetsInclude: ["**/*.hdr"],
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: {
+        ".hdr": "dataurl",
+      },
+    },
+  },
 });
