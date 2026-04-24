@@ -33,15 +33,11 @@ update:
 test:
 	go test ./...
 
-meshifier/deps/.installed: meshifier/requirements.txt
-	pip3 install --target meshifier/deps -r meshifier/requirements.txt
-	touch meshifier/deps/.installed
-
-module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html meshifier/main.py meshifier/algos.py meshifier/deps/.installed
+module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html meshifier/main.py meshifier/algos.py meshifier/requirements.txt
 ifneq ($(VIAM_TARGET_OS), windows)
 	strip $(MODULE_BINARY)
 endif
-	tar czf $@ meta.json $(MODULE_BINARY) dist meshifier
+	tar czf $@ meta.json $(MODULE_BINARY) dist meshifier/main.py meshifier/algos.py meshifier/requirements.txt
 
 module: test module.tar.gz
 
@@ -50,7 +46,6 @@ all: test module.tar.gz
 setup:
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
-	pip3 install --break-system-packages -r meshifier/requirements.txt
 
 .PHONY: va-update va-upload
 
