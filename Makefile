@@ -46,6 +46,7 @@ all: test module.tar.gz
 setup:
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
+	pip3 install --break-system-packages -r meshifier/requirements.txt
 
 .PHONY: va-update va-upload
 

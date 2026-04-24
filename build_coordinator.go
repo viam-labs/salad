@@ -2,6 +2,8 @@ package salad
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,6 +146,9 @@ type buildCoordinator struct {
 	simulate     bool
 	opCancelFunc func()
 	opDone       chan struct{}
+
+	lastPCDPath   string
+	lastZonesPath string
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -259,7 +264,10 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', or 'list_ingredients' field")
+	if _, ok := cmd["get_setup_result"]; ok {
+		return s.getSetupResult()
+	}
+	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
 }
 
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
@@ -516,7 +524,55 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	}
 	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), zonesPath)
 
+	// Write stable (non-timestamped) copies for the webapp to read.
+	// These live outside the capture directory so they are not synced to the cloud.
+	const stablePCDPath = "/home/viam/merged.pcd"
+	const stableZonesPath = "/home/viam/zones.json"
+	if err := saladutils.WritePCD(pc, stablePCDPath); err != nil {
+		return fmt.Errorf("failed to write stable PCD: %w", err)
+	}
+	if err := segmentation.SaveZones(result, stableZonesPath); err != nil {
+		return fmt.Errorf("failed to write stable zones: %w", err)
+	}
+	s.logger.Infof("Wrote stable files to /home/viam/")
+
+	s.mu.Lock()
+	s.lastPCDPath = stablePCDPath
+	s.lastZonesPath = stableZonesPath
+	s.mu.Unlock()
+
 	return nil
+}
+
+func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
+	s.mu.RLock()
+	pcdPath := s.lastPCDPath
+	zonesPath := s.lastZonesPath
+	s.mu.RUnlock()
+
+	if pcdPath == "" || zonesPath == "" {
+		return nil, fmt.Errorf("no setup result available, run setup_station first")
+	}
+
+	pcdBytes, err := os.ReadFile(pcdPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read PCD file %q: %w", pcdPath, err)
+	}
+
+	zonesBytes, err := os.ReadFile(zonesPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read zones file %q: %w", zonesPath, err)
+	}
+
+	var zones interface{}
+	if err := json.Unmarshal(zonesBytes, &zones); err != nil {
+		return nil, fmt.Errorf("failed to parse zones: %w", err)
+	}
+
+	return map[string]interface{}{
+		"pcd":   base64.StdEncoding.EncodeToString(pcdBytes),
+		"zones": zones,
+	}, nil
 }
 
 func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) (map[string]interface{}, error) {
