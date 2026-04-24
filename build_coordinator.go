@@ -156,6 +156,9 @@ func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawCon
 	if err != nil {
 		return nil, err
 	}
+	if conf.CaptureDir == "" {
+		conf.CaptureDir = "/root/.viam/capture"
+	}
 	return NewBuildCoordinator(ctx, deps, rawConf.ResourceName(), conf, logger)
 }
 
