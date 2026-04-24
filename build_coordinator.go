@@ -543,6 +543,13 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	s.lastZonesPath = stableZonesPath
 	s.mu.Unlock()
 
+	_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		"reset": true,
+	})
+	if err != nil {
+		return err
+	}
+	s.logger.Infof("reset all")
 	return nil
 }
 
