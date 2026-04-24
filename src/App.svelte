@@ -50,8 +50,6 @@
     screen = "complete";
   }
 
-  // Poll coordinator while on the ordering screen to detect externally-triggered
-  // operations (e.g. StreamDeck "Setup Station" button).
   $effect(() => {
     if (screen !== "ordering") return;
 
