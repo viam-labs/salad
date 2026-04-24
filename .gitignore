@@ -28,6 +28,7 @@ go.work.sum
 # Build outputs
 bin
 *tar.gz
+meshifier/deps
 
 # salad-cli binary when built inside cmd/cli (e.g. go build -o cli)
 cmd/cli/cli
