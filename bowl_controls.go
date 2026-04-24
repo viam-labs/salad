@@ -9,8 +9,8 @@ import (
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
-	"go.viam.com/rdk/spatialmath"
 	genericservice "go.viam.com/rdk/services/generic"
+	"go.viam.com/rdk/spatialmath"
 )
 
 var BowlControls = resource.NewModel("ncs", "salad", "bowl-controls")
@@ -278,7 +278,7 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 
 func (s *bowlControls) moveDownToBowl(ctx context.Context) error {
 	// Start at right-above-bowl position
-	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
+	if err := s.rightGrabBowl.SetPosition(ctx, 2, nil); err != nil {
 		return fmt.Errorf("failed to set right-above-bowl switch: %w", err)
 	}
 
