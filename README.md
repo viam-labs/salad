@@ -339,3 +339,49 @@ Vision service that returns a 3D mesh loaded from a PLY file.
     "file" : "<path to .ply file>"
 }
 ```
+
+## supply-detector
+
+Detects ingredient supply level from overhead camera ROIs.
+
+### config
+```
+{
+    // required - camera to capture images from
+    "camera": "<camera name>",
+
+    // required - list of bins to monitor
+    "bins": [
+        {
+            "name": "<ingredient name>",
+            "x1": 0,
+            "y1": 0,
+            "x2": 100,
+            "y2": 100
+        }
+    ],
+
+    // optional - fraction of non-steel pixels below which a bin is considered low (default: 0.20)
+    "low_threshold": 0.20
+}
+```
+
+### DoCommand
+
+#### check_supply
+
+Returns the supply level for each configured bin.
+
+```
+{
+    "check_supply": true
+}
+```
+
+Response:
+```
+{
+    "<bin name>": { "ratio": <float>, "low": <bool> },
+    ...
+}
+```
