@@ -46,7 +46,7 @@
   }
 </script>
 
-<div class="setup-screen">
+<div class="building-screen">
   <h1>Setting Up Station&hellip;</h1>
   <div class="status-text">{status}</div>
   <video class="stream-video" bind:this={video} autoplay playsinline></video>
