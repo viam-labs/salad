@@ -71,7 +71,7 @@ Map of ingredient name to number of servings. Grabs each ingredient until the sc
 ```
 
 #### status
-Returns the current status and progress percentage of the salad build.
+Returns the current build state and progress.
 Progress is based on total servings completed + bowl delivery as steps.
 For the example above: 2 + 1 + 1 + 1 (delivery) = 5 steps.
 ```
@@ -80,8 +80,15 @@ For the example above: 2 + 1 + 1 + 1 (delivery) = 5 steps.
 Response:
 ```
 {
-    "status" : "adding lettuce",  // "idle", "adding <ingredient>", "delivering salad", or "complete"
-    "progress" : 40.0             // percentage 0-100
+    "state" : "adding",            // "idle" | "preparing" | "adding" | "delivering" | "complete" | "stopped" | "failed"
+    "progress" : 40.0,             // percentage 0-100
+    "customer_name" : "Alice",     // omitted if not set
+    "current_ingredient" : "lettuce",  // present when state is "adding"
+    "failure_reason" : "...",      // present when state is "failed"
+    "interrupted_at" : "lettuce",  // present when state is "stopped", ingredient active at stop time
+    "warnings" : ["dressing failed: ..."],  // present on "complete" if post-delivery steps had errors
+    "elapsed_seconds" : 42.1,      // present during active build
+    "eta_seconds" : 30.5           // present during active build (linear extrapolation)
 }
 ```
 
