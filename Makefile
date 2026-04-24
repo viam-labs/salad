@@ -33,11 +33,11 @@ update:
 test:
 	go test ./...
 
-module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html
+module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html meshifier/main.py meshifier/algos.py
 ifneq ($(VIAM_TARGET_OS), windows)
 	strip $(MODULE_BINARY)
 endif
-	tar czf $@ meta.json $(MODULE_BINARY) dist
+	tar czf $@ meta.json $(MODULE_BINARY) dist meshifier
 
 module: test module.tar.gz
 
