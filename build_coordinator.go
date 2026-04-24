@@ -15,6 +15,7 @@ import (
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
 
+	"salad/segmentation"
 	saladutils "salad/utils"
 )
 
@@ -503,6 +504,17 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 		return fmt.Errorf("meshification failed: %w", err)
 	}
 	s.logger.Infof("Wrote mesh %s", meshPath)
+
+	s.logger.Infof("Segmenting mesh %s", meshPath)
+	result, _, err := segmentation.SegmentFridgeBins(meshPath, segmentation.DefaultOptions())
+	if err != nil {
+		return fmt.Errorf("segmentation failed: %w", err)
+	}
+	zonesPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-zones.json", ts))
+	if err := segmentation.SaveZones(result, zonesPath); err != nil {
+		return fmt.Errorf("failed to save zones: %w", err)
+	}
+	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), zonesPath)
 
 	return nil
 }
