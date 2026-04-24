@@ -13,8 +13,8 @@ import (
 // a PLY mesh to meshPath. The context is wired into the subprocess so cancellation
 // (e.g. from a stop command) terminates the Python process.
 //
-// Python dependencies must be pre-installed into meshifier/deps/ at build time
-// via `make module.tar.gz`; they are bundled into the module tarball.
+// Python dependencies are installed on first use into meshifier/deps/ on the target
+// machine, so they are always compiled for the local Python version.
 func ExecMeshifier(ctx context.Context, pcdPath, meshPath string, kdTreeKNN, orientNN, lodMultiplier int) error {
 	scriptPath, err := meshifierScriptPath()
 	if err != nil {
@@ -45,16 +45,38 @@ func ExecMeshifier(ctx context.Context, pcdPath, meshPath string, kdTreeKNN, ori
 	return nil
 }
 
-// ensureMeshifierDeps verifies that the Python dependencies were pre-installed
-// into deps/ at build time (via `make module.tar.gz`). Returns the deps path.
+// ensureMeshifierDeps installs Python dependencies into meshifier/deps/ on the
+// target machine if not already present. Installing natively ensures the compiled
+// C extensions match the local Python version and CPU architecture.
 func ensureMeshifierDeps(scriptPath string) (string, error) {
 	meshifierDir := filepath.Dir(scriptPath)
 	depsDir := filepath.Join(meshifierDir, "deps")
 	sentinel := filepath.Join(depsDir, ".installed")
 
-	if _, err := os.Stat(sentinel); err != nil {
-		return "", fmt.Errorf("meshifier Python dependencies not found at %q — rebuild the module with `make module.tar.gz`", depsDir)
+	if _, err := os.Stat(sentinel); err == nil {
+		return depsDir, nil
 	}
+
+	requirementsPath := filepath.Join(meshifierDir, "requirements.txt")
+	if _, err := os.Stat(requirementsPath); err != nil {
+		return "", fmt.Errorf("meshifier requirements.txt not found at %q", requirementsPath)
+	}
+
+	if err := os.MkdirAll(depsDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create meshifier deps dir: %w", err)
+	}
+
+	cmd := exec.Command("pip3", "install", "--target", depsDir, "-r", requirementsPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install meshifier Python dependencies: %w", err)
+	}
+
+	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+		return "", fmt.Errorf("failed to write meshifier deps sentinel: %w", err)
+	}
+
 	return depsDir, nil
 }
 
