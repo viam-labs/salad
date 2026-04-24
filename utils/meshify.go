@@ -62,20 +62,35 @@ func ensureMeshifierDeps(ctx context.Context, scriptPath string) (string, error)
 		return "", fmt.Errorf("requirements.txt not found at %q", reqPath)
 	}
 
-	cmd := exec.CommandContext(ctx, "python3", "-m", "pip", "install",
-		"--target", depsDir,
-		"-r", reqPath,
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("pip install failed: %w", err)
+	if err := pipInstall(ctx, reqPath, depsDir); err != nil {
+		return "", err
 	}
 
 	if err := os.WriteFile(sentinel, []byte("ok"), 0o644); err != nil {
 		return "", fmt.Errorf("failed to write sentinel: %w", err)
 	}
 	return depsDir, nil
+}
+
+// pipInstall installs the packages listed in reqPath into targetDir.
+// It tries pip3 first, then python3 -m pip, returning an error only if both fail.
+func pipInstall(ctx context.Context, reqPath, targetDir string) error {
+	candidates := [][]string{
+		{"pip3", "install", "--target", targetDir, "-r", reqPath},
+		{"python3", "-m", "pip", "install", "--target", targetDir, "-r", reqPath},
+	}
+	var lastErr error
+	for _, args := range candidates {
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("pip install failed (tried pip3 and python3 -m pip): %w", lastErr)
 }
 
 // meshifierScriptPath resolves main.py relative to the running executable.
