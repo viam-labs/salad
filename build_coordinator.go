@@ -3,13 +3,19 @@ package salad
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
+	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
+
+	saladutils "salad/utils"
 )
 
 var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
@@ -37,6 +43,8 @@ type BuildCoordinatorConfig struct {
 	DressingControls  string                             `json:"dressing-controls"`
 	ChefsKissControls string                             `json:"chefs-kiss-controls"`
 	TextToSpeech      string                             `json:"text-to-speech"`
+	ImagingCamera     string                             `json:"imaging-camera"`
+	CaptureDir        string                             `json:"capture-dir"`
 	Simulate          bool                               `json:"simulate"`
 }
 
@@ -71,6 +79,9 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
 	if cfg.TextToSpeech != "" {
 		deps = append(deps, cfg.TextToSpeech)
+	}
+	if cfg.ImagingCamera != "" {
+		deps = append(deps, cfg.ImagingCamera)
 	}
 
 	for i, ing := range cfg.Ingredients {
@@ -117,20 +128,21 @@ type buildCoordinator struct {
 	scaleSensor          sensor.Sensor
 	dressingControls     resource.Resource
 	textToSpeech         resource.Resource
+	imagingCamera        camera.Camera
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 
 	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
 	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
 	// status shouldn't be strings - should be a constant enum type.
-	mu              sync.RWMutex
-	status          string
-	progress        float64
-	customerName    string
-	errorMsg        string
-	simulate        bool
-	buildCancelFunc func()
-	buildDone       chan struct{}
+	mu           sync.RWMutex
+	status       string
+	progress     float64
+	customerName string
+	errorMsg     string
+	simulate     bool
+	opCancelFunc func()
+	opDone       chan struct{}
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -189,6 +201,14 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		s.textToSpeech = textToSpeech
 	}
 
+	if conf.ImagingCamera != "" {
+		cam, err := camera.FromProvider(deps, conf.ImagingCamera)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get imaging camera %q: %w", conf.ImagingCamera, err)
+		}
+		s.imagingCamera = cam
+	}
+
 	scale, err := sensor.FromProvider(deps, conf.ScaleSensor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get scale sensor %q: %w", conf.ScaleSensor, err)
@@ -213,6 +233,9 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 		customerName, _ := cmd["customer_name"].(string)
 		return s.doBuildSalad(ctx, val, customerName)
 	}
+	if _, ok := cmd["setup_station"]; ok {
+		return s.doSetupStation()
+	}
 	if _, ok := cmd["stop"]; ok {
 		return s.doStop()
 	}
@@ -235,7 +258,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
+	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', or 'list_ingredients' field")
 }
 
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
@@ -272,24 +295,24 @@ func (s *buildCoordinator) listIngredients() map[string]interface{} {
 
 func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	s.mu.RLock()
-	cancelFunc := s.buildCancelFunc
-	done := s.buildDone
+	cancelFunc := s.opCancelFunc
+	done := s.opDone
 	s.mu.RUnlock()
 
 	if cancelFunc == nil {
 		return map[string]interface{}{
 			"success": false,
-			"message": "No build in progress",
+			"message": "No operation in progress",
 		}, nil
 	}
 
-	s.logger.Infof("Stop requested, cancelling build")
+	s.logger.Infof("Stop requested, cancelling operation")
 	cancelFunc()
 	<-done
 
 	return map[string]interface{}{
 		"success": true,
-		"message": "Build stopped",
+		"message": "Operation stopped",
 	}, nil
 }
 
@@ -300,16 +323,16 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	// Verify we're transitioning from a valid state.
 	// Also move to caller - will be easier to ensure ever DoCommand verifies sate before proceeding.
 	s.mu.Lock()
-	if s.buildCancelFunc != nil {
+	if s.opCancelFunc != nil {
 		s.mu.Unlock()
 		return map[string]interface{}{
 			"success": false,
-			"message": "A build is already in progress, use 'stop' to cancel it first",
+			"message": "An operation is already in progress, use 'stop' to cancel it first",
 		}, nil
 	}
 	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
-	s.buildCancelFunc = buildCancelFunc
-	s.buildDone = make(chan struct{})
+	s.opCancelFunc = buildCancelFunc
+	s.opDone = make(chan struct{})
 	s.status = "preparing"
 	s.progress = 0
 	s.customerName = customerName
@@ -325,10 +348,10 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	// TODO: Move to a state machine function.
 	defer func() {
 		s.mu.Lock()
-		s.buildCancelFunc = nil
+		s.opCancelFunc = nil
 		s.customerName = ""
-		close(s.buildDone)
-		s.buildDone = nil
+		close(s.opDone)
+		s.opDone = nil
 		s.mu.Unlock()
 	}()
 
@@ -395,6 +418,86 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	}
 
 	return result, err
+}
+
+func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
+	if s.imagingCamera == nil {
+		return nil, fmt.Errorf("setup_station requires 'imaging-camera' to be configured")
+	}
+
+	s.mu.Lock()
+	if s.opCancelFunc != nil {
+		s.mu.Unlock()
+		return map[string]interface{}{
+			"success": false,
+			"message": "An operation is already in progress, use 'stop' to cancel it first",
+		}, nil
+	}
+	setupCtx, setupCancelFunc := context.WithCancel(s.cancelCtx)
+	s.opCancelFunc = setupCancelFunc
+	s.opDone = make(chan struct{})
+	s.status = "setting_up_station"
+	s.progress = 0
+	s.errorMsg = ""
+	s.mu.Unlock()
+
+	s.logger.Infof("Starting station setup")
+
+	defer func() {
+		s.mu.Lock()
+		s.opCancelFunc = nil
+		close(s.opDone)
+		s.opDone = nil
+		s.mu.Unlock()
+	}()
+
+	err := s.executeSetup(setupCtx)
+	if setupCtx.Err() != nil {
+		s.updateStatus("stopped", 0)
+		return map[string]interface{}{
+			"success": false,
+			"message": "Setup stopped",
+		}, nil
+	}
+	if err != nil {
+		s.mu.Lock()
+		s.status = "failed"
+		s.errorMsg = err.Error()
+		s.mu.Unlock()
+		return map[string]interface{}{
+			"success": false,
+			"message": err.Error(),
+		}, nil
+	}
+
+	s.updateStatus("idle", 0)
+	s.logger.Infof("Station setup complete")
+	return map[string]interface{}{
+		"success": true,
+		"message": "Station setup complete",
+	}, nil
+}
+
+func (s *buildCoordinator) executeSetup(ctx context.Context) error {
+	s.logger.Infof("Capturing point cloud from imaging camera")
+	pc, err := s.imagingCamera.NextPointCloud(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to capture point cloud: %w", err)
+	}
+
+	if err := os.MkdirAll(s.cfg.CaptureDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create capture directory %q: %w", s.cfg.CaptureDir, err)
+	}
+
+	filename := fmt.Sprintf("setup-%s.pcd", time.Now().Format("20060102-150405"))
+	path := filepath.Join(s.cfg.CaptureDir, filename)
+
+	if err := saladutils.WritePCD(pc, path); err != nil {
+		return fmt.Errorf("failed to write point cloud: %w", err)
+	}
+
+	s.logger.Infof("Wrote %s (%d points)", path, pc.Size())
+	return nil
 }
 
 func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) (map[string]interface{}, error) {

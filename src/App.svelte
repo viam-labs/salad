@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { initConnection, fetchIngredients, getCameraStream } from "./lib/robot";
+  import { initConnection, fetchIngredients, getCameraStream, getStatus } from "./lib/robot";
   import type { Ingredient, AppScreen } from "./lib/types";
   import OrderingScreen from "./components/OrderingScreen.svelte";
   import BuildingScreen from "./components/BuildingScreen.svelte";
   import CompleteScreen from "./components/CompleteScreen.svelte";
+  import SetupScreen from "./components/SetupScreen.svelte";
 
   let screen: AppScreen = $state("loading");
   let ingredients: Ingredient[] = $state([]);
@@ -12,6 +13,7 @@
   let customerName = $state("");
   let error = $state("");
   let buildError = $state("");
+  let setupError = $state("");
   let showCamera = $state(false);
 
   function attachStream(node: HTMLVideoElement) {
@@ -48,8 +50,33 @@
     screen = "complete";
   }
 
+  $effect(() => {
+    if (screen !== "ordering") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const result = await getStatus();
+        if (result.status === "setting_up_station") {
+          setupError = "";
+          screen = "setup";
+        }
+      } catch {}
+    }, 2000);
+
+    return () => clearInterval(interval);
+  });
+
   function handleNewOrder() {
     order = {};
+    screen = "ordering";
+  }
+
+  function handleSetupDone() {
+    screen = "ordering";
+  }
+
+  function handleSetupFailed(message: string) {
+    setupError = message;
     screen = "ordering";
   }
 </script>
@@ -105,7 +132,12 @@
   {#if buildError}
     <div class="build-error-banner">Build failed: {buildError}</div>
   {/if}
+  {#if setupError}
+    <div class="build-error-banner">Setup failed: {setupError}</div>
+  {/if}
   <OrderingScreen {ingredients} onBuild={handleBuild} />
+{:else if screen === "setup"}
+  <SetupScreen onDone={handleSetupDone} onFailed={handleSetupFailed} />
 {:else if screen === "building"}
   <BuildingScreen {order} {customerName} onComplete={handleComplete} onStopped={handleNewOrder} onFailed={handleFailed} />
 {:else if screen === "complete"}
