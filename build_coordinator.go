@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
@@ -21,6 +22,30 @@ var categoryOrder = map[string]int{
 	"protein":  1,
 	"topping":  2,
 	"dressing": 3,
+}
+
+// BuildState is the build-level state exposed via the status DoCommand and the Svelte app.
+type BuildState string
+
+const (
+	BuildStateIdle      BuildState = "idle"
+	BuildStatePreparing BuildState = "preparing"
+	BuildStateAdding    BuildState = "adding"
+	BuildStateDelivering BuildState = "delivering"
+	BuildStateComplete  BuildState = "complete"
+	BuildStateStopped   BuildState = "stopped"
+	BuildStateFailed    BuildState = "failed"
+)
+
+type buildStatus struct {
+	State             BuildState
+	Progress          float64
+	CustomerName      string
+	CurrentIngredient string
+	FailureReason     string
+	InterruptedAt     string // ingredient name active when a stop was requested
+	StartedAt         time.Time
+	Warnings          []string // non-fatal post-delivery failures
 }
 
 type BuildCoordinatorIngredientConfig struct {
@@ -115,9 +140,7 @@ type buildCoordinator struct {
 	ingredientCategories map[string]string  // name -> category
 
 	mu              sync.RWMutex
-	status          string
-	progress        float64
-	customerName    string
+	buildStatus     buildStatus
 	buildCancelFunc func()
 	buildDone       chan struct{}
 }
@@ -141,7 +164,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		cancelFunc:           cancelFunc,
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
-		status:               "idle",
+		buildStatus:          buildStatus{State: BuildStateIdle},
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -217,21 +240,71 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'stop', 'reset', 'status', or 'list_ingredients' field")
 }
 
-func (s *buildCoordinator) updateStatus(status string, progress float64) {
+// setBuildState replaces the entire build status and logs the transition at Info level.
+// Use for terminal transitions (idle, complete, failed, stopped) and build initialization.
+func (s *buildCoordinator) setBuildState(bs buildStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.status = status
-	s.progress = progress
+	s.buildStatus = bs
+	switch {
+	case bs.FailureReason != "":
+		s.logger.Infof("build state: %s — %s", bs.State, bs.FailureReason)
+	case bs.InterruptedAt != "":
+		s.logger.Infof("build state: %s (interrupted at %s)", bs.State, bs.InterruptedAt)
+	case bs.CurrentIngredient != "":
+		s.logger.Infof("build state: %s ingredient=%s %.0f%%", bs.State, bs.CurrentIngredient, bs.Progress)
+	default:
+		s.logger.Infof("build state: %s %.0f%%", bs.State, bs.Progress)
+	}
+}
+
+// updateActiveState updates progress fields while preserving CustomerName, StartedAt, and Warnings.
+// Use for per-step transitions during an active build.
+func (s *buildCoordinator) updateActiveState(state BuildState, progress float64, ingredient string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.buildStatus.State = state
+	s.buildStatus.Progress = progress
+	s.buildStatus.CurrentIngredient = ingredient
+	if ingredient != "" {
+		s.logger.Infof("build state: %s ingredient=%s %.0f%%", state, ingredient, progress)
+	} else {
+		s.logger.Infof("build state: %s %.0f%%", state, progress)
+	}
 }
 
 func (s *buildCoordinator) getStatus() map[string]interface{} {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return map[string]interface{}{
-		"status":        s.status,
-		"progress":      s.progress,
-		"customer_name": s.customerName,
+	bs := s.buildStatus
+	s.mu.RUnlock()
+
+	result := map[string]interface{}{
+		"state":         string(bs.State),
+		"progress":      bs.Progress,
+		"customer_name": bs.CustomerName,
 	}
+	if bs.CurrentIngredient != "" {
+		result["current_ingredient"] = bs.CurrentIngredient
+	}
+	if bs.FailureReason != "" {
+		result["failure_reason"] = bs.FailureReason
+	}
+	if bs.InterruptedAt != "" {
+		result["interrupted_at"] = bs.InterruptedAt
+	}
+	if len(bs.Warnings) > 0 {
+		warnings := make([]interface{}, len(bs.Warnings))
+		for i, w := range bs.Warnings {
+			warnings[i] = w
+		}
+		result["warnings"] = warnings
+	}
+	if !bs.StartedAt.IsZero() && bs.Progress > 0 && bs.Progress < 100 {
+		elapsed := time.Since(bs.StartedAt).Seconds()
+		result["elapsed_seconds"] = elapsed
+		result["eta_seconds"] = elapsed * (100 - bs.Progress) / bs.Progress
+	}
+	return result
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
@@ -272,7 +345,6 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 }
 
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
-	// Guard against concurrent builds.
 	s.mu.Lock()
 	if s.buildCancelFunc != nil {
 		s.mu.Unlock()
@@ -284,9 +356,11 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
 	s.buildCancelFunc = buildCancelFunc
 	s.buildDone = make(chan struct{})
-	s.status = "preparing"
-	s.progress = 0
-	s.customerName = customerName
+	s.buildStatus = buildStatus{
+		State:        BuildStatePreparing,
+		CustomerName: customerName,
+		StartedAt:    time.Now(),
+	}
 	s.mu.Unlock()
 
 	if customerName != "" {
@@ -298,7 +372,6 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	defer func() {
 		s.mu.Lock()
 		s.buildCancelFunc = nil
-		s.customerName = ""
 		close(s.buildDone)
 		s.buildDone = nil
 		s.mu.Unlock()
@@ -306,11 +379,20 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 
 	result, err := s.executeBuild(buildCtx, value)
 	if buildCtx.Err() != nil {
+		s.mu.RLock()
+		interruptedAt := s.buildStatus.CurrentIngredient
+		savedCustomerName := s.buildStatus.CustomerName
+		s.mu.RUnlock()
+
 		s.logger.Infof("Build stopped, resetting hardware")
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
-		s.updateStatus("stopped", 0)
+		s.setBuildState(buildStatus{
+			State:         BuildStateStopped,
+			CustomerName:  savedCustomerName,
+			InterruptedAt: interruptedAt,
+		})
 		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
@@ -321,14 +403,25 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 }
 
 func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) (map[string]interface{}, error) {
-	// reset to initial positions
-	err := s.resetAll(ctx)
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset all controls: %v", err),
-		}, nil
+	s.mu.RLock()
+	customerName := s.buildStatus.CustomerName
+	s.mu.RUnlock()
+
+	// failWith sets BuildStateFailed and returns a DoCommand failure response.
+	failWith := func(reason string, progress float64) (map[string]interface{}, error) {
+		s.setBuildState(buildStatus{
+			State:         BuildStateFailed,
+			Progress:      progress,
+			CustomerName:  customerName,
+			FailureReason: reason,
+		})
+		return map[string]interface{}{"success": false, "message": reason}, nil
 	}
+
+	if err := s.resetAll(ctx); err != nil {
+		return failWith(fmt.Sprintf("failed to reset controls: %v", err), 0)
+	}
+
 	ingredientMap, ok := value.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("build_salad value must be a map of ingredient name to servings count")
@@ -337,24 +430,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return nil, fmt.Errorf("build_salad requires at least one ingredient")
 	}
 
-	result, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"prepare_bowl": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to prepare bowl: %v", err),
-		}, nil
+	if _, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{"prepare_bowl": true}); err != nil {
+		return failWith(fmt.Sprintf("failed to prepare bowl: %v", err), 0)
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset bowl controls after preparing: %v", err),
-		}, nil
+	if _, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{"reset": true}); err != nil {
+		return failWith(fmt.Sprintf("failed to reset bowl after prepare: %v", err), 0)
 	}
 
 	type ingredientTarget struct {
@@ -404,71 +485,61 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		s.updateStatus(fmt.Sprintf("adding %s", target.name), completedServings/totalSteps*100)
-		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if target.category == "dressing" {
 			continue
 		}
+		s.updateActiveState(BuildStateAdding, completedServings/totalSteps*100, target.name)
+		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
-			continue
+			return failWith(fmt.Sprintf("ingredient %q: %v", target.name, err), completedServings/totalSteps*100)
 		}
 		completedServings += target.servings
 	}
-	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
-		}, nil
+
+	if _, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{"reset": true}); err != nil {
+		return failWith(fmt.Sprintf("failed to reset grabber: %v", err), completedServings/totalSteps*100)
 	}
 
-	s.updateStatus("delivering salad", completedServings/totalSteps*100)
+	s.updateActiveState(BuildStateDelivering, completedServings/totalSteps*100, "")
 	s.logger.Infof("All ingredients added, delivering bowl")
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"deliver_bowl": true,
-	})
+
+	deliverResult, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{"deliver_bowl": true})
 	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %v", err),
-		}, nil
+		return failWith(fmt.Sprintf("failed to deliver bowl: %v", err), completedServings/totalSteps*100)
 	}
-	if success, ok := result["success"].(bool); ok && !success {
-		msg, _ := result["message"].(string)
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %s", msg),
-		}, nil
+	if success, ok := deliverResult["success"].(bool); !ok || !success {
+		msg, _ := deliverResult["message"].(string)
+		return failWith(fmt.Sprintf("bowl delivery failed: %s", msg), completedServings/totalSteps*100)
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
-		}, nil
+	if _, err := s.bowlControls.DoCommand(ctx, map[string]interface{}{"reset": true}); err != nil {
+		return failWith(fmt.Sprintf("failed to reset bowl after delivery: %v", err), completedServings/totalSteps*100)
 	}
-	s.updateStatus("complete", 100)
 
-	// if targets contains a dressing item
+	// Post-delivery steps: non-fatal. Collect warnings so they land atomically in the
+	// complete state (the Svelte app transitions on "complete", so it sees all warnings at once).
+	var postWarnings []string
+
 	for _, target := range targets {
 		if target.category == "dressing" {
 			if err := s.addDressing(ctx); err != nil {
-				s.logger.Errorf("Failed to add dressing: %v", err)
+				s.logger.Warnf("dressing failed: %v", err)
+				postWarnings = append(postWarnings, fmt.Sprintf("dressing failed: %v", err))
 			}
 		}
 	}
 
-	// chefs kiss
-	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
-		"chefs_kiss": true,
-	}); err != nil {
-		s.logger.Errorf("Failed to perform chefs kiss: %v", err)
+	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{"chefs_kiss": true}); err != nil {
+		s.logger.Warnf("chef's kiss failed: %v", err)
+		postWarnings = append(postWarnings, fmt.Sprintf("chef's kiss failed: %v", err))
 	}
+
+	s.setBuildState(buildStatus{
+		State:        BuildStateComplete,
+		Progress:     100,
+		CustomerName: customerName,
+		Warnings:     postWarnings,
+	})
 
 	return map[string]interface{}{
 		"success": true,
@@ -494,14 +565,16 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 
 	for totalAdded < targetGrams {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("cancelled during grab of %q: %w", name, ctx.Err())
 		}
+
+		s.logger.Debugf("step: read_scale_before ingredient=%q added=%.1fg", name, totalAdded)
 		weightBefore, err := s.readScaleWeight(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to read scale before grab: %w", err)
 		}
 
-		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg)", name, totalAdded, targetGrams)
+		s.logger.Debugf("step: grabbing ingredient=%q added=%.1fg target=%.1fg", name, totalAdded, targetGrams)
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 			"get_from_bin": name,
 		})
@@ -513,6 +586,7 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			return fmt.Errorf("grab from bin %q failed: %s", name, msg)
 		}
 
+		s.logger.Debugf("step: read_scale_after ingredient=%q", name)
 		weightAfter, err := s.readScaleWeight(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to read scale after grab: %w", err)
@@ -524,9 +598,9 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 
 		if change < zeroChangeTolerance {
 			zeroChangeStreak++
+			s.logger.Debugf("step: zero_change ingredient=%q streak=%d/3", name, zeroChangeStreak)
 			if zeroChangeStreak >= 3 {
-				s.logger.Errorf("3 consecutive grabs with no weight change for ingredient %q, possible empty bin", name)
-				break
+				return fmt.Errorf("3 consecutive grabs with no weight change for %q, possible empty bin", name)
 			}
 			s.logger.Warnf("No weight change detected for %q (streak: %d/3)", name, zeroChangeStreak)
 		} else {
@@ -536,6 +610,7 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 		totalAdded += change
 	}
 
+	s.logger.Debugf("step: ingredient_complete ingredient=%q added=%.1fg target=%.1fg", name, totalAdded, targetGrams)
 	s.logger.Infof("Ingredient %q complete: added %.1fg (target: %.1fg)", name, totalAdded, targetGrams)
 	return nil
 }

@@ -11,6 +11,7 @@
   let order: Record<string, number> = $state({});
   let customerName = $state("");
   let error = $state("");
+  let buildWarnings: string[] = $state([]);
   let showCamera = $state(false);
 
   function attachStream(node: HTMLVideoElement) {
@@ -37,7 +38,8 @@
     screen = "building";
   }
 
-  function handleComplete() {
+  function handleComplete(warnings?: string[]) {
+    buildWarnings = warnings ?? [];
     screen = "complete";
   }
 
@@ -89,5 +91,5 @@
 {:else if screen === "building"}
   <BuildingScreen {order} {customerName} onComplete={handleComplete} onStopped={handleNewOrder} />
 {:else if screen === "complete"}
-  <CompleteScreen {customerName} onNewOrder={handleNewOrder} />
+  <CompleteScreen {customerName} warnings={buildWarnings} onNewOrder={handleNewOrder} />
 {/if}

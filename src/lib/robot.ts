@@ -1,6 +1,6 @@
 import * as VIAM from "@viamrobotics/sdk";
 import Cookies from "js-cookie";
-import type { Ingredient } from "./types";
+import type { Ingredient, BuildStatus } from "./types";
 
 let robotClient: VIAM.RobotClient;
 let coordinator: VIAM.GenericServiceClient;
@@ -55,13 +55,10 @@ export async function buildSalad(
   });
 }
 
-export async function getStatus(): Promise<{
-  status: string;
-  progress: number;
-}> {
+export async function getStatus(): Promise<BuildStatus> {
   return (await coordinator.doCommand({
     status: true,
-  })) as unknown as { status: string; progress: number };
+  })) as unknown as BuildStatus;
 }
 
 export async function stopBuild(): Promise<void> {
