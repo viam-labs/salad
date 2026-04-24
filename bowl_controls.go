@@ -409,10 +409,10 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-above-bowl switch to position 2")
 
-	if err := s.moveDownTo(ctx, "bowl"); err != nil {
-		return nil, fmt.Errorf("failed to move down to bowl: %w", err)
+	if err := s.rightGrabBowl.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set right-grab-bowl switch to position 2: %w", err)
 	}
-	s.logger.Debugf("Moved down to bowl")
+	s.logger.Debugf("Set right-grab-bowl switch to position 2")
 
 	if _, err := s.rightGripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to close right gripper: %w", err)
