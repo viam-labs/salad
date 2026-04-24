@@ -140,7 +140,7 @@ Picks up the bowl and delivers it.
 
 ## bowl-controls
 
-Controls the right gripper and switches for preparing and delivering bowls.
+Controls the right gripper and switches for preparing and delivering bowls, plus an optional "lil-arm" for grabbing the lid and bowl from a stack.
 
 ### config
 ```
@@ -161,14 +161,41 @@ Controls the right gripper and switches for preparing and delivering bowls.
     "right-bowl-delivery" : "<switch>",
 
     // required - switch to send right arm home
-    "right-home" : "<switch>"
+    "right-home" : "<switch>",
+
+    // optional - gripper for the lil-arm used to grab the lid and bowl
+    // if set, "lil-arm-home" is required, and "lil-arm-poses" should include
+    // entries named "lid" and "bowl" to support grab_lid and grab_bowl
+    "lil-arm-gripper" : "<gripper>",
+
+    // required if "lil-arm-gripper" is set - switch to send lil-arm home
+    "lil-arm-home" : "<switch>",
+
+    // optional - list of named poses used by grab_lid and grab_bowl
+    // pose name "lid" is used by grab_lid; "bowl" is used by grab_bowl
+    "lil-arm-poses" : [
+        {
+            "name" : "lid",                 // required - pose name
+            "above" : "<switch>",           // required - switch to position above the target
+            "at" : "<switch>",              // required - switch to lower onto the target
+            "center-above" : "<switch>",    // required - switch to position above the drop point
+            "center-at" : "<switch>"        // required - switch to lower to the drop point
+        },
+        {
+            "name" : "bowl",
+            "above" : "<switch>",
+            "at" : "<switch>",
+            "center-above" : "<switch>",
+            "center-at" : "<switch>"
+        }
+    ]
 }
 ```
 
 ### DoCommand
 
 #### deliver_bowl
-Picks up the bowl and delivers it.
+Picks up the bowl from under the ingredient area and delivers it, then opens the gripper.
 ```
 {
     "deliver_bowl" : true
@@ -183,8 +210,24 @@ Fetches a bowl from delivery and places it under the ingredient area.
 }
 ```
 
+#### grab_lid
+Uses the lil-arm to grab the lid from its stack and move it to the center drop point. Requires `lil-arm-gripper` to be configured and a `lil-arm-poses` entry named `lid`.
+```
+{
+    "grab_lid" : true
+}
+```
+
+#### grab_bowl
+Uses the lil-arm to grab a bowl from its stack and move it to the center drop point. Requires `lil-arm-gripper` to be configured and a `lil-arm-poses` entry named `bowl`.
+```
+{
+    "grab_bowl" : true
+}
+```
+
 #### reset
-Sends the right arm home.
+Sends the right arm home. If `lil-arm-gripper` is configured, also sends the lil-arm home.
 ```
 {
     "reset" : true
