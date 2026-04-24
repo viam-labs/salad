@@ -18,6 +18,8 @@ import (
 	"go.viam.com/rdk/robot/client"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/utils/rpc"
+
+	saladutils "salad/utils"
 )
 
 const scanArmName = "left-arm"
@@ -179,7 +181,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 						md.MinX, md.MaxX, md.MinY, md.MaxY, md.MinZ, md.MaxZ)
 
 					tilePath := filepath.Join(outputDir, fmt.Sprintf("tile-%03d.pcd", tileIdx))
-					if err := writePCD(pc, tilePath); err != nil {
+					if err := saladutils.WritePCD(pc, tilePath); err != nil {
 						logger.Warnf("  Failed to write tile PCD: %v", err)
 					} else {
 						pcsInWorld = append(pcsInWorld, pc)
@@ -216,7 +218,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 		}
 	}
 	mergedPath := filepath.Join(outputDir, "merged.pcd")
-	if err := writePCD(deduped, mergedPath); err != nil {
+	if err := saladutils.WritePCD(deduped, mergedPath); err != nil {
 		return err
 	}
 	logger.Infof("Step 1/4 dedup+merge: %d → %d points, wrote %s (%s)", merged.Size(), deduped.Size(), mergedPath, time.Since(t0).Round(time.Millisecond))
@@ -227,7 +229,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 	if err != nil {
 		return fmt.Errorf("failed to filter point cloud: %w", err)
 	}
-	if err := writePCD(filtered, filteredPath); err != nil {
+	if err := saladutils.WritePCD(filtered, filteredPath); err != nil {
 		return err
 	}
 	logger.Infof("Step 2/4 filter: %d → %d points, wrote %s (%s)", deduped.Size(), filtered.Size(), filteredPath, time.Since(t0).Round(time.Millisecond))
@@ -245,7 +247,7 @@ func runScan(address, apiKey, apiKeyID string, flags ScanFlags) error {
 	if err != nil {
 		return fmt.Errorf("failed to crop point cloud: %w", err)
 	}
-	if err := writePCD(cropped, croppedPath); err != nil {
+	if err := saladutils.WritePCD(cropped, croppedPath); err != nil {
 		return err
 	}
 	logger.Infof("Step 3/4 crop: %d → %d points, wrote %s (%s)", filtered.Size(), cropped.Size(), croppedPath, time.Since(t0).Round(time.Millisecond))
@@ -304,11 +306,3 @@ func isDisconnectError(err error) bool {
 		strings.Contains(s, "SESSION_EXPIRED")
 }
 
-func writePCD(pc pointcloud.PointCloud, path string) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("failed to create %q: %w", path, err)
-	}
-	defer f.Close()
-	return pointcloud.ToPCD(pc, f, pointcloud.PCDBinary)
-}

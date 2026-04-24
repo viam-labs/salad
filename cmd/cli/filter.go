@@ -5,6 +5,8 @@ import (
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/pointcloud"
+
+	saladutils "salad/utils"
 )
 
 func filterPointCloud(pc pointcloud.PointCloud, voxelMM float64, minNeighbors int) (pointcloud.PointCloud, error) {
@@ -68,7 +70,7 @@ func runFilter(flags FilterFlags) error {
 	}
 	fmt.Printf("Kept %d / %d points after filtering (removed %d)\n", out.Size(), pc.Size(), pc.Size()-out.Size())
 
-	if err := writePCD(out, flags.OutputPath); err != nil {
+	if err := saladutils.WritePCD(out, flags.OutputPath); err != nil {
 		return err
 	}
 	fmt.Printf("Wrote %s\n", flags.OutputPath)
