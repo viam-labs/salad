@@ -329,6 +329,7 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 			return fmt.Errorf("load[1] is not a float64")
 		}
 		if val < 0 {
+			s.logger.Infof("Contact detected: load[1] = %f at Z = %f", val, currentPose.Point().Z-2)
 			// Contact detected, stop the arm
 			if err := s.littleArm.Stop(ctx, nil); err != nil {
 				return fmt.Errorf("failed to stop arm: %w", err)
