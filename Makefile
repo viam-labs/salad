@@ -34,7 +34,7 @@ test:
 	go test ./...
 
 meshifier/deps/.installed: meshifier/requirements.txt
-	pip3 install --target meshifier/deps -r meshifier/requirements.txt
+	pip3 install --target meshifier/deps --no-deps -r meshifier/requirements.txt
 	touch meshifier/deps/.installed
 
 module.tar.gz: meta.json $(MODULE_BINARY) dist/index.html meshifier/main.py meshifier/algos.py meshifier/deps/.installed
