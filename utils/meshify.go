@@ -73,8 +73,16 @@ func ensureMeshifierDeps(ctx context.Context, scriptPath string) (string, error)
 }
 
 // pipInstall installs the packages listed in reqPath into targetDir.
-// It tries pip3 first, then python3 -m pip, returning an error only if both fail.
+// It first attempts to bootstrap pip via ensurepip (part of the Python stdlib)
+// in case the system Python has no pip, then tries pip3 and python3 -m pip.
 func pipInstall(ctx context.Context, reqPath, targetDir string) error {
+	// Bootstrap pip if it is absent. ensurepip is part of the Python standard
+	// library so it is available even when pip itself is not installed.
+	bootstrap := exec.CommandContext(ctx, "python3", "-m", "ensurepip", "--upgrade")
+	bootstrap.Stdout = os.Stdout
+	bootstrap.Stderr = os.Stderr
+	_ = bootstrap.Run() // best-effort; pip may already be present
+
 	candidates := [][]string{
 		{"pip3", "install", "--target", targetDir, "-r", reqPath},
 		{"python3", "-m", "pip", "install", "--target", targetDir, "-r", reqPath},
