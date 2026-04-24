@@ -2,7 +2,7 @@
   "$schema": "https://dl.viam.dev/module.schema.json",
   "module_id": "ncs:salad",
   "visibility": "public",
-  "url": "https://github.com/viamlabs/salad",
+  "url": "https://github.com/viam-labs/salad",
   "description": "Viam module for automated salad assembly",
   "markdown_link": "README.md",
   "entrypoint": "bin/salad",
@@ -12,7 +12,9 @@
       "name": "salad",
       "type": "single_machine",
       "entrypoint": "dist/index.html",
-      "fragmentIds": ["02188473-58fd-4a54-b794-621c65ea5332"]
+      "fragmentIds": [
+        "02188473-58fd-4a54-b794-621c65ea5332"
+      ]
     }
   ],
   "models": [
@@ -69,6 +71,11 @@
     "build": "make module.tar.gz",
     "setup": "make setup",
     "path": "module.tar.gz",
-    "arch": ["linux/amd64", "linux/arm64", "darwin/arm64", "windows/amd64"]
+    "arch": [
+      "linux/amd64",
+      "linux/arm64",
+      "darwin/arm64",
+      "windows/amd64"
+    ]
   }
 }
