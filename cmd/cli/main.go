@@ -42,6 +42,7 @@ type DisplayFlags struct {
 	VizURL     string
 	ClearFirst bool
 	ShowAll    bool
+	ShowZones  bool
 	ShowPCD    bool
 	ShowMesh   bool
 }
@@ -109,7 +110,7 @@ Per-position PCDs and the merged result are written to the output directory for 
 
 var displayCmd = &cobra.Command{
 	Use:   "display",
-	Short: "Display local point clouds and meshes in motion-tools visualizer",
+	Short: "Display local point clouds, meshes, and/or saved bin zones in motion-tools",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runDisplay(displayFlags)
 	},
@@ -157,10 +158,11 @@ func init() {
 	scanCmd.Flags().Float64Var(&scanFlags.SleepSeconds, "sleep", 2.0, "seconds to wait after each arm move")
 	scanCmd.Flags().Float64Var(&scanFlags.ZOffsetMM, "z-offset", -200.0, "Z offset in mm applied to every tile (negative = lower/closer to bins)")
 	scanCmd.Flags().Float64Var(&scanFlags.YMaxOffset, "y-max-offset", 750.0, "upper Y offset in mm from each anchor (increase to reach further end of bins)")
-	displayCmd.Flags().StringVar(&displayFlags.LocalFiles, "local-files", "output", "directory containing .pcd, .ply, and/or .stl files to display")
+	displayCmd.Flags().StringVar(&displayFlags.LocalFiles, "local-files", "output", "directory containing .pcd, .ply, .stl, and/or *zones.json files to display")
 	displayCmd.Flags().StringVar(&displayFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	displayCmd.Flags().BoolVar(&displayFlags.ClearFirst, "clear-first", true, "clear visualizer objects before drawing")
-	displayCmd.Flags().BoolVar(&displayFlags.ShowAll, "all", false, "display both point clouds and meshes (default if neither --pcd nor --mesh is set)")
+	displayCmd.Flags().BoolVar(&displayFlags.ShowAll, "all", false, "display point clouds, meshes, and zone meshes from *zones.json (also default content if neither --pcd nor --mesh is set)")
+	displayCmd.Flags().BoolVar(&displayFlags.ShowZones, "zones", false, "display zone meshes from the newest *zones.json under --local-files")
 	displayCmd.Flags().BoolVar(&displayFlags.ShowPCD, "pcd", false, "display only point clouds (when combined with --mesh, shows both)")
 	displayCmd.Flags().BoolVar(&displayFlags.ShowMesh, "mesh", false, "display only meshes (when combined with --pcd, shows both)")
 
