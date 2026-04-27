@@ -291,6 +291,7 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to set %s at-pose switch: %w", name, err)
 	}
 
+	var lastVal *float64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -328,14 +329,15 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 		if !ok {
 			return fmt.Errorf("load[1] is not a float64")
 		}
-		if val < 0 {
-			s.logger.Infof("Contact detected: load[1] = %f at Z = %f", val, currentPose.Point().Z-2)
+		if lastVal != nil && (val < 0) != (*lastVal < 0) {
+			s.logger.Infof("Contact detected: sign flip from %f to %f at Z = %f", *lastVal, val, currentPose.Point().Z-2)
 			// Contact detected, stop the arm
 			if err := s.littleArm.Stop(ctx, nil); err != nil {
 				return fmt.Errorf("failed to stop arm: %w", err)
 			}
 			return nil
 		}
+		lastVal = &val
 	}
 }
 
