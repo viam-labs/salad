@@ -36,6 +36,7 @@ type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
 	Category        string  `json:"category"`
+	ZoneID          int     `json:"zone-id"`
 }
 
 type BuildCoordinatorConfig struct {
@@ -147,8 +148,7 @@ type buildCoordinator struct {
 	opCancelFunc func()
 	opDone       chan struct{}
 
-	lastPCDPath   string
-	lastZonesPath string
+	assetsDir string
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -175,6 +175,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredientCategories: make(map[string]string),
 		status:               "idle",
 		simulate:             conf.Simulate,
+		assetsDir:            "/home/viam/assets",
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -505,18 +506,21 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 
 	// Write the PCD to the stable path first so meshification uses a
 	// consistent location. Also write to the capture dir so it syncs to cloud.
-	const stablePCDPath = "/home/viam/merged.pcd"
-	const stableZonesPath = "/home/viam/zones.json"
+	stablePCDPath := s.assetsDir + "/merged.pcd"
+	stableZonesPath := s.assetsDir + "/zones.json"
+	if err := os.MkdirAll(s.assetsDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create assets directory %q: %w", s.assetsDir, err)
+	}
 	if err := saladutils.WritePCD(pc, stablePCDPath); err != nil {
 		return fmt.Errorf("failed to write stable PCD: %w", err)
 	}
 	s.logger.Infof("Wrote %s (%d points)", stablePCDPath, pc.Size())
 
-	pcdPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s.pcd", ts))
-	if err := saladutils.WritePCD(pc, pcdPath); err != nil {
+	archivedPCDPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s.pcd", ts))
+	if err := saladutils.WritePCD(pc, archivedPCDPath); err != nil {
 		return fmt.Errorf("failed to write point cloud: %w", err)
 	}
-	s.logger.Infof("Wrote %s", pcdPath)
+	s.logger.Infof("Wrote %s", archivedPCDPath)
 
 	s.logger.Infof("Running meshifier on %s", stablePCDPath)
 	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
@@ -530,32 +534,25 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("segmentation failed: %w", err)
 	}
-	zonesPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-zones.json", ts))
-	if err := segmentation.SaveZones(result, zonesPath); err != nil {
+	archivedZonesPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-zones.json", ts))
+	if err := segmentation.SaveZones(result, archivedZonesPath); err != nil {
 		return fmt.Errorf("failed to save zones: %w", err)
 	}
-	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), zonesPath)
+	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), archivedZonesPath)
 
 	if err := segmentation.SaveZones(result, stableZonesPath); err != nil {
 		return fmt.Errorf("failed to write stable zones: %w", err)
 	}
 	s.logger.Infof("Wrote stable zones to %s", stableZonesPath)
 
-	s.mu.Lock()
-	s.lastPCDPath = stablePCDPath
-	s.lastZonesPath = stableZonesPath
-	s.mu.Unlock()
-
 	return nil
 }
 
 func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
-	s.mu.RLock()
-	pcdPath := s.lastPCDPath
-	zonesPath := s.lastZonesPath
-	s.mu.RUnlock()
+	pcdPath := s.assetsDir + "/merged.pcd"
+	zonesPath := s.assetsDir + "/zones.json"
 
-	if pcdPath == "" || zonesPath == "" {
+	if _, err := os.Stat(pcdPath); err != nil {
 		return nil, fmt.Errorf("no setup result available, run setup_station first")
 	}
 
@@ -580,7 +577,42 @@ func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
 	}, nil
 }
 
+// checkAssets verifies that setup assets exist and that every configured
+// ingredient has a zone ID present in zones.json.
+func (s *buildCoordinator) checkAssets() error {
+	if _, err := os.Stat(s.assetsDir + "/merged.pcd"); err != nil {
+		return fmt.Errorf("setup asset missing merged.pcd")
+	}
+	if _, err := os.Stat(s.assetsDir + "/zones.json"); err != nil {
+		return fmt.Errorf("setup asset missing zones.json")
+	}
+
+	// check all zones exist
+	zones, err := segmentation.LoadZones(s.assetsDir + "/zones.json")
+	if err != nil {
+		return fmt.Errorf("failed to load zones: %w", err)
+	}
+	availableZoneIDs := make(map[int]bool, len(zones.Zones))
+	for _, z := range zones.Zones {
+		availableZoneIDs[z.ID] = true
+	}
+	for _, ing := range s.cfg.Ingredients {
+		if !availableZoneIDs[ing.ZoneID] {
+			return fmt.Errorf("ingredient %q has zone-id %d which is not in zones.json (zones: %v)", ing.Name, ing.ZoneID, zones.Zones)
+		}
+	}
+	return nil
+}
+
 func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) (map[string]interface{}, error) {
+	// check setup was run before executing salad build
+	if err := s.checkAssets(); err != nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Please run setup_station before building a salad: %v", err),
+		}, nil
+	}
+
 	// reset to initial positions
 	err := s.resetAll(ctx)
 	if err != nil {
