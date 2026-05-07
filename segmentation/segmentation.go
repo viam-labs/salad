@@ -48,6 +48,21 @@ func (z *Zone) MinZ() float64 {
 	return minZ
 }
 
+// Centroid returns the XY centroid of the zone computed from its mesh vertices.
+// Falls back to the bounding box center if the mesh has no vertices.
+func (z *Zone) Centroid() (x, y float64) {
+	if len(z.Mesh.Vertices) == 0 {
+		return (z.MinX + z.MaxX) / 2, (z.MinY + z.MaxY) / 2
+	}
+	var sumX, sumY float64
+	for _, v := range z.Mesh.Vertices {
+		sumX += v[0]
+		sumY += v[1]
+	}
+	n := float64(len(z.Mesh.Vertices))
+	return sumX / n, sumY / n
+}
+
 func (zr *ZonesResult) ZoneByID(id int) (*Zone, bool) {
 	for i := range zr.Zones {
 		if zr.Zones[i].ID == id {

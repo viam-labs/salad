@@ -280,9 +280,10 @@ func (s *grabberControls) loadAssets() error {
 			if !ok {
 				return fmt.Errorf("zone %d not found for bin %q", binCfg.ZoneID, binCfg.Name)
 			}
+			cx, cy := z.Centroid()
 			point := r3.Vector{
-				X: (z.MinX + z.MaxX) / 2,
-				Y: (z.MinY + z.MaxY) / 2,
+				X: cx,
+				Y: cy,
 				Z: s.zones.ZMean + s.cfg.AboveBinExtra,
 			}
 
@@ -303,9 +304,10 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 }
 
 func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) spatialmath.Pose {
+	cx, cy := zone.Centroid()
 	point := r3.Vector{
-		X: (zone.MinX + zone.MaxX) / 2,
-		Y: (zone.MinY + zone.MaxY) / 2,
+		X: cx,
+		Y: cy,
 		Z: zone.MinZ() + s.cfg.GrabHeightMM,
 	}
 	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation)
