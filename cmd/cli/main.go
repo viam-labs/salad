@@ -4,38 +4,11 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"salad/segmentation"
 )
-
-type ScanFlags struct {
-	CameraName   string
-	OutputDir    string
-	SleepSeconds float64
-	ZOffsetMM    float64
-	YMaxOffset   float64
-}
-
-func (f ScanFlags) SleepDuration() time.Duration {
-	s := f.SleepSeconds
-	if s <= 0 {
-		s = 2
-	}
-	return time.Duration(s * float64(time.Second))
-}
-
-var imagingPositions = []string{
-	"bin-0-imaging",
-	"bin-1-imaging",
-	"bin-2-imaging",
-	"bin-3-imaging",
-	"bin-4-imaging",
-	"bin-5-imaging",
-	"bin-6-imaging",
-}
 
 type DisplayFlags struct {
 	LocalFiles string
@@ -85,7 +58,6 @@ var (
 	globalAPIKey   string
 	globalAPIKeyID string
 
-	scanFlags    ScanFlags
 	displayFlags DisplayFlags
 	filterFlags  FilterFlags
 	meshifyFlags MeshifyFlags
@@ -95,17 +67,6 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "salad-cli",
 	Short: "CLI tools for the salad robot",
-}
-
-var scanCmd = &cobra.Command{
-	Use:   "image",
-	Short: "Capture a merged point cloud of the work area",
-	Long: `Drives the left arm through each imaging position, captures a point cloud at each,
-transforms each cloud into world frame via the robot's frame system, and merges them.
-Per-position PCDs and the merged result are written to the output directory for inspection.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runScan(globalAddress, globalAPIKey, globalAPIKeyID, scanFlags)
-	},
 }
 
 var displayCmd = &cobra.Command{
@@ -153,11 +114,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&globalAPIKey, "api-key", os.Getenv("VIAM_API_KEY"), "API key (or set VIAM_API_KEY env var)")
 	rootCmd.PersistentFlags().StringVar(&globalAPIKeyID, "api-key-id", os.Getenv("VIAM_API_KEY_ID"), "API key ID (or set VIAM_API_KEY_ID env var)")
 
-	scanCmd.Flags().StringVar(&scanFlags.CameraName, "camera", "left-downsample-cam", "camera name in robot config")
-	scanCmd.Flags().StringVar(&scanFlags.OutputDir, "output", "", "output directory (default: output/<timestamp>)")
-	scanCmd.Flags().Float64Var(&scanFlags.SleepSeconds, "sleep", 2.0, "seconds to wait after each arm move")
-	scanCmd.Flags().Float64Var(&scanFlags.ZOffsetMM, "z-offset", -200.0, "Z offset in mm applied to every tile (negative = lower/closer to bins)")
-	scanCmd.Flags().Float64Var(&scanFlags.YMaxOffset, "y-max-offset", 750.0, "upper Y offset in mm from each anchor (increase to reach further end of bins)")
 	displayCmd.Flags().StringVar(&displayFlags.LocalFiles, "local-files", "output", "directory containing .pcd, .ply, .stl, and/or *zones.json files to display")
 	displayCmd.Flags().StringVar(&displayFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	displayCmd.Flags().BoolVar(&displayFlags.ClearFirst, "clear-first", true, "clear visualizer objects before drawing")
@@ -206,7 +162,6 @@ func init() {
 	segmentCmd.Flags().Float64Var(&segmentFlags.MinZoneAreaMM2, "min-zone-area", defaults.MinZoneAreaMM2, "minimum zone footprint area in mm² (smaller components discarded as noise)")
 	segmentCmd.Flags().Float64Var(&segmentFlags.MaxZoneAreaMM2, "max-zone-area", defaults.MaxZoneAreaMM2, "maximum zone footprint area in mm² (larger components rejected as non-bin regions; 0=disabled)")
 
-	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
