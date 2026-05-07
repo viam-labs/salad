@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/gripper"
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
+	"go.viam.com/rdk/spatialmath"
 )
 
 var BowlControls = resource.NewModel("ncs", "salad", "bowl-controls")
@@ -36,6 +38,7 @@ type BowlControlsConfig struct {
 	RightAboveDelivery string             `json:"right-above-delivery"`
 	RightBowlDelivery  string             `json:"right-bowl-delivery"`
 	RightHome          string             `json:"right-home"`
+	LittleArm          string             `json:"little-arm"`
 	LilArmGripper      string             `json:"lil-arm-gripper"`
 	LilArmHome         string             `json:"lil-arm-home"`
 	LilArmPoses        []LilArmPoseConfig `json:"lil-arm-poses"`
@@ -66,9 +69,14 @@ func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error)
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
 	}
 
+	if cfg.LittleArm == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "little-arm")
+	}
+
 	requiredDeps := []string{
 		cfg.RightGripper,
 		cfg.RightAboveBowl, cfg.RightGrabBowl, cfg.RightAboveDelivery, cfg.RightBowlDelivery, cfg.RightHome,
+		cfg.LittleArm,
 	}
 
 	var optionalDeps []string
@@ -126,6 +134,7 @@ type bowlControls struct {
 	rightAboveDelivery sw.Switch
 	rightBowlDelivery  sw.Switch
 	rightHome          sw.Switch
+	littleArm          arm.Arm
 
 	lilArmGripper gripper.Gripper
 	lilArmHome    sw.Switch
@@ -188,6 +197,12 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 		return nil, fmt.Errorf("failed to get right-home switch '%s': %w", conf.RightHome, err)
 	}
 	s.rightHome = rightHomeSwitch
+
+	littleArmComponent, err := arm.FromProvider(deps, conf.LittleArm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get little-arm '%s': %w", conf.LittleArm, err)
+	}
+	s.littleArm = littleArmComponent
 
 	if conf.LilArmGripper != "" {
 		lilArmGripperComponent, err := gripper.FromProvider(deps, conf.LilArmGripper)
@@ -252,7 +267,78 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 	if _, ok := cmd["grab_bowl"]; ok {
 		return s.doGrabBowl(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', or 'reset' field")
+	if _, ok := cmd["move_down_to_bowl"]; ok {
+		if err := s.moveDownTo(ctx, "bowl"); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true}, nil
+	}
+	if _, ok := cmd["move_down_to_lid"]; ok {
+		if err := s.moveDownTo(ctx, "lid"); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"success": true}, nil
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', or 'reset' field")
+}
+
+func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
+	pose, ok := s.lilArmPoses[name]
+	if !ok {
+		return fmt.Errorf("lil-arm pose '%s' not found in configuration", name)
+	}
+	if err := pose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return fmt.Errorf("failed to set %s at-pose switch: %w", name, err)
+	}
+
+	var lastVal *float64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Move down 2mm
+		currentPose, err := s.littleArm.EndPosition(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to get arm position: %w", err)
+		}
+		point := currentPose.Point()
+		point.Z -= 2
+		newPose := spatialmath.NewPose(point, currentPose.Orientation())
+		if err := s.littleArm.MoveToPosition(ctx, newPose, nil); err != nil {
+			return fmt.Errorf("failed to move arm down: %w", err)
+		}
+
+		// Check load
+		resp, err := s.littleArm.DoCommand(ctx, map[string]interface{}{"load": true})
+		if err != nil {
+			return fmt.Errorf("failed to send load command: %w", err)
+		}
+		loadRaw, ok := resp["load"]
+		if !ok {
+			return fmt.Errorf("load command response missing 'load' key")
+		}
+		load, ok := loadRaw.([]interface{})
+		if !ok {
+			return fmt.Errorf("load response is not an array")
+		}
+		if len(load) < 2 {
+			return fmt.Errorf("expected at least 2 values in load response, got %d", len(load))
+		}
+		val, ok := load[1].(float64)
+		if !ok {
+			return fmt.Errorf("load[1] is not a float64")
+		}
+		if lastVal != nil && (val < 0) != (*lastVal < 0) {
+			s.logger.Infof("Contact detected: sign flip from %f to %f at Z = %f", *lastVal, val, currentPose.Point().Z-2)
+			// Contact detected, stop the arm
+			if err := s.littleArm.Stop(ctx, nil); err != nil {
+				return fmt.Errorf("failed to stop arm: %w", err)
+			}
+			return nil
+		}
+		lastVal = &val
+	}
 }
 
 func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{}, error) {
@@ -289,10 +375,10 @@ func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-above-bowl switch to position 2")
 
-	if err := s.rightGrabBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-grab-bowl switch to position 2: %w", err)
+	if err := s.moveDownTo(ctx, "bowl"); err != nil {
+		return nil, fmt.Errorf("failed to move down to bowl: %w", err)
 	}
-	s.logger.Debugf("Set right-grab-bowl switch to position 2")
+	s.logger.Debugf("Moved down to bowl")
 
 	if err := s.rightGripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open right gripper: %w", err)
@@ -401,10 +487,10 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	}
 	s.logger.Debugf("Set above-%s switch to position 2", name)
 
-	if err := pose.atPose.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set at-%s switch to position 2: %w", name, err)
+	if err := s.moveDownTo(ctx, name); err != nil {
+		return nil, fmt.Errorf("failed to move down to %s: %w", name, err)
 	}
-	s.logger.Debugf("Set at-%s switch to position 2", name)
+	s.logger.Debugf("Moved down to %s", name)
 
 	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to grab %s: %w", name, err)
