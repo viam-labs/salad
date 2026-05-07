@@ -572,6 +572,16 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	}
 	s.logger.Infof("Wrote mesh %s", meshPath)
 
+	stableMeshPath := s.assetsDir + "/mesh.ply"
+	meshBytes, err := os.ReadFile(meshPath)
+	if err != nil {
+		return fmt.Errorf("failed to read mesh for stable copy: %w", err)
+	}
+	if err := os.WriteFile(stableMeshPath, meshBytes, 0o644); err != nil {
+		return fmt.Errorf("failed to write stable mesh: %w", err)
+	}
+	s.logger.Infof("Wrote stable mesh to %s", stableMeshPath)
+
 	s.logger.Infof("Segmenting mesh %s", meshPath)
 	segOpts := segmentation.DefaultOptions()
 	if c := s.cfg.Segmentation; c != nil {
@@ -649,6 +659,9 @@ func (s *buildCoordinator) checkAssets() error {
 	}
 	if _, err := os.Stat(s.assetsDir + "/zones.json"); err != nil {
 		return fmt.Errorf("setup asset missing zones.json")
+	}
+	if _, err := os.Stat(s.assetsDir + "/mesh.ply"); err != nil {
+		return fmt.Errorf("setup asset missing mesh.ply")
 	}
 
 	// check all zones exist
