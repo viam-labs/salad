@@ -280,7 +280,10 @@ func (s *grabberControls) loadAssets() error {
 			if !ok {
 				return fmt.Errorf("zone %d not found for bin %q", binCfg.ZoneID, binCfg.Name)
 			}
-			cx, cy := z.Centroid()
+			cx, cy, err := z.Centroid()
+			if err != nil {
+				return fmt.Errorf("bin %q: %w", binCfg.Name, err)
+			}
 			point := r3.Vector{
 				X: cx,
 				Y: cy,
@@ -303,14 +306,17 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) spatialmath.Pose {
-	cx, cy := zone.Centroid()
+func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) (spatialmath.Pose, error) {
+	cx, cy, err := zone.Centroid()
+	if err != nil {
+		return nil, err
+	}
 	point := r3.Vector{
 		X: cx,
 		Y: cy,
 		Z: zone.MinZ() + s.cfg.GrabHeightMM,
 	}
-	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation)
+	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation), nil
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -338,7 +344,10 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	if err != nil {
 		return nil, err
 	}
-	grabPose := s.computeGrabPose(zone)
+	grabPose, err := s.computeGrabPose(zone)
+	if err != nil {
+		return nil, err
+	}
 
 	worldState, err := referenceframe.NewWorldState(
 		[]*referenceframe.GeometriesInFrame{
