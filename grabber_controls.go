@@ -228,10 +228,31 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 	if _, ok := cmd["get_from_bin"]; ok {
 		return s.doGetFromBin(ctx, cmd)
 	}
+
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'deliver_bowl' field")
+
+	if _, ok := cmd["bin_hover"]; ok {
+		return s.doHover(ctx, cmd)
+	}
+
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'bin_hover' field")
+}
+
+func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if zoneIDVal, ok := cmd["bin_hover"]; ok {
+		zoneID, ok := zoneIDVal.(int)
+		if ok {
+			bin, ok := s.bins[zoneID]
+			if !ok {
+				return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
+			}
+			return nil, s.arm.MoveToPosition(ctx, bin.aboveBinPose, nil)
+		}
+		return nil, fmt.Errorf("zone ID should be int, got zoneID %v", zoneID)
+	}
+	return nil, fmt.Errorf("unknown command")
 }
 
 // loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
