@@ -608,12 +608,12 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 }
 
 func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
+	if err := s.checkAssets(); err != nil {
+		return nil, err
+	}
+
 	pcdPath := s.assetsDir + "/merged.pcd"
 	zonesPath := s.assetsDir + "/zones.json"
-
-	if _, err := os.Stat(pcdPath); err != nil {
-		return nil, fmt.Errorf("no setup result available, run setup_station first")
-	}
 
 	pcdBytes, err := os.ReadFile(pcdPath)
 	if err != nil {
