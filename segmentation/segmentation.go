@@ -69,8 +69,8 @@ func DefaultOptions() Options {
 	return Options{
 		CellSizeMM:         5.0,
 		DividerZPercentile: 0.80,
-		DividerGradientMM:  25.0,
-		DividerDilation:    1,
+		DividerGradientMM:  10.0,
+		DividerDilation:    0,
 		MinZoneAreaMM2:     5000.0,
 		MaxZoneAreaMM2:     100000.0,
 	}
