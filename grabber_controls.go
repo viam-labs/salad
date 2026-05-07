@@ -248,9 +248,10 @@ func (s *grabberControls) loadAssets() error {
 			if !ok {
 				return fmt.Errorf("zone %d not found for bin %q", binCfg.ZoneID, binCfg.Name)
 			}
+			cx, cy := z.Centroid()
 			point := r3.Vector{
-				X: (z.MinX + z.MaxX) / 2,
-				Y: (z.MinY + z.MaxY) / 2,
+				X: cx,
+				Y: cy,
 				Z: s.zones.ZMean + s.cfg.AboveBinExtra,
 			}
 

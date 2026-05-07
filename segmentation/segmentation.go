@@ -38,6 +38,20 @@ type Zone struct {
 	Mesh ZoneMesh `json:"mesh"`
 }
 
+// Centroid returns the mean X/Y position of all mesh vertices, which is a
+// better grab target than the bounding box midpoint for irregular bin shapes.
+func (z *Zone) Centroid() (x, y float64) {
+	if len(z.Mesh.Vertices) == 0 {
+		return (z.MinX + z.MaxX) / 2, (z.MinY + z.MaxY) / 2
+	}
+	for _, v := range z.Mesh.Vertices {
+		x += v[0]
+		y += v[1]
+	}
+	n := float64(len(z.Mesh.Vertices))
+	return x / n, y / n
+}
+
 func (zr *ZonesResult) ZoneByID(id int) (*Zone, bool) {
 	for i := range zr.Zones {
 		if zr.Zones[i].ID == id {
