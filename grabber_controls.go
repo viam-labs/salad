@@ -26,6 +26,7 @@ type GrabberControlsBinConfig struct {
 	Name     string `json:"name"`
 	AboveBin string `json:"above-bin"`
 	InBin    string `json:"in-bin"`
+	ZoneID   int    `json:"zone-id"`
 }
 
 type GrabberControlsConfig struct {
@@ -68,6 +69,7 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}
 
+	seenZoneIDs := make(map[int]string)
 	for i, bin := range cfg.Bins {
 		if bin.Name == "" {
 			return nil, nil, fmt.Errorf("%s.bins[%d]: 'name' field is required", path, i)
@@ -78,6 +80,10 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		if bin.InBin == "" {
 			return nil, nil, fmt.Errorf("%s.bins[%d]: 'in-bin' field is required", path, i)
 		}
+		if prev, ok := seenZoneIDs[bin.ZoneID]; ok {
+			return nil, nil, fmt.Errorf("%s.bins[%d]: zone-id %d already assigned to bin '%s'", path, i, bin.ZoneID, prev)
+		}
+		seenZoneIDs[bin.ZoneID] = bin.Name
 
 		requiredDeps = append(requiredDeps, bin.AboveBin, bin.InBin)
 	}
@@ -107,6 +113,7 @@ type grabberControls struct {
 type grabberBinSwitches struct {
 	aboveBin sw.Switch
 	inBin    sw.Switch
+	zoneID   int
 }
 
 func newGrabberControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -168,6 +175,7 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		s.bins[binCfg.Name] = &grabberBinSwitches{
 			aboveBin: aboveBinSwitch,
 			inBin:    inBinSwitch,
+			zoneID:   binCfg.ZoneID,
 		}
 	}
 	if conf.ShakeArmService != nil && *conf.ShakeArmService != "" {
