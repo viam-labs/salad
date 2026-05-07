@@ -39,6 +39,37 @@ type BuildCoordinatorIngredientConfig struct {
 	ZoneID          int     `json:"zone-id"`
 }
 
+type BuildCoordinatorSegmentationConfig struct {
+	CellSizeMM         *float64 `json:"cell-size-mm"`
+	DividerZPercentile *float64 `json:"divider-z-percentile"`
+	DividerGradientMM  *float64 `json:"divider-gradient-mm"`
+	DividerDilation    *int     `json:"divider-dilation"`
+	MinZoneAreaMM2     *float64 `json:"min-zone-area-mm2"`
+	MaxZoneAreaMM2     *float64 `json:"max-zone-area-mm2"`
+}
+
+func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
+	if c.CellSizeMM != nil && *c.CellSizeMM <= 0 {
+		return fmt.Errorf("%s.cell-size-mm must be > 0, got %v", path, *c.CellSizeMM)
+	}
+	if c.DividerZPercentile != nil && (*c.DividerZPercentile <= 0 || *c.DividerZPercentile > 1) {
+		return fmt.Errorf("%s.divider-z-percentile must be in (0, 1], got %v", path, *c.DividerZPercentile)
+	}
+	if c.DividerGradientMM != nil && *c.DividerGradientMM < 0 {
+		return fmt.Errorf("%s.divider-gradient-mm must be >= 0, got %v", path, *c.DividerGradientMM)
+	}
+	if c.DividerDilation != nil && *c.DividerDilation < 0 {
+		return fmt.Errorf("%s.divider-dilation must be >= 0, got %v", path, *c.DividerDilation)
+	}
+	if c.MinZoneAreaMM2 != nil && *c.MinZoneAreaMM2 <= 0 {
+		return fmt.Errorf("%s.min-zone-area-mm2 must be > 0, got %v", path, *c.MinZoneAreaMM2)
+	}
+	if c.MaxZoneAreaMM2 != nil && *c.MaxZoneAreaMM2 < 0 {
+		return fmt.Errorf("%s.max-zone-area-mm2 must be >= 0, got %v", path, *c.MaxZoneAreaMM2)
+	}
+	return nil
+}
+
 type BuildCoordinatorConfig struct {
 	GrabberControls   string                             `json:"grabber-controls"`
 	BowlControls      string                             `json:"bowl-controls"`
@@ -50,6 +81,7 @@ type BuildCoordinatorConfig struct {
 	ImagingCamera     string                             `json:"imaging-camera"`
 	CaptureDir        string                             `json:"capture-dir"`
 	Simulate          bool                               `json:"simulate"`
+	Segmentation      *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 }
 
 func init() {
@@ -110,6 +142,12 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 				"ingredient %q at %s.ingredients.%d has unknown category %q",
 				ing.Name, path, i, ing.Category,
 			)
+		}
+	}
+
+	if cfg.Segmentation != nil {
+		if err := cfg.Segmentation.Validate(path + ".segmentation"); err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -530,7 +568,28 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	s.logger.Infof("Wrote mesh %s", meshPath)
 
 	s.logger.Infof("Segmenting mesh %s", meshPath)
-	result, _, err := segmentation.SegmentFridgeBins(meshPath, segmentation.DefaultOptions())
+	segOpts := segmentation.DefaultOptions()
+	if c := s.cfg.Segmentation; c != nil {
+		if c.CellSizeMM != nil {
+			segOpts.CellSizeMM = *c.CellSizeMM
+		}
+		if c.DividerZPercentile != nil {
+			segOpts.DividerZPercentile = *c.DividerZPercentile
+		}
+		if c.DividerGradientMM != nil {
+			segOpts.DividerGradientMM = *c.DividerGradientMM
+		}
+		if c.DividerDilation != nil {
+			segOpts.DividerDilation = *c.DividerDilation
+		}
+		if c.MinZoneAreaMM2 != nil {
+			segOpts.MinZoneAreaMM2 = *c.MinZoneAreaMM2
+		}
+		if c.MaxZoneAreaMM2 != nil {
+			segOpts.MaxZoneAreaMM2 = *c.MaxZoneAreaMM2
+		}
+	}
+	result, _, err := segmentation.SegmentFridgeBins(meshPath, segOpts)
 	if err != nil {
 		return fmt.Errorf("segmentation failed: %w", err)
 	}
