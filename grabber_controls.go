@@ -8,7 +8,10 @@ import (
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/rdk/spatialmath"
 	genericservice "go.viam.com/rdk/services/generic"
+
+	"salad/segmentation"
 )
 
 var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
@@ -35,6 +38,7 @@ type GrabberControlsConfig struct {
 	LeftGripper     string                     `json:"left-gripper"`
 	LeftHome        string                     `json:"left-home"`
 	ShakeArmService *string                    `json:"shake-arm-service,omitempty"`
+	AssetsDir       string                     `json:"assets-dir"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -102,6 +106,8 @@ type grabberControls struct {
 	leftInBowl      sw.Switch
 	leftHome        sw.Switch
 	shakeArmService genericservice.Service
+	binMesh         *spatialmath.Mesh
+	zones           *segmentation.ZonesResult
 }
 
 type grabberBinSwitches struct {
@@ -177,6 +183,23 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		}
 		s.shakeArmService = shakeArmService
 	}
+
+	assetsDir := conf.AssetsDir
+	if assetsDir == "" {
+		assetsDir = "/home/viam/assets"
+	}
+
+	mesh, err := spatialmath.NewMeshFromPLYFile(assetsDir + "/mesh.ply")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load bin mesh from %s: %w", assetsDir+"/mesh.ply", err)
+	}
+	s.binMesh = mesh
+
+	zones, err := segmentation.LoadZones(assetsDir + "/zones.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load zones from %s: %w", assetsDir+"/zones.json", err)
+	}
+	s.zones = zones
 
 	s.logger.Infof("Grabber controls initialized with %d bins", len(s.bins))
 	return s, nil
