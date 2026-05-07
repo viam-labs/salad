@@ -239,18 +239,57 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'bin_hover' field")
 }
+func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, useLinearConstraints bool) error {
+	var worldState *referenceframe.WorldState
+	if s.binMesh != nil {
+		var err error
+		worldState, err = referenceframe.NewWorldState(
+			[]*referenceframe.GeometriesInFrame{
+				referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
+			},
+			nil,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to build world state: %w", err)
+		}
+	}
+	var constraints *motionplan.Constraints
+	if useLinearConstraints {
+		constraints = &motionplan.Constraints{
+			LinearConstraint: []motionplan.LinearConstraint{{
+				LineToleranceMm:          1.0,
+				OrientationToleranceDegs: 1.0,
+			}},
+		}
+	}
+	pt := dest.Point()
+	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f", pt.X, pt.Y, pt.Z)
+	_, err := s.motionService.Move(ctx, motion.MoveReq{
+		ComponentName: s.arm.Name().ShortName(),
+		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
+		WorldState:    worldState,
+		Constraints:   constraints,
+	})
+	return err
+}
 
 func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if zoneIDVal, ok := cmd["bin_hover"]; ok {
-		zoneID, ok := zoneIDVal.(int)
-		if ok {
-			bin, ok := s.bins[zoneID]
-			if !ok {
-				return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
-			}
-			return nil, s.arm.MoveToPosition(ctx, bin.aboveBinPose, nil)
+		var zoneID int
+		switch v := zoneIDVal.(type) {
+		case int:
+			zoneID = v
+		case float64:
+			zoneID = int(v)
+		default:
+			return nil, fmt.Errorf("'bin_hover' must be an int zone ID, got %T", zoneIDVal)
 		}
-		return nil, fmt.Errorf("zone ID should be int, got zoneID %v", zoneID)
+
+		bin, ok := s.bins[zoneID]
+		if !ok {
+			return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
+		}
+		return nil, s.moveArm(ctx, bin.aboveBinPose, false)
 	}
 	return nil, fmt.Errorf("unknown command")
 }
@@ -349,34 +388,9 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	worldState, err := referenceframe.NewWorldState(
-		[]*referenceframe.GeometriesInFrame{
-			referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
-		},
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build world state: %w", err)
-	}
-	linearConstraints := &motionplan.Constraints{
-		LinearConstraint: []motionplan.LinearConstraint{{
-			LineToleranceMm:          1.0,
-			OrientationToleranceDegs: 1.0,
-		}},
-	}
-	move := func(dest spatialmath.Pose, constraints *motionplan.Constraints) error {
-		_, err := s.motionService.Move(ctx, motion.MoveReq{
-			ComponentName: s.arm.Name().ShortName(),
-			Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
-			WorldState:    worldState,
-			Constraints:   constraints,
-		})
-		return err
-	}
-
 	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
-	if err := move(bin.aboveBinPose, nil); err != nil {
+	if err := s.moveArm(ctx, bin.aboveBinPose, false); err != nil {
 		return nil, fmt.Errorf("failed to move arm above bin: %w", err)
 	}
 	s.logger.Debugf("Moved arm above bin")
@@ -386,13 +400,13 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Opened gripper")
 
-	if err := move(grabPose, linearConstraints); err != nil {
+	if err := s.moveArm(ctx, grabPose, true); err != nil {
 		return nil, fmt.Errorf("failed to descend into bin: %w", err)
 	}
 	s.logger.Debugf("Descended into bin")
 
 	tiltedGrabPose := spatialmath.NewPose(grabPose.Point(), s.cfg.GrabOrientation)
-	if err := move(tiltedGrabPose, nil); err != nil {
+	if err := s.moveArm(ctx, tiltedGrabPose, false); err != nil {
 		return nil, fmt.Errorf("failed to tilt gripper: %w", err)
 	}
 	s.logger.Debugf("Tilted gripper")
@@ -402,12 +416,12 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Grabbed")
 
-	if err := move(grabPose, nil); err != nil {
+	if err := s.moveArm(ctx, grabPose, false); err != nil {
 		return nil, fmt.Errorf("failed to untilt gripper: %w", err)
 	}
 	s.logger.Debugf("Untilted gripper")
 
-	if err := move(bin.aboveBinPose, linearConstraints); err != nil {
+	if err := s.moveArm(ctx, bin.aboveBinPose, true); err != nil {
 		return nil, fmt.Errorf("failed to ascend from bin: %w", err)
 	}
 	s.logger.Debugf("Ascended from bin")

@@ -126,26 +126,11 @@ func SegmentFridgeBins(meshPath string, opts Options) (*ZonesResult, SegmentStat
 		return nil, stats, err
 	}
 
-	var zMaxSum float64
-	for _, z := range zones {
-		var zMax float64 = -math.MaxFloat64
-		for _, v := range z.Mesh.Vertices {
-			if v[2] > zMax {
-				zMax = v[2]
-			}
-		}
-		zMaxSum += zMax
-	}
-	var zMean float64
-	if len(zones) > 0 {
-		zMean = zMaxSum / float64(len(zones))
-	}
-
 	return &ZonesResult{
 		SourceMesh:  meshPath,
 		GeneratedAt: time.Now(),
 		Zones:       zones,
-		ZMean:       zMean,
+		ZMean:       stats.ZThreshold,
 	}, stats, nil
 }
 
