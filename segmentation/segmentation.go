@@ -38,16 +38,6 @@ type Zone struct {
 	Mesh ZoneMesh `json:"mesh"`
 }
 
-func (z *Zone) ZMax() float64 {
-	zMax := -math.MaxFloat64
-	for _, v := range z.Mesh.Vertices {
-		if v[2] > zMax {
-			zMax = v[2]
-		}
-	}
-	return zMax
-}
-
 func (zr *ZonesResult) ZoneByID(id int) (*Zone, bool) {
 	for i := range zr.Zones {
 		if zr.Zones[i].ID == id {
