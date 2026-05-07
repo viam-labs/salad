@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"go.viam.com/rdk/components/gripper"
 	sw "go.viam.com/rdk/components/switch"
@@ -106,8 +107,11 @@ type grabberControls struct {
 	leftInBowl      sw.Switch
 	leftHome        sw.Switch
 	shakeArmService genericservice.Service
-	binMesh         *spatialmath.Mesh
-	zones           *segmentation.ZonesResult
+
+	assetsMu  sync.Mutex
+	assetsDir string
+	binMesh   *spatialmath.Mesh
+	zones     *segmentation.ZonesResult
 }
 
 type grabberBinSwitches struct {
@@ -184,22 +188,11 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		s.shakeArmService = shakeArmService
 	}
 
-	assetsDir := conf.AssetsDir
-	if assetsDir == "" {
-		assetsDir = "/home/viam/assets"
+	if conf.AssetsDir != "" {
+		s.assetsDir = conf.AssetsDir
+	} else {
+		s.assetsDir = "/home/viam/assets"
 	}
-
-	mesh, err := spatialmath.NewMeshFromPLYFile(assetsDir + "/mesh.ply")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load bin mesh from %s: %w", assetsDir+"/mesh.ply", err)
-	}
-	s.binMesh = mesh
-
-	zones, err := segmentation.LoadZones(assetsDir + "/zones.json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load zones from %s: %w", assetsDir+"/zones.json", err)
-	}
-	s.zones = zones
 
 	s.logger.Infof("Grabber controls initialized with %d bins", len(s.bins))
 	return s, nil
@@ -219,7 +212,36 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'deliver_bowl' field")
 }
 
+// loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
+// since it is a no-op once both are loaded.
+func (s *grabberControls) loadAssets() error {
+	s.assetsMu.Lock()
+	defer s.assetsMu.Unlock()
+
+	if s.binMesh == nil {
+		mesh, err := spatialmath.NewMeshFromPLYFile(s.assetsDir + "/mesh.ply")
+		if err != nil {
+			return fmt.Errorf("bin mesh not available at %s, run setup first: %w", s.assetsDir+"/mesh.ply", err)
+		}
+		s.binMesh = mesh
+	}
+
+	if s.zones == nil {
+		zones, err := segmentation.LoadZones(s.assetsDir + "/zones.json")
+		if err != nil {
+			return fmt.Errorf("zones not available at %s, run setup first: %w", s.assetsDir+"/zones.json", err)
+		}
+		s.zones = zones
+	}
+
+	return nil
+}
+
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if err := s.loadAssets(); err != nil {
+		return nil, err
+	}
+
 	getFromBin := cmd["get_from_bin"]
 
 	binName, ok := getFromBin.(string)
