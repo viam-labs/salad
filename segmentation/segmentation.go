@@ -38,18 +38,29 @@ type Zone struct {
 	Mesh ZoneMesh `json:"mesh"`
 }
 
-// Centroid returns the mean X/Y position of all mesh vertices, which is a
-// better grab target than the bounding box midpoint for irregular bin shapes.
-func (z *Zone) Centroid() (x, y float64) {
-	if len(z.Mesh.Vertices) == 0 {
-		return (z.MinX + z.MaxX) / 2, (z.MinY + z.MaxY) / 2
-	}
+func (z *Zone) MinZ() float64 {
+	minZ := math.Inf(1)
 	for _, v := range z.Mesh.Vertices {
-		x += v[0]
-		y += v[1]
+		if v[2] < minZ {
+			minZ = v[2]
+		}
+	}
+	return minZ
+}
+
+// Centroid returns the XY centroid of the zone computed from its mesh vertices,
+// which is a better grab target than the bounding box midpoint for irregular bin shapes.
+func (z *Zone) Centroid() (x, y float64, err error) {
+	if len(z.Mesh.Vertices) == 0 {
+		return 0, 0, fmt.Errorf("zone %d has no mesh vertices", z.ID)
+	}
+	var sumX, sumY float64
+	for _, v := range z.Mesh.Vertices {
+		sumX += v[0]
+		sumY += v[1]
 	}
 	n := float64(len(z.Mesh.Vertices))
-	return x / n, y / n
+	return sumX / n, sumY / n, nil
 }
 
 func (zr *ZonesResult) ZoneByID(id int) (*Zone, bool) {
@@ -116,26 +127,11 @@ func SegmentFridgeBins(meshPath string, opts Options) (*ZonesResult, SegmentStat
 		return nil, stats, err
 	}
 
-	var zMaxSum float64
-	for _, z := range zones {
-		var zMax float64 = -math.MaxFloat64
-		for _, v := range z.Mesh.Vertices {
-			if v[2] > zMax {
-				zMax = v[2]
-			}
-		}
-		zMaxSum += zMax
-	}
-	var zMean float64
-	if len(zones) > 0 {
-		zMean = zMaxSum / float64(len(zones))
-	}
-
 	return &ZonesResult{
 		SourceMesh:  meshPath,
 		GeneratedAt: time.Now(),
 		Zones:       zones,
-		ZMean:       zMean,
+		ZMean:       stats.ZThreshold,
 	}, stats, nil
 }
 

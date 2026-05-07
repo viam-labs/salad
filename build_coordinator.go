@@ -905,8 +905,7 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 
 		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg)", name, totalAdded, targetGrams)
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
-			"get_from_bin": name,
-			"zone_id":      s.ingredientZoneIDs[name],
+			"get_from_bin": s.ingredientZoneIDs[name],
 		})
 		if err != nil {
 			return fmt.Errorf("failed to grab from bin %q: %w", name, err)
