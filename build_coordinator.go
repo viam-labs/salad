@@ -178,6 +178,7 @@ type buildCoordinator struct {
 	imagingCamera        camera.Camera
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
+	ingredientZoneIDs    map[string]int     // name -> zone ID
 
 	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
 	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
@@ -216,6 +217,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		cancelFunc:           cancelFunc,
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
+		ingredientZoneIDs:    make(map[string]int),
 		status:               "idle",
 		simulate:             conf.Simulate,
 		assetsDir:            "/home/viam/assets",
@@ -271,6 +273,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	for _, ing := range conf.Ingredients {
 		s.ingredients[ing.Name] = ing.GramsPerServing
 		s.ingredientCategories[ing.Name] = ing.Category
+		s.ingredientZoneIDs[ing.Name] = *ing.ZoneID
 	}
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
@@ -903,6 +906,7 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg)", name, totalAdded, targetGrams)
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 			"get_from_bin": name,
+			"zone_id":      s.ingredientZoneIDs[name],
 		})
 		if err != nil {
 			return fmt.Errorf("failed to grab from bin %q: %w", name, err)
