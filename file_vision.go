@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 
-	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
@@ -58,7 +57,6 @@ type fileVision struct {
 
 	cancelCtx  context.Context
 	cancelFunc func()
-	cam        camera.Camera
 }
 
 func newFileVision(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (vision.Service, error) {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 
-	"github.com/pkg/errors"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
@@ -16,10 +15,7 @@ import (
 	"go.viam.com/rdk/vision/viscapture"
 )
 
-var (
-	PassthroughToCamera = resource.NewModel("ncs", "salad", "passthrough-to-camera")
-	errUnimplemented    = errors.New("unimplemented")
-)
+var PassthroughToCamera = resource.NewModel("ncs", "salad", "passthrough-to-camera")
 
 func init() {
 	resource.RegisterService(vision.API, PassthroughToCamera,

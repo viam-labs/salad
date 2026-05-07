@@ -305,4 +305,3 @@ func isDisconnectError(err error) bool {
 		strings.Contains(s, "context canceled") ||
 		strings.Contains(s, "SESSION_EXPIRED")
 }
-
