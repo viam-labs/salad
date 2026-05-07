@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/gripper"
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
@@ -33,15 +35,17 @@ type GrabberControlsBinConfig struct {
 }
 
 type GrabberControlsConfig struct {
-	Bins                []GrabberControlsBinConfig           `json:"bins"`
-	AboveBin            string                               `json:"above-bin"`
-	HighAboveBowl       string                               `json:"high-above-bowl"`
-	InBowl              string                               `json:"in-bowl"`
-	LeftGripper         string                               `json:"left-gripper"`
-	LeftHome            string                               `json:"left-home"`
-	AboveBinExtra       float64                              `json:"above-bin-extra"`
-	ShakeArmService     *string                              `json:"shake-arm-service,omitempty"`
-	AssetsDir           string                               `json:"assets-dir"`
+	Bins                []GrabberControlsBinConfig            `json:"bins"`
+	AboveBin            string                                `json:"above-bin"`
+	AboveBinExtra       float64                               `json:"above-bin-extra"`
+	AboveBinOrientation *spatialmath.OrientationVectorDegrees `json:"above-bin-orientation,omitempty"`
+	HighAboveBowl       string                                `json:"high-above-bowl"`
+	InBowl              string                                `json:"in-bowl"`
+	LeftArm             string                                `json:"left-arm"`
+	LeftGripper         string                                `json:"left-gripper"`
+	LeftHome            string                                `json:"left-home"`
+	ShakeArmService     *string                               `json:"shake-arm-service,omitempty"`
+	AssetsDir           string                                `json:"assets-dir"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -55,6 +59,10 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 
 	if cfg.HighAboveBowl == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "high-above-bowl")
+	}
+
+	if cfg.LeftArm == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "left-arm")
 	}
 
 	if cfg.LeftGripper == "" {
@@ -73,6 +81,7 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 
 	requiredDeps = append(requiredDeps, cfg.AboveBin)
 	requiredDeps = append(requiredDeps, cfg.HighAboveBowl)
+	requiredDeps = append(requiredDeps, cfg.LeftArm)
 	requiredDeps = append(requiredDeps, cfg.LeftGripper)
 	requiredDeps = append(requiredDeps, cfg.LeftHome)
 	requiredDeps = append(requiredDeps, cfg.InBowl)
@@ -107,23 +116,23 @@ type grabberControls struct {
 
 	bins            map[int]*grabberBinSwitches
 	highAboveBowl   sw.Switch
+	leftArm         arm.Arm
 	leftGripper     gripper.Gripper
 	leftInBowl      sw.Switch
 	leftHome        sw.Switch
 	shakeArmService genericservice.Service
 
-	assetsMu         sync.Mutex
-	assetsDir        string
-	binMesh          *spatialmath.Mesh
-	zones            *segmentation.ZonesResult
-	aboveBinSwitches map[int]map[string]interface{}
+	assetsMu  sync.Mutex
+	assetsDir string
+	binMesh   *spatialmath.Mesh
+	zones     *segmentation.ZonesResult
 }
 
 type grabberBinSwitches struct {
-	name          string
-	aboveBin      sw.Switch
-	aboveBinExtra map[string]interface{}
-	inBin         sw.Switch
+	name         string
+	// aboveBin     sw.Switch
+	inBin        sw.Switch
+	aboveBinPose spatialmath.Pose
 }
 
 func newGrabberControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -147,16 +156,17 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		bins:       make(map[int]*grabberBinSwitches),
 	}
 
-	aboveBinSwitch, err := sw.FromProvider(deps, conf.AboveBin)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get above-bin switch '%s': %w", conf.AboveBin, err)
-	}
-
 	highAboveBowlSwitch, err := sw.FromProvider(deps, conf.HighAboveBowl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get high-above-bowl switch '%s': %w", conf.HighAboveBowl, err)
 	}
 	s.highAboveBowl = highAboveBowlSwitch
+
+	leftArmComponent, err := arm.FromProvider(deps, conf.LeftArm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get left arm '%s': %w", conf.LeftArm, err)
+	}
+	s.leftArm = leftArmComponent
 
 	leftGripperComponent, err := gripper.FromProvider(deps, conf.LeftGripper)
 	if err != nil {
@@ -181,7 +191,7 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		if err != nil {
 			return nil, fmt.Errorf("failed to get in-bin switch '%s' for bin '%s': %w", binCfg.InBin, binCfg.Name, err)
 		}
-		s.bins[binCfg.ZoneID] = &grabberBinSwitches{name: binCfg.Name, aboveBin: aboveBinSwitch, inBin: inBinSwitch}
+		s.bins[binCfg.ZoneID] = &grabberBinSwitches{name: binCfg.Name, inBin: inBinSwitch}
 	}
 	if conf.ShakeArmService != nil && *conf.ShakeArmService != "" {
 		shakeArmService, err := genericservice.FromProvider(deps, *conf.ShakeArmService)
@@ -240,11 +250,18 @@ func (s *grabberControls) loadAssets() error {
 			if !ok {
 				return fmt.Errorf("zone %d not found for bin %q", binCfg.ZoneID, binCfg.Name)
 			}
-			s.bins[binCfg.ZoneID].aboveBinExtra = map[string]interface{}{
-				"x": (z.MinX + z.MaxX) / 2,
-				"y": (z.MinY + z.MaxY) / 2,
-				"z": z.ZMax() + s.cfg.AboveBinExtra,
+			point := r3.Vector{
+				X: (z.MinX + z.MaxX) / 2,
+				Y: (z.MinY + z.MaxY) / 2,
+				Z: s.zones.ZMean + s.cfg.AboveBinExtra,
 			}
+			var orientation spatialmath.Orientation
+			if s.cfg.AboveBinOrientation != nil {
+				orientation = s.cfg.AboveBinOrientation
+			} else {
+				orientation = spatialmath.NewZeroOrientation()
+			}
+			s.bins[binCfg.ZoneID].aboveBinPose = spatialmath.NewPose(point, orientation)
 		}
 	}
 
@@ -278,10 +295,10 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 
 	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
-	if err := bin.aboveBin.SetPosition(ctx, 2, bin.aboveBinExtra); err != nil {
-		return nil, fmt.Errorf("failed to set above-bin switch to position 2: %w", err)
+	if err := s.leftArm.MoveToPosition(ctx, bin.aboveBinPose, nil); err != nil {
+		return nil, fmt.Errorf("failed to move arm above bin: %w", err)
 	}
-	s.logger.Debugf("Set above-bin switch to position 2")
+	s.logger.Debugf("Moved arm above bin")
 
 	if err := s.leftGripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to close left gripper: %w", err)
@@ -298,10 +315,10 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Closed left gripper")
 
-	if err := bin.aboveBin.SetPosition(ctx, 2, bin.aboveBinExtra); err != nil {
-		return nil, fmt.Errorf("failed to set above-bin switch to position 2 (second time): %w", err)
+	if err := s.leftArm.MoveToPosition(ctx, bin.aboveBinPose, nil); err != nil {
+		return nil, fmt.Errorf("failed to move arm above bin (second time): %w", err)
 	}
-	s.logger.Debugf("Set above-bin switch to position 2 (second time)")
+	s.logger.Debugf("Moved arm above bin (second time)")
 
 	if err := s.highAboveBowl.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set high-above-bowl switch to position 2: %w", err)
