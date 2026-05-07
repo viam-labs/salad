@@ -311,30 +311,6 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) spatialmath.P
 	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation)
 }
 
-func (s *grabberControls) moveLinear(ctx context.Context, dest spatialmath.Pose) error {
-	worldState, err := referenceframe.NewWorldState(
-		[]*referenceframe.GeometriesInFrame{
-			referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
-		},
-		nil,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to build world state: %w", err)
-	}
-	_, err = s.motionService.Move(ctx, motion.MoveReq{
-		ComponentName: s.arm.Name().ShortName(),
-		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
-		WorldState:    worldState,
-		Constraints: &motionplan.Constraints{
-			LinearConstraint: []motionplan.LinearConstraint{{
-				LineToleranceMm:          1.0,
-				OrientationToleranceDegs: 1.0,
-			}},
-		},
-	})
-	return err
-}
-
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if err := s.loadAssets(); err != nil {
 		return nil, err
@@ -362,9 +338,34 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	grabPose := s.computeGrabPose(zone)
 
+	worldState, err := referenceframe.NewWorldState(
+		[]*referenceframe.GeometriesInFrame{
+			referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
+		},
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build world state: %w", err)
+	}
+	linearConstraints := &motionplan.Constraints{
+		LinearConstraint: []motionplan.LinearConstraint{{
+			LineToleranceMm:          1.0,
+			OrientationToleranceDegs: 1.0,
+		}},
+	}
+	move := func(dest spatialmath.Pose, constraints *motionplan.Constraints) error {
+		_, err := s.motionService.Move(ctx, motion.MoveReq{
+			ComponentName: s.arm.Name().ShortName(),
+			Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
+			WorldState:    worldState,
+			Constraints:   constraints,
+		})
+		return err
+	}
+
 	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
-	if err := s.arm.MoveToPosition(ctx, bin.aboveBinPose, nil); err != nil {
+	if err := move(bin.aboveBinPose, nil); err != nil {
 		return nil, fmt.Errorf("failed to move arm above bin: %w", err)
 	}
 	s.logger.Debugf("Moved arm above bin")
@@ -374,13 +375,13 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Opened gripper")
 
-	if err := s.moveLinear(ctx, grabPose); err != nil {
+	if err := move(grabPose, linearConstraints); err != nil {
 		return nil, fmt.Errorf("failed to descend into bin: %w", err)
 	}
 	s.logger.Debugf("Descended into bin")
 
 	tiltedGrabPose := spatialmath.NewPose(grabPose.Point(), s.cfg.GrabOrientation)
-	if err := s.arm.MoveToPosition(ctx, tiltedGrabPose, nil); err != nil {
+	if err := move(tiltedGrabPose, nil); err != nil {
 		return nil, fmt.Errorf("failed to tilt gripper: %w", err)
 	}
 	s.logger.Debugf("Tilted gripper")
@@ -390,12 +391,12 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Grabbed")
 
-	if err := s.arm.MoveToPosition(ctx, grabPose, nil); err != nil {
+	if err := move(grabPose, nil); err != nil {
 		return nil, fmt.Errorf("failed to untilt gripper: %w", err)
 	}
 	s.logger.Debugf("Untilted gripper")
 
-	if err := s.moveLinear(ctx, bin.aboveBinPose); err != nil {
+	if err := move(bin.aboveBinPose, linearConstraints); err != nil {
 		return nil, fmt.Errorf("failed to ascend from bin: %w", err)
 	}
 	s.logger.Debugf("Ascended from bin")
