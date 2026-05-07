@@ -71,16 +71,16 @@ func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
 }
 
 type BuildCoordinatorConfig struct {
-	GrabberControls   string                             `json:"grabber-controls"`
-	BowlControls      string                             `json:"bowl-controls"`
-	ScaleSensor       string                             `json:"scale-sensor"`
-	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
-	DressingControls  string                             `json:"dressing-controls"`
-	ChefsKissControls string                             `json:"chefs-kiss-controls"`
-	TextToSpeech      string                             `json:"text-to-speech"`
-	ImagingCamera     string                             `json:"imaging-camera"`
-	CaptureDir        string                             `json:"capture-dir"`
-	Simulate          bool                               `json:"simulate"`
+	GrabberControls   string                              `json:"grabber-controls"`
+	BowlControls      string                              `json:"bowl-controls"`
+	ScaleSensor       string                              `json:"scale-sensor"`
+	Ingredients       []BuildCoordinatorIngredientConfig  `json:"ingredients"`
+	DressingControls  string                              `json:"dressing-controls"`
+	ChefsKissControls string                              `json:"chefs-kiss-controls"`
+	TextToSpeech      string                              `json:"text-to-speech"`
+	ImagingCamera     string                              `json:"imaging-camera"`
+	CaptureDir        string                              `json:"capture-dir"`
+	Simulate          bool                                `json:"simulate"`
 	Segmentation      *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 }
 
@@ -554,11 +554,11 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	}
 	s.logger.Infof("Wrote %s (%d points)", stablePCDPath, pc.Size())
 
-	archivedPCDPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s.pcd", ts))
-	if err := saladutils.WritePCD(pc, archivedPCDPath); err != nil {
+	pcdPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s.pcd", ts))
+	if err := saladutils.WritePCD(pc, pcdPath); err != nil {
 		return fmt.Errorf("failed to write point cloud: %w", err)
 	}
-	s.logger.Infof("Wrote %s", archivedPCDPath)
+	s.logger.Infof("Wrote %s", pcdPath)
 
 	s.logger.Infof("Running meshifier on %s", stablePCDPath)
 	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
@@ -593,11 +593,11 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("segmentation failed: %w", err)
 	}
-	archivedZonesPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-zones.json", ts))
-	if err := segmentation.SaveZones(result, archivedZonesPath); err != nil {
+	zonesPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-zones.json", ts))
+	if err := segmentation.SaveZones(result, zonesPath); err != nil {
 		return fmt.Errorf("failed to save zones: %w", err)
 	}
-	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), archivedZonesPath)
+	s.logger.Infof("Wrote %d zone(s) to %s", len(result.Zones), zonesPath)
 
 	if err := segmentation.SaveZones(result, stableZonesPath); err != nil {
 		return fmt.Errorf("failed to write stable zones: %w", err)
