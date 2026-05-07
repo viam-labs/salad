@@ -237,6 +237,15 @@ func (s *grabberControls) loadAssets() error {
 	return nil
 }
 
+func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
+	for i := range s.zones.Zones {
+		if s.zones.Zones[i].ID == zoneID {
+			return &s.zones.Zones[i], nil
+		}
+	}
+	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
+}
+
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if err := s.loadAssets(); err != nil {
 		return nil, err
@@ -248,6 +257,20 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	if !ok {
 		return nil, fmt.Errorf("'get_from_bin' must be a string, got %T", getFromBin)
 	}
+
+	zoneIDVal, ok := cmd["zone_id"]
+	if !ok {
+		return nil, fmt.Errorf("'zone_id' is required in get_from_bin command")
+	}
+	zoneID, ok := zoneIDVal.(int)
+	if !ok {
+		return nil, fmt.Errorf("'zone_id' must be an int, got %T", zoneIDVal)
+	}
+	zone, err := s.getZone(zoneID)
+	if err != nil {
+		return nil, err
+	}
+	_ = zone // used in upcoming motion planning PR
 
 	bin, ok := s.bins[binName]
 	if !ok {
