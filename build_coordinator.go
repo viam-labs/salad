@@ -36,7 +36,7 @@ type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
 	Category        string  `json:"category"`
-	ZoneID          int     `json:"zone-id"`
+	ZoneID          *int    `json:"zone-id"`
 }
 
 type BuildCoordinatorSegmentationConfig struct {
@@ -141,6 +141,11 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 			return nil, nil, fmt.Errorf(
 				"ingredient %q at %s.ingredients.%d has unknown category %q",
 				ing.Name, path, i, ing.Category,
+			)
+		}
+		if ing.ZoneID == nil {
+			return nil, nil, resource.NewConfigValidationFieldRequiredError(
+				fmt.Sprintf("%s.ingredients.%d", path, i), "zone-id",
 			)
 		}
 	}
@@ -656,8 +661,8 @@ func (s *buildCoordinator) checkAssets() error {
 		availableZoneIDs[z.ID] = true
 	}
 	for _, ing := range s.cfg.Ingredients {
-		if !availableZoneIDs[ing.ZoneID] {
-			return fmt.Errorf("ingredient %q has zone-id %d which is not in zones.json (zones: %v)", ing.Name, ing.ZoneID, zones.Zones)
+		if !availableZoneIDs[*ing.ZoneID] {
+			return fmt.Errorf("ingredient %q has zone-id %d which is not in zones.json (zones: %v)", ing.Name, *ing.ZoneID, zones.Zones)
 		}
 	}
 	return nil
