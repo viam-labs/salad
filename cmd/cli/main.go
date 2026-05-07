@@ -47,11 +47,6 @@ type CropFlags struct {
 	VizURL     string
 }
 
-// TODO: meshify and segment should be moved to a Viam resource/module accessible
-// via DoCommand once mesh-based segmentation has been validated as an effective
-// input to automated bin grabbing. Running both from the CLI is
-// sufficient for initial setup purposes in the meantime.
-
 var (
 	// Persistent flags available to all subcommands.
 	globalAddress  string
@@ -98,14 +93,6 @@ var cropCmd = &cobra.Command{
 	Short: "Crop a PCD file to an axis-aligned bounding box",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCrop(cropFlags)
-	},
-}
-
-var framesCmd = &cobra.Command{
-	Use:   "frames",
-	Short: "Print the robot's frame system (shows all frames, parents, poses, and geometry)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runFrames(globalAddress, globalAPIKey, globalAPIKeyID)
 	},
 }
 
@@ -166,7 +153,6 @@ func init() {
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
-	rootCmd.AddCommand(framesCmd)
 	rootCmd.AddCommand(segmentCmd)
 }
 
