@@ -38,6 +38,16 @@ type Zone struct {
 	Mesh ZoneMesh `json:"mesh"`
 }
 
+func (z *Zone) MinZ() float64 {
+	minZ := math.Inf(1)
+	for _, v := range z.Mesh.Vertices {
+		if v[2] < minZ {
+			minZ = v[2]
+		}
+	}
+	return minZ
+}
+
 func (zr *ZonesResult) ZoneByID(id int) (*Zone, bool) {
 	for i := range zr.Zones {
 		if zr.Zones[i].ID == id {
