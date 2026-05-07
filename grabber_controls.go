@@ -340,9 +340,14 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	zoneIDVal, ok := cmd["get_from_bin"]
-	zoneID, ok := zoneIDVal.(int)
-	if !ok {
+	zoneIDVal := cmd["get_from_bin"]
+	var zoneID int
+	switch v := zoneIDVal.(type) {
+	case int:
+		zoneID = v
+	case float64:
+		zoneID = int(v)
+	default:
 		return nil, fmt.Errorf("'get_from_bin' must be an int zone ID, got %T", zoneIDVal)
 	}
 
