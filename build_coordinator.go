@@ -17,6 +17,7 @@ import (
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
 
+	"salad/filter"
 	"salad/segmentation"
 	saladutils "salad/utils"
 )
@@ -37,6 +38,49 @@ type BuildCoordinatorIngredientConfig struct {
 	GramsPerServing float64 `json:"grams-per-serving"`
 	Category        string  `json:"category"`
 	ZoneID          *int    `json:"zone-id"`
+}
+
+type BuildCoordinatorFilterConfig struct {
+	VoxelMM            *float64 `json:"voxel-mm"`
+	NeighborRadius     *int     `json:"neighbor-radius"`
+	MinNeighbors       *int     `json:"min-neighbors"`
+	MinComponentVoxels *int     `json:"min-component-voxels"`
+}
+
+func (c *BuildCoordinatorFilterConfig) Validate(path string) error {
+	if c.VoxelMM != nil && *c.VoxelMM <= 0 {
+		return fmt.Errorf("%s.voxel-mm must be > 0, got %v", path, *c.VoxelMM)
+	}
+	if c.NeighborRadius != nil && *c.NeighborRadius < 1 {
+		return fmt.Errorf("%s.neighbor-radius must be >= 1, got %d", path, *c.NeighborRadius)
+	}
+	if c.MinNeighbors != nil && *c.MinNeighbors < 0 {
+		return fmt.Errorf("%s.min-neighbors must be >= 0, got %d", path, *c.MinNeighbors)
+	}
+	if c.MinComponentVoxels != nil && *c.MinComponentVoxels < 0 {
+		return fmt.Errorf("%s.min-component-voxels must be >= 0, got %d", path, *c.MinComponentVoxels)
+	}
+	return nil
+}
+
+func (c *BuildCoordinatorFilterConfig) toOptions() filter.Options {
+	opts := filter.DefaultOptions()
+	if c == nil {
+		return opts
+	}
+	if c.VoxelMM != nil {
+		opts.VoxelMM = *c.VoxelMM
+	}
+	if c.NeighborRadius != nil {
+		opts.NeighborRadius = *c.NeighborRadius
+	}
+	if c.MinNeighbors != nil {
+		opts.MinNeighbors = *c.MinNeighbors
+	}
+	if c.MinComponentVoxels != nil {
+		opts.MinComponentVoxels = *c.MinComponentVoxels
+	}
+	return opts
 }
 
 type BuildCoordinatorSegmentationConfig struct {
@@ -81,6 +125,7 @@ type BuildCoordinatorConfig struct {
 	ImagingCamera     string                              `json:"imaging-camera"`
 	CaptureDir        string                              `json:"capture-dir"`
 	Simulate          bool                                `json:"simulate"`
+	Filter            *BuildCoordinatorFilterConfig       `json:"filter"`
 	Segmentation      *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 }
 
@@ -147,6 +192,12 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 			return nil, nil, resource.NewConfigValidationFieldRequiredError(
 				fmt.Sprintf("%s.ingredients.%d", path, i), "zone-id",
 			)
+		}
+	}
+
+	if cfg.Filter != nil {
+		if err := cfg.Filter.Validate(path + ".filter"); err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -553,6 +604,7 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	// Write the PCD to the stable path first so meshification uses a
 	// consistent location. Also write to the capture dir so it syncs to cloud.
 	stablePCDPath := s.assetsDir + "/merged.pcd"
+	stableFilteredPCDPath := s.assetsDir + "/filtered_merged.pcd"
 	stableZonesPath := s.assetsDir + "/zones.json"
 	if err := os.MkdirAll(s.assetsDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create assets directory %q: %w", s.assetsDir, err)
@@ -568,9 +620,27 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	}
 	s.logger.Infof("Wrote %s", pcdPath)
 
-	s.logger.Infof("Running meshifier on %s", stablePCDPath)
+	filterOpts := s.cfg.Filter.toOptions()
+	s.logger.Infof("Filtering merged PCD (voxel=%vmm, neighbor-radius=%d, min-neighbors=%d, min-component-voxels=%d)",
+		filterOpts.VoxelMM, filterOpts.NeighborRadius, filterOpts.MinNeighbors, filterOpts.MinComponentVoxels)
+	filteredPC, _, err := filter.Apply(pc, filterOpts, s.logger)
+	if err != nil {
+		return fmt.Errorf("filter failed: %w", err)
+	}
+	if err := saladutils.WritePCD(filteredPC, stableFilteredPCDPath); err != nil {
+		return fmt.Errorf("failed to write stable filtered PCD: %w", err)
+	}
+	s.logger.Infof("Wrote %s (%d points)", stableFilteredPCDPath, filteredPC.Size())
+
+	filteredPCDPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-filtered.pcd", ts))
+	if err := saladutils.WritePCD(filteredPC, filteredPCDPath); err != nil {
+		return fmt.Errorf("failed to write filtered point cloud: %w", err)
+	}
+	s.logger.Infof("Wrote %s", filteredPCDPath)
+
+	s.logger.Infof("Running meshifier on %s", stableFilteredPCDPath)
 	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
-	if err := saladutils.ExecMeshifier(ctx, stablePCDPath, meshPath, 30, 50, 0); err != nil {
+	if err := saladutils.ExecMeshifier(ctx, stableFilteredPCDPath, meshPath, 30, 50, 0); err != nil {
 		return fmt.Errorf("meshification failed: %w", err)
 	}
 	s.logger.Infof("Wrote mesh %s", meshPath)
