@@ -340,6 +340,38 @@ Vision service that returns a 3D mesh loaded from a PLY file.
 }
 ```
 
+## bin-imaging-camera
+
+Camera that drives an arm through a sequence of position switches and merges a point cloud captured at each pose into the world frame. The arm-moving capture only runs when triggered via `DoCommand`; `NextPointCloud` returns the most recently captured cloud from cache. This keeps polling callers (e.g. the app's 3D scene tab, data capture) from inadvertently moving the arm.
+
+### config
+```
+{
+    // required - underlying camera that produces a point cloud at each pose
+    "src": "<camera name>",
+
+    // required - position switches to step the arm through; each switch's
+    // position 2 is invoked in order
+    "positions": ["<switch name>", "<switch name>", ...],
+
+    // optional - seconds to wait after each move before capturing, to let
+    // vibrations settle (default: 1.0)
+    "sleep_seconds": 1.0
+}
+```
+
+### DoCommand
+
+#### capture
+
+Drives the arm through every configured position, captures a point cloud at each, merges them in the world frame, and caches the result for subsequent `NextPointCloud` calls.
+
+```
+{
+    "capture": true
+}
+```
+
 ## supply-detector
 
 Detects ingredient supply level from overhead camera ROIs.
