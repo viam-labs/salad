@@ -297,7 +297,10 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 	if _, ok := cmd["force_move"]; ok {
 		return s.doForceMove(ctx, cmd)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', 'force_move', or 'reset' field")
+	if _, ok := cmd["use_tool"]; ok {
+		return s.doUseTool(ctx, cmd)
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', 'force_move', 'use_tool', or 'reset' field")
 }
 
 // doForceMove forwards a call to the configured xarm-force-mover service.
@@ -578,6 +581,84 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	return map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Successfully grabbed %s", name),
+	}, nil
+}
+
+func (s *bowlControls) doUseTool(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	s.logger.Infof("Executing use_tool")
+	if s.lilArmGripper == nil {
+		return nil, fmt.Errorf("lil-arm is not configured")
+	}
+	toolPose, ok := s.lilArmPoses["tool"]
+	if !ok {
+		return nil, fmt.Errorf("lil-arm pose 'tool' not found in configuration")
+	}
+
+	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
+	}
+
+	// Move above the tool, then to the tool.
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch: %w", err)
+	}
+	if err := toolPose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set at-tool switch: %w", err)
+	}
+
+	// Pick up the tool.
+	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to grab tool: %w", err)
+	}
+
+	// Move above the tool, then above the scale.
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch (return): %w", err)
+	}
+	if err := toolPose.centerAbovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-above (above-scale) switch: %w", err)
+	}
+
+	// Apply force to secure the lid.
+	if _, err := s.doForceMove(ctx, cmd); err != nil {
+		return nil, fmt.Errorf("force_move failed: %w", err)
+	}
+
+	// Move back to the scale.
+	if err := toolPose.centerAtPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-at (on-scale) switch: %w", err)
+	}
+
+	// Move back to where we picked up the tool.
+	if err := toolPose.centerAbovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-above (above-scale) switch (return): %w", err)
+	}
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch (return to tool): %w", err)
+	}
+	if err := toolPose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set at-tool switch (return to tool): %w", err)
+	}
+
+	// Drop the tool.
+	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
+	}
+
+	// Return to home.
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch (after drop): %w", err)
+	}
+	if s.lilArmHome != nil {
+		if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
+			return nil, fmt.Errorf("failed to set lil-arm home switch: %w", err)
+		}
+	}
+
+	s.logger.Infof("Successfully completed use_tool")
+	return map[string]interface{}{
+		"success": true,
+		"message": "Successfully used tool",
 	}, nil
 }
 
