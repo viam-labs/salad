@@ -56,8 +56,43 @@ Once all ingredients are added, calls deliver_bowl.
             "grams-per-serving" : 20.0,
             "category" : "dressing"
         }
-    ]
+    ],
+
+    // optional - voxel-based filter applied to the merged PCD before
+    // meshification, to remove "ghost" points (depth-camera artifacts that
+    // float inside otherwise-empty bins). Two passes run in sequence:
+    //   1. neighbor-count: drop a voxel if its (2r+1)^3 cube has fewer than
+    //      "min-neighbors" occupied voxels — strips thin chains/wisps of
+    //      noise that bridge unrelated clusters.
+    //   2. connected-components: build 26-connected components over the
+    //      survivors and drop any component smaller than
+    //      "min-component-voxels" — kills locally dense but globally
+    //      isolated ghost blobs.
+    // Set min-neighbors or min-component-voxels to 0 to disable a pass.
+    // Defaults shown below were tuned against typical fridge captures.
+    "filter" : {
+        "voxel-mm"             : 10,
+        "neighbor-radius"      : 1,
+        "min-neighbors"        : 8,
+        "min-component-voxels" : 1000
+    }
 }
+```
+
+#### setup_station
+
+Captures a point cloud from `imaging-camera`, filters it, runs meshification, and segments the mesh into bins. Writes the following stable assets to `/home/viam/assets/`:
+
+- `merged.pcd` — raw merged point cloud captured from the camera.
+- `filtered_merged.pcd` — point cloud after the filter pass; this is what gets meshed.
+- `mesh.ply` — surface mesh (Poisson reconstruction).
+- `zones.json` — per-bin segmentation of the mesh.
+
+Tune the filter against any captured PCD via the CLI before changing config:
+
+```
+./bin/salad-cli filter --input <path>.pcd --viz \
+  --voxel 10 --neighbor-radius 1 --min-neighbors 8 --min-component-voxels 1000
 ```
 
 ### DoCommand
