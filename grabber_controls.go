@@ -2,8 +2,12 @@ package salad
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/components/arm"
@@ -50,6 +54,7 @@ type GrabberControlsConfig struct {
 	LeftHome            string                                `json:"left-home"`
 	ShakeArmService     *string                               `json:"shake-arm-service,omitempty"`
 	AssetsDir           string                                `json:"assets-dir"`
+	SavePlans           bool                                  `json:"save-plans,omitempty"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -139,6 +144,28 @@ type grabberControls struct {
 type grabberBinSwitches struct {
 	name         string
 	aboveBinPose spatialmath.Pose
+}
+
+type grabPlanStep struct {
+	Step   string  `json:"step"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Z      float64 `json:"z"`
+	OX     float64 `json:"ox"`
+	OY     float64 `json:"oy"`
+	OZ     float64 `json:"oz"`
+	Theta  float64 `json:"theta"`
+	Linear bool    `json:"linear"`
+	Error  string  `json:"error,omitempty"`
+}
+
+type grabPlanRecord struct {
+	StartedAt string         `json:"started_at"`
+	BinName   string         `json:"bin_name"`
+	ZoneID    int            `json:"zone_id"`
+	Steps     []grabPlanStep `json:"steps"`
+	Success   bool           `json:"success"`
+	Error     string         `json:"error,omitempty"`
 }
 
 func newGrabberControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -358,7 +385,42 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) (spatialmath.
 	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation), nil
 }
 
-func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+const grabPlansDir = "/root/.viam/capture"
+
+func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
+	if err := os.MkdirAll(grabPlansDir, 0o755); err != nil {
+		return fmt.Errorf("creating grab-plans dir: %w", err)
+	}
+	ts := time.Now().UTC().Format("20060102-150405.000")
+	fname := filepath.Join(grabPlansDir, fmt.Sprintf("grab-%s-zone%d.json", ts, plan.ZoneID))
+	data, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling plan: %w", err)
+	}
+	return os.WriteFile(fname, data, 0o644)
+}
+
+func poseToStep(name string, pose spatialmath.Pose, linear bool, stepErr error) grabPlanStep {
+	pt := pose.Point()
+	ov := pose.Orientation().OrientationVectorDegrees()
+	step := grabPlanStep{
+		Step:   name,
+		X:      pt.X,
+		Y:      pt.Y,
+		Z:      pt.Z,
+		OX:     ov.OX,
+		OY:     ov.OY,
+		OZ:     ov.OZ,
+		Theta:  ov.Theta,
+		Linear: linear,
+	}
+	if stepErr != nil {
+		step.Error = stepErr.Error()
+	}
+	return step
+}
+
+func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (_ map[string]interface{}, retErr error) {
 	if err := s.loadAssets(); err != nil {
 		return nil, err
 	}
@@ -388,9 +450,35 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
+	var plan *grabPlanRecord
+	if s.cfg.SavePlans {
+		plan = &grabPlanRecord{
+			StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			BinName:   bin.name,
+			ZoneID:    zoneID,
+		}
+		defer func() {
+			plan.Success = retErr == nil
+			if retErr != nil {
+				plan.Error = retErr.Error()
+			}
+			if saveErr := s.savePlan(plan); saveErr != nil {
+				s.logger.Warnf("failed to save grab plan: %v", saveErr)
+			}
+		}()
+	}
+
+	recordMove := func(stepName string, pose spatialmath.Pose, linear bool, moveErr error) {
+		if plan != nil {
+			plan.Steps = append(plan.Steps, poseToStep(stepName, pose, linear, moveErr))
+		}
+	}
+
 	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
-	if err := s.moveArm(ctx, bin.aboveBinPose, false); err != nil {
+	err = s.moveArm(ctx, bin.aboveBinPose, false)
+	recordMove("above_bin", bin.aboveBinPose, false, err)
+	if err != nil {
 		return nil, fmt.Errorf("failed to move arm above bin: %w", err)
 	}
 	s.logger.Debugf("Moved arm above bin")
@@ -400,13 +488,17 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Opened gripper")
 
-	if err := s.moveArm(ctx, grabPose, true); err != nil {
+	err = s.moveArm(ctx, grabPose, true)
+	recordMove("descend", grabPose, true, err)
+	if err != nil {
 		return nil, fmt.Errorf("failed to descend into bin: %w", err)
 	}
 	s.logger.Debugf("Descended into bin")
 
 	tiltedGrabPose := spatialmath.NewPose(grabPose.Point(), s.cfg.GrabOrientation)
-	if err := s.moveArm(ctx, tiltedGrabPose, false); err != nil {
+	err = s.moveArm(ctx, tiltedGrabPose, false)
+	recordMove("tilt", tiltedGrabPose, false, err)
+	if err != nil {
 		return nil, fmt.Errorf("failed to tilt gripper: %w", err)
 	}
 	s.logger.Debugf("Tilted gripper")
@@ -416,12 +508,16 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Grabbed")
 
-	if err := s.moveArm(ctx, grabPose, false); err != nil {
+	err = s.moveArm(ctx, grabPose, false)
+	recordMove("untilt", grabPose, false, err)
+	if err != nil {
 		return nil, fmt.Errorf("failed to untilt gripper: %w", err)
 	}
 	s.logger.Debugf("Untilted gripper")
 
-	if err := s.moveArm(ctx, bin.aboveBinPose, true); err != nil {
+	err = s.moveArm(ctx, bin.aboveBinPose, true)
+	recordMove("ascend", bin.aboveBinPose, true, err)
+	if err != nil {
 		return nil, fmt.Errorf("failed to ascend from bin: %w", err)
 	}
 	s.logger.Debugf("Ascended from bin")
