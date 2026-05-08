@@ -137,10 +137,11 @@ type grabberControls struct {
 	shakeArmService genericservice.Service
 	motionService   motion.Service
 
-	assetsMu  sync.Mutex
-	assetsDir string
-	binMesh   *spatialmath.Mesh
-	zones     *segmentation.ZonesResult
+	assetsMu   sync.Mutex
+	assetsDir  string
+	binMesh    *spatialmath.Mesh
+	worldState *referenceframe.WorldState
+	zones      *segmentation.ZonesResult
 }
 
 type grabberBinSwitches struct {
@@ -269,19 +270,6 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'bin_hover' field")
 }
 func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, useLinearConstraints bool) error {
-	var worldState *referenceframe.WorldState
-	if s.binMesh != nil {
-		var err error
-		worldState, err = referenceframe.NewWorldState(
-			[]*referenceframe.GeometriesInFrame{
-				referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
-			},
-			nil,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to build world state: %w", err)
-		}
-	}
 	var constraints *motionplan.Constraints
 	if useLinearConstraints {
 		constraints = &motionplan.Constraints{
@@ -296,7 +284,7 @@ func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, us
 	_, err := s.motionService.Move(ctx, motion.MoveReq{
 		ComponentName: s.arm.Name().ShortName(),
 		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
-		WorldState:    worldState,
+		WorldState:    s.worldState,
 		Constraints:   constraints,
 	})
 	return err
@@ -346,6 +334,17 @@ func (s *grabberControls) loadAssets() error {
 			return fmt.Errorf("bin mesh not available at %s, run setup first: %w", s.assetsDir+"/mesh.ply", err)
 		}
 		s.binMesh = mesh
+
+		ws, err := referenceframe.NewWorldState(
+			[]*referenceframe.GeometriesInFrame{
+				referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
+			},
+			nil,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to build world state: %w", err)
+		}
+		s.worldState = ws
 	}
 
 	if s.zones == nil {
