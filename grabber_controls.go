@@ -294,7 +294,7 @@ func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, us
 	pt := dest.Point()
 	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f", pt.X, pt.Y, pt.Z)
 	_, err := s.motionService.Move(ctx, motion.MoveReq{
-		ComponentName: s.arm.Name().ShortName(),
+		ComponentName: s.gripper.Name().ShortName(),
 		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
 		WorldState:    worldState,
 		Constraints:   constraints,
