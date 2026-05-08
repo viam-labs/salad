@@ -54,7 +54,7 @@ type GrabberControlsConfig struct {
 	LeftHome            string                                `json:"left-home"`
 	ShakeArmService     *string                               `json:"shake-arm-service,omitempty"`
 	AssetsDir           string                                `json:"assets-dir"`
-	SavePlansDir        string                                `json:"save-plans-dir,omitempty"`
+	SavePlans           bool                                  `json:"save-plans,omitempty"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -385,12 +385,14 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) (spatialmath.
 	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation), nil
 }
 
+const grabPlansDir = "/root/.viam/capture/grab-plans"
+
 func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
-	if err := os.MkdirAll(s.cfg.SavePlansDir, 0o755); err != nil {
-		return fmt.Errorf("creating save-plans-dir: %w", err)
+	if err := os.MkdirAll(grabPlansDir, 0o755); err != nil {
+		return fmt.Errorf("creating grab-plans dir: %w", err)
 	}
 	ts := time.Now().UTC().Format("20060102-150405.000")
-	fname := filepath.Join(s.cfg.SavePlansDir, fmt.Sprintf("grab-%s-zone%d.json", ts, plan.ZoneID))
+	fname := filepath.Join(grabPlansDir, fmt.Sprintf("grab-%s-zone%d.json", ts, plan.ZoneID))
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling plan: %w", err)
@@ -449,7 +451,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 
 	var plan *grabPlanRecord
-	if s.cfg.SavePlansDir != "" {
+	if s.cfg.SavePlans {
 		plan = &grabPlanRecord{
 			StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			BinName:   bin.name,
