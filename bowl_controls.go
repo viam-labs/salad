@@ -42,6 +42,7 @@ type BowlControlsConfig struct {
 	LilArmGripper      string             `json:"lil-arm-gripper"`
 	LilArmHome         string             `json:"lil-arm-home"`
 	LilArmPoses        []LilArmPoseConfig `json:"lil-arm-poses"`
+	XArmForceMover     string             `json:"xarm-force-mover,omitempty"`
 }
 
 func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -80,6 +81,10 @@ func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error)
 	}
 
 	var optionalDeps []string
+
+	if cfg.XArmForceMover != "" {
+		optionalDeps = append(optionalDeps, cfg.XArmForceMover)
+	}
 
 	if cfg.LilArmGripper != "" {
 		if cfg.LilArmHome == "" {
@@ -139,6 +144,8 @@ type bowlControls struct {
 	lilArmGripper gripper.Gripper
 	lilArmHome    sw.Switch
 	lilArmPoses   map[string]*lilArmPoseSwitches
+
+	xarmForceMover resource.Resource
 }
 
 func newBowlControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -203,6 +210,14 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 		return nil, fmt.Errorf("failed to get little-arm '%s': %w", conf.LittleArm, err)
 	}
 	s.littleArm = littleArmComponent
+
+	if conf.XArmForceMover != "" {
+		mover, err := genericservice.FromProvider(deps, conf.XArmForceMover)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get xarm-force-mover '%s': %w", conf.XArmForceMover, err)
+		}
+		s.xarmForceMover = mover
+	}
 
 	if conf.LilArmGripper != "" {
 		lilArmGripperComponent, err := gripper.FromProvider(deps, conf.LilArmGripper)
@@ -279,7 +294,33 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		}
 		return map[string]interface{}{"success": true}, nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', or 'reset' field")
+	if _, ok := cmd["force_move"]; ok {
+		return s.doForceMove(ctx, cmd)
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', 'force_move', or 'reset' field")
+}
+
+// doForceMove forwards a call to the configured xarm-force-mover service.
+// Expected cmd fields: "joint" (number), "axis" (string), "target" (number).
+func (s *bowlControls) doForceMove(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if s.xarmForceMover == nil {
+		return nil, fmt.Errorf("xarm-force-mover is not configured")
+	}
+	for _, k := range []string{"joint", "axis", "target"} {
+		if _, ok := cmd[k]; !ok {
+			return nil, fmt.Errorf("force_move requires field %q", k)
+		}
+	}
+	args := map[string]interface{}{
+		"joint":  cmd["joint"],
+		"axis":   cmd["axis"],
+		"target": cmd["target"],
+	}
+	resp, err := s.xarmForceMover.DoCommand(ctx, args)
+	if err != nil {
+		return nil, fmt.Errorf("xarm-force-mover failed: %w", err)
+	}
+	return resp, nil
 }
 
 func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
@@ -487,10 +528,20 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	}
 	s.logger.Debugf("Set above-%s switch to position 2", name)
 
-	if err := s.moveDownTo(ctx, name); err != nil {
-		return nil, fmt.Errorf("failed to move down to %s: %w", name, err)
+	// if err := s.moveDownTo(ctx, name); err != nil {
+	// 	return nil, fmt.Errorf("failed to move down to %s: %w", name, err)
+	// }
+	if s.xarmForceMover == nil {
+		return nil, fmt.Errorf("xarm-force-mover is not configured")
 	}
-	s.logger.Debugf("Moved down to %s", name)
+	if _, err := s.xarmForceMover.DoCommand(ctx, map[string]interface{}{
+		"joint":  float64(1),
+		"axis":   "z",
+		"target": float64(50),
+	}); err != nil {
+		return nil, fmt.Errorf("force descent to %s failed: %w", name, err)
+	}
+	s.logger.Debugf("Force-descended to %s", name)
 
 	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to grab %s: %w", name, err)
