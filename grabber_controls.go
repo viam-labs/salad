@@ -385,7 +385,7 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) (spatialmath.
 	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation), nil
 }
 
-const grabPlansDir = "/root/.viam/capture/grab-plans"
+const grabPlansDir = "/root/.viam/capture"
 
 func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
 	if err := os.MkdirAll(grabPlansDir, 0o755); err != nil {
