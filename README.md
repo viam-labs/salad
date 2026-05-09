@@ -81,7 +81,13 @@ Once all ingredients are added, calls deliver_bowl.
     // this many triangles using quadric error metrics. The mesh is loaded
     // as a world obstacle for every motion plan, so a smaller mesh means
     // faster planning. Set to 0 to disable decimation. Default: 5000.
-    "mesh-target-triangles" : 5000
+    "mesh-target-triangles" : 5000,
+
+    // optional - if true, skip the lil-arm grab_bowl/grab_lid steps during
+    // build_salad and go straight to adding ingredients. Useful when the
+    // lil-arm is unreliable but you still want it configured in
+    // bowl-controls. Default: false.
+    "skip-lil-arm" : false
 }
 ```
 
