@@ -303,6 +303,10 @@ func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose 
 
 func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if zoneIDVal, ok := cmd["bin_hover"]; ok {
+		if err := s.loadAssets(); err != nil {
+			return nil, err
+		}
+
 		var zoneID int
 		switch v := zoneIDVal.(type) {
 		case int:
@@ -316,6 +320,9 @@ func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{
 		bin, ok := s.bins[zoneID]
 		if !ok {
 			return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
+		}
+		if bin.aboveBinPose == nil {
+			return nil, fmt.Errorf("zone %d has no computed hover pose; check that zones.json contains zone %d", zoneID, zoneID)
 		}
 		return nil, s.moveArm(ctx, s.applyXYOffset(bin.aboveBinPose), false)
 	}
