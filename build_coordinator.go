@@ -127,6 +127,7 @@ type BuildCoordinatorConfig struct {
 	ImagingCamera       string                              `json:"imaging-camera"`
 	CaptureDir          string                              `json:"capture-dir"`
 	Simulate            bool                                `json:"simulate"`
+	SkipLilArm          bool                                `json:"skip-lil-arm"`
 	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
 	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
@@ -247,6 +248,7 @@ type buildCoordinator struct {
 	customerName string
 	errorMsg     string
 	simulate     bool
+	skipLilArm   bool
 	opCancelFunc func()
 	opDone       chan struct{}
 
@@ -278,6 +280,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredientZoneIDs:    make(map[string]int),
 		status:               "idle",
 		simulate:             conf.Simulate,
+		skipLilArm:           conf.SkipLilArm,
 		assetsDir:            "/home/viam/assets",
 	}
 
@@ -799,8 +802,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 
 	var result map[string]interface{}
 	lilArmControls, _ := s.bowlControls.(*bowlControls)
+	lilArmEnabled := !s.skipLilArm && lilArmControls != nil && lilArmControls.lilArmGripper != nil
+	if s.skipLilArm {
+		s.logger.Infof("skip-lil-arm is set; skipping lil-arm grab_bowl/grab_lid steps")
+	}
 
-	if lilArmControls != nil && lilArmControls.lilArmGripper != nil {
+	if lilArmEnabled {
 		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
 		})
@@ -903,7 +910,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	if lilArmControls != nil && lilArmControls.lilArmGripper != nil {
+	if lilArmEnabled {
 		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_lid": true,
 		})
