@@ -33,6 +33,8 @@ var categoryOrder = map[string]int{
 	"dressing": 3,
 }
 
+const defaultMeshTargetTriangles = 5000
+
 type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
@@ -115,18 +117,19 @@ func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
 }
 
 type BuildCoordinatorConfig struct {
-	GrabberControls   string                              `json:"grabber-controls"`
-	BowlControls      string                              `json:"bowl-controls"`
-	ScaleSensor       string                              `json:"scale-sensor"`
-	Ingredients       []BuildCoordinatorIngredientConfig  `json:"ingredients"`
-	DressingControls  string                              `json:"dressing-controls"`
-	ChefsKissControls string                              `json:"chefs-kiss-controls"`
-	TextToSpeech      string                              `json:"text-to-speech"`
-	ImagingCamera     string                              `json:"imaging-camera"`
-	CaptureDir        string                              `json:"capture-dir"`
-	Simulate          bool                                `json:"simulate"`
-	Filter            *BuildCoordinatorFilterConfig       `json:"filter"`
-	Segmentation      *BuildCoordinatorSegmentationConfig `json:"segmentation"`
+	GrabberControls     string                              `json:"grabber-controls"`
+	BowlControls        string                              `json:"bowl-controls"`
+	ScaleSensor         string                              `json:"scale-sensor"`
+	Ingredients         []BuildCoordinatorIngredientConfig  `json:"ingredients"`
+	DressingControls    string                              `json:"dressing-controls"`
+	ChefsKissControls   string                              `json:"chefs-kiss-controls"`
+	TextToSpeech        string                              `json:"text-to-speech"`
+	ImagingCamera       string                              `json:"imaging-camera"`
+	CaptureDir          string                              `json:"capture-dir"`
+	Simulate            bool                                `json:"simulate"`
+	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
+	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
+	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
 }
 
 func init() {
@@ -205,6 +208,10 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		if err := cfg.Segmentation.Validate(path + ".segmentation"); err != nil {
 			return nil, nil, err
 		}
+	}
+
+	if cfg.MeshTargetTriangles != nil && *cfg.MeshTargetTriangles < 0 {
+		return nil, nil, fmt.Errorf("%s.mesh-target-triangles must be >= 0, got %d", path, *cfg.MeshTargetTriangles)
 	}
 
 	return deps, nil, nil
@@ -640,7 +647,11 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 
 	s.logger.Infof("Running meshifier on %s", stableFilteredPCDPath)
 	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
-	if err := saladutils.ExecMeshifier(ctx, stableFilteredPCDPath, meshPath, 30, 50, 0); err != nil {
+	targetTriangles := defaultMeshTargetTriangles
+	if s.cfg.MeshTargetTriangles != nil {
+		targetTriangles = *s.cfg.MeshTargetTriangles
+	}
+	if err := saladutils.ExecMeshifier(ctx, stableFilteredPCDPath, meshPath, 30, 50, 0, targetTriangles); err != nil {
 		return fmt.Errorf("meshification failed: %w", err)
 	}
 	s.logger.Infof("Wrote mesh %s", meshPath)

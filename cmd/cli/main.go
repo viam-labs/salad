@@ -33,13 +33,14 @@ type FilterFlags struct {
 }
 
 type MeshifyFlags struct {
-	InputPath     string
-	OutputPath    string
-	KDTreeKNN     int
-	OrientNN      int
-	LODMultiplier int
-	Viz           bool
-	VizURL        string
+	InputPath       string
+	OutputPath      string
+	KDTreeKNN       int
+	OrientNN        int
+	LODMultiplier   int
+	TargetTriangles int
+	Viz             bool
+	VizURL          string
 }
 
 type CropFlags struct {
@@ -130,6 +131,7 @@ func init() {
 	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 30, "KNN for normal estimation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.OrientNN, "orient-nn", 50, "KNN for normal orientation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.LODMultiplier, "lod-multiplier", 0, "Poisson reconstruction depth (8-11, higher=finer; 0=default 9)")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.TargetTriangles, "target-triangles", 0, "decimate output to this many triangles via quadric error metrics; 0 disables")
 	meshifyCmd.Flags().BoolVar(&meshifyFlags.Viz, "viz", false, "display the output mesh in the motion-tools visualizer")
 	meshifyCmd.Flags().StringVar(&meshifyFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	_ = meshifyCmd.MarkFlagRequired("input")
