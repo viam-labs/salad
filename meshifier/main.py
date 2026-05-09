@@ -13,6 +13,7 @@ def main():
     parser.add_argument('orient_nn', type=str)
     # lod_mult is now the Poisson depth (8–11). 0 → default of 9.
     parser.add_argument('lod_mult', type=str)
+    parser.add_argument('target_triangles', type=str, nargs='?', default='0')
     args = parser.parse_args()
 
     depth = int(args.lod_mult)
@@ -20,7 +21,7 @@ def main():
         depth = 9
 
     pcd = get_point_cloud(args.pcd_path, int(args.max_nn), int(args.orient_nn))
-    mesh = create_poisson_mesh(pcd, depth=depth)
+    mesh = create_poisson_mesh(pcd, depth=depth, target_triangles=int(args.target_triangles))
     if not o3d.io.write_triangle_mesh(args.mesh_path, mesh, write_ascii=True):
         raise Exception("failed to write mesh")
 

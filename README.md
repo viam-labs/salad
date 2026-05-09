@@ -75,7 +75,13 @@ Once all ingredients are added, calls deliver_bowl.
         "neighbor-radius"      : 1,
         "min-neighbors"        : 8,
         "min-component-voxels" : 1000
-    }
+    },
+
+    // optional - decimate the Poisson-reconstructed mesh down to roughly
+    // this many triangles using quadric error metrics. The mesh is loaded
+    // as a world obstacle for every motion plan, so a smaller mesh means
+    // faster planning. Set to 0 to disable decimation. Default: 5000.
+    "mesh-target-triangles" : 5000
 }
 ```
 

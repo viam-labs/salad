@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 	"path/filepath"
+	"time"
 
 	vizClient "github.com/viam-labs/motion-tools/client/client"
 	"go.viam.com/rdk/spatialmath"
@@ -22,7 +22,7 @@ func runMeshify(flags MeshifyFlags) error {
 		flags.OutputPath = filepath.Join(dir, "mesh.ply")
 	}
 	fmt.Printf("Meshing %s → %s\n", flags.InputPath, flags.OutputPath)
-	if err := saladutils.ExecMeshifier(context.Background(), flags.InputPath, flags.OutputPath, flags.KDTreeKNN, flags.OrientNN, flags.LODMultiplier); err != nil {
+	if err := saladutils.ExecMeshifier(context.Background(), flags.InputPath, flags.OutputPath, flags.KDTreeKNN, flags.OrientNN, flags.LODMultiplier, flags.TargetTriangles); err != nil {
 		return err
 	}
 	if _, err := os.Stat(flags.OutputPath); err != nil {
