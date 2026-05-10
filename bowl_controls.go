@@ -256,7 +256,8 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		return s.doDeliverBowl(ctx)
 	}
 	if _, ok := cmd["reset"]; ok {
-		return s.reset(ctx)
+		skipLilArm, _ := cmd["skip_lil_arm"].(bool)
+		return s.reset(ctx, skipLilArm)
 	}
 	if _, ok := cmd["prepare_bowl"]; ok {
 		return s.doPrepareBowl(ctx)
@@ -266,6 +267,9 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 	}
 	if _, ok := cmd["grab_bowl"]; ok {
 		return s.doGrabBowl(ctx)
+	}
+	if _, ok := cmd["lil_arm_home"]; ok {
+		return s.doLilArmHome(ctx)
 	}
 	if _, ok := cmd["move_down_to_bowl"]; ok {
 		if err := s.moveDownTo(ctx, "bowl"); err != nil {
@@ -279,7 +283,7 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		}
 		return map[string]interface{}{"success": true}, nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'lil_arm_home', 'move_down_to_bowl', 'move_down_to_lid', or 'reset' field")
 }
 
 func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
@@ -530,20 +534,38 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	}, nil
 }
 
-func (s *bowlControls) reset(ctx context.Context) (map[string]interface{}, error) {
+func (s *bowlControls) reset(ctx context.Context, skipLilArm bool) (map[string]interface{}, error) {
 	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
 	}
 	s.logger.Debugf("Set right-home switch to position 2")
 
 	if s.lilArmHome != nil {
-		if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
-			return nil, fmt.Errorf("failed to set lil-arm home switch to position 2: %w", err)
+		if skipLilArm {
+			s.logger.Debugf("skip_lil_arm set; not moving lil-arm home")
+		} else {
+			if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
+				return nil, fmt.Errorf("failed to set lil-arm home switch to position 2: %w", err)
+			}
+			s.logger.Debugf("Set lil-arm home switch to position 2")
 		}
-		s.logger.Debugf("Set lil-arm home switch to position 2")
 	}
 
 	return nil, nil
+}
+
+func (s *bowlControls) doLilArmHome(ctx context.Context) (map[string]interface{}, error) {
+	if s.lilArmHome == nil {
+		return nil, fmt.Errorf("lil-arm-home is not configured")
+	}
+	s.logger.Infof("Executing lil_arm_home")
+	if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set lil-arm home switch to position 2: %w", err)
+	}
+	return map[string]interface{}{
+		"success": true,
+		"message": "Sent lil-arm home",
+	}, nil
 }
 
 func (s *bowlControls) Close(context.Context) error {
