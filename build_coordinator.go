@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,6 +132,8 @@ type BuildCoordinatorConfig struct {
 	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
 	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
+	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
+	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
 }
 
 func init() {
@@ -966,7 +969,36 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}, nil
 }
 
-const zeroChangeTolerance = 0.5 // grams
+const (
+	zeroChangeTolerance     = 0.5 // grams
+	defaultDepthStepMM      = 20.0
+	defaultMaxDepthOffsetMM = 80.0
+)
+
+func (s *buildCoordinator) depthProbeParams() (step, max float64) {
+	step = defaultDepthStepMM
+	if s.cfg.DepthStepMM != nil {
+		step = *s.cfg.DepthStepMM
+	}
+	max = defaultMaxDepthOffsetMM
+	if s.cfg.MaxDepthOffsetMM != nil {
+		max = *s.cfg.MaxDepthOffsetMM
+	}
+	if step <= 0 || max <= 0 {
+		return 0, 0
+	}
+	return step, max
+}
+
+func isMotionPlanningFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "physically unreachable") ||
+		strings.Contains(msg, "zero IK solutions") ||
+		strings.Contains(msg, "no plan found")
+}
 
 func (s *buildCoordinator) addDressing(ctx context.Context) error {
 	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
@@ -981,6 +1013,9 @@ func (s *buildCoordinator) addDressing(ctx context.Context) error {
 func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targetGrams float64) error {
 	var totalAdded float64
 	var zeroChangeStreak int
+	var depthOffset float64
+
+	depthStep, maxDepth := s.depthProbeParams()
 
 	for totalAdded < targetGrams {
 		if ctx.Err() != nil {
@@ -991,11 +1026,23 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			return fmt.Errorf("failed to read scale before grab: %w", err)
 		}
 
-		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg)", name, totalAdded, targetGrams)
+		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, depth-offset %.1fmm)",
+			name, totalAdded, targetGrams, depthOffset)
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
-			"get_from_bin": s.ingredientZoneIDs[name],
+			"get_from_bin":    s.ingredientZoneIDs[name],
+			"depth-offset-mm": depthOffset,
 		})
 		if err != nil {
+			if isMotionPlanningFailure(err) && depthOffset > 0 {
+				newOffset := depthOffset / 2
+				if newOffset < 0.5 {
+					newOffset = 0
+				}
+				s.logger.Warnf("Motion planning failed for %q at depth-offset %.1fmm; halving to %.1fmm",
+					name, depthOffset, newOffset)
+				depthOffset = newOffset
+				continue
+			}
 			return fmt.Errorf("failed to grab from bin %q: %w", name, err)
 		}
 		if success, ok := result["success"].(bool); ok && !success {
@@ -1019,6 +1066,13 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 				break
 			}
 			s.logger.Warnf("No weight change detected for %q (streak: %d/3)", name, zeroChangeStreak)
+			if depthStep > 0 && zeroChangeStreak >= 2 && depthOffset < maxDepth {
+				depthOffset += depthStep
+				if depthOffset > maxDepth {
+					depthOffset = maxDepth
+				}
+				s.logger.Infof("Probing deeper for %q: depth-offset now %.1fmm", name, depthOffset)
+			}
 		} else {
 			zeroChangeStreak = 0
 		}
