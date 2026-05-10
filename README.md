@@ -10,6 +10,12 @@ For each ingredient, reads the scale before and after each grab to verify weight
 If 3 consecutive grabs produce no weight change (< 0.5g), errors out (possible empty bin).
 Once all ingredients are added, calls deliver_bowl.
 
+When a grab adds no weight, the next attempt probes deeper into the bin by `depth-step-mm`
+(capped at `max-depth-offset-mm`) to reach lower food levels. If motion planning rejects
+a depth as unreachable, the offset is halved and retried — a binary search for the
+deepest reachable Z. The same grab is retried once at the original depth before the
+deeper probe begins.
+
 ### config
 ```
 {
@@ -87,7 +93,16 @@ Once all ingredients are added, calls deliver_bowl.
     // build_salad and go straight to adding ingredients. Useful when the
     // lil-arm is unreliable but you still want it configured in
     // bowl-controls. Default: false.
-    "skip-lil-arm" : false
+    "skip-lil-arm" : false,
+
+    // optional - mm to descend deeper into the bin on each empty-handed
+    // grab retry. Set <= 0 to disable depth probing. Default: 20.
+    "depth-step-mm" : 20,
+
+    // optional - cap on how many mm below the configured grab Z the
+    // depth probe is allowed to reach. Set <= 0 to disable depth
+    // probing. Default: 80.
+    "max-depth-offset-mm" : 80
 }
 ```
 
@@ -170,10 +185,22 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
 ### DoCommand
 
 #### get_from_bin
-Grabs from the named bin and drops into the bowl.
+Grabs from the bin with the given zone ID and drops into the bowl.
+Optionally descend `depth-offset-mm` below the configured grab Z to
+reach lower food levels.
 ```
 {
-    "get_from_bin" : "lettuce"
+    "get_from_bin" : 2,
+    "depth-offset-mm" : 0  // optional, default 0
+}
+```
+Response includes the depth offset that was used:
+```
+{
+    "success" : true,
+    "bin" : "croutons",
+    "depth-offset-mm" : 0,
+    "message" : "..."
 }
 ```
 

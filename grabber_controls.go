@@ -391,7 +391,7 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) (spatialmath.Pose, error) {
+func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, depthOffsetMM float64) (spatialmath.Pose, error) {
 	cx, cy, err := zone.Centroid()
 	if err != nil {
 		return nil, err
@@ -399,7 +399,7 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone) (spatialmath.
 	point := r3.Vector{
 		X: cx,
 		Y: cy,
-		Z: zone.MinZ() + s.cfg.GrabHeightMM,
+		Z: zone.MinZ() + s.cfg.GrabHeightMM - depthOffsetMM,
 	}
 	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation), nil
 }
@@ -455,6 +455,21 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, fmt.Errorf("'get_from_bin' must be an int zone ID, got %T", zoneIDVal)
 	}
 
+	var depthOffsetMM float64
+	if v, ok := cmd["depth-offset-mm"]; ok {
+		switch x := v.(type) {
+		case float64:
+			depthOffsetMM = x
+		case int:
+			depthOffsetMM = float64(x)
+		default:
+			return nil, fmt.Errorf("'depth-offset-mm' must be a number, got %T", v)
+		}
+		if depthOffsetMM < 0 {
+			return nil, fmt.Errorf("'depth-offset-mm' must be non-negative, got %v", depthOffsetMM)
+		}
+	}
+
 	bin, ok := s.bins[zoneID]
 	if !ok {
 		return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
@@ -464,7 +479,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	if err != nil {
 		return nil, err
 	}
-	grabPose, err := s.computeGrabPose(zone)
+	grabPose, err := s.computeGrabPose(zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +512,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	grab := s.applyXYOffset(grabPose)
 	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
 
-	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
+	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
 
 	err = s.moveArm(ctx, aboveBin, false)
 	recordMove("above_bin", aboveBin, false, err)
@@ -575,9 +590,10 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	s.logger.Infof("Successfully completed get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
 	return map[string]interface{}{
-		"success": true,
-		"bin":     bin.name,
-		"message": fmt.Sprintf("Successfully grabbed from bin '%s' and moved to bowl", bin.name),
+		"success":         true,
+		"bin":             bin.name,
+		"depth-offset-mm": depthOffsetMM,
+		"message":         fmt.Sprintf("Successfully grabbed from bin '%s' and moved to bowl", bin.name),
 	}, nil
 }
 
