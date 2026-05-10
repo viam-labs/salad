@@ -823,7 +823,8 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
+		"reset":        true,
+		"skip_lil_arm": s.skipLilArm,
 	})
 	if err != nil {
 		return map[string]interface{}{
@@ -945,7 +946,8 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
+		"reset":        true,
+		"skip_lil_arm": s.skipLilArm,
 	})
 	if err != nil {
 		return map[string]interface{}{
@@ -1107,7 +1109,8 @@ func (s *buildCoordinator) resetAll(ctx context.Context) error {
 		return fmt.Errorf("failed to reset grabber controls: %w", err)
 	}
 	_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
+		"reset":        true,
+		"skip_lil_arm": s.skipLilArm,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reset bowl controls: %w", err)

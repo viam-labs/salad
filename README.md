@@ -89,10 +89,10 @@ deeper probe begins.
     // faster planning. Set to 0 to disable decimation. Default: 5000.
     "mesh-target-triangles" : 5000,
 
-    // optional - if true, skip the lil-arm grab_bowl/grab_lid steps during
-    // build_salad and go straight to adding ingredients. Useful when the
-    // lil-arm is unreliable but you still want it configured in
-    // bowl-controls. Default: false.
+    // optional - if true, skip ALL lil-arm motion during build_salad:
+    // grab_bowl/grab_lid are skipped, and bowl-controls.reset will not
+    // send the lil-arm home. Useful when the lil-arm is unreliable but
+    // you still want it configured in bowl-controls. Default: false.
     "skip-lil-arm" : false,
 
     // optional - mm to descend deeper into the bin on each empty-handed
@@ -300,11 +300,20 @@ Uses the lil-arm to grab a bowl from its stack and move it to the center drop po
 }
 ```
 
-#### reset
-Sends the right arm home. If `lil-arm-gripper` is configured, also sends the lil-arm home.
+#### lil_arm_home
+Sends the lil-arm to its home position. Requires `lil-arm-home` to be configured.
 ```
 {
-    "reset" : true
+    "lil_arm_home" : true
+}
+```
+
+#### reset
+Sends the right arm home. If `lil-arm-gripper` is configured, also sends the lil-arm home unless `skip_lil_arm` is true.
+```
+{
+    "reset" : true,
+    "skip_lil_arm" : false
 }
 ```
 
