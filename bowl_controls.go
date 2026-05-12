@@ -542,11 +542,14 @@ func extractTarget(cmd map[string]interface{}, op string) (float64, error) {
 	if !ok {
 		return 0, fmt.Errorf("%s requires 'target' field (number, e.g. {%q: true, \"target\": 50})", op, op)
 	}
-	t, ok := raw.(float64)
-	if !ok {
+	switch v := raw.(type) {
+	case float64:
+		return v, nil
+	case int:
+		return float64(v), nil
+	default:
 		return 0, fmt.Errorf("%s 'target' must be a number, got %T", op, raw)
 	}
-	return t, nil
 }
 
 func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string, joint interface{}, axis interface{}, target float64) (map[string]interface{}, error) {
