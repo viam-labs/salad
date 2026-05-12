@@ -13,9 +13,12 @@ import (
 // a PLY mesh to meshPath. The context is wired into the subprocess so cancellation
 // (e.g. from a stop command) terminates the Python process.
 //
+// targetTriangles, if > 0, decimates the Poisson output to roughly that
+// triangle count using quadric error metrics. Pass 0 to disable.
+//
 // Python dependencies are installed on first use into meshifier/deps/ on the target
 // machine, so they are always compiled for the local Python version.
-func ExecMeshifier(ctx context.Context, pcdPath, meshPath string, kdTreeKNN, orientNN, lodMultiplier int) error {
+func ExecMeshifier(ctx context.Context, pcdPath, meshPath string, kdTreeKNN, orientNN, lodMultiplier, targetTriangles int) error {
 	scriptPath, err := meshifierScriptPath()
 	if err != nil {
 		return err
@@ -35,6 +38,7 @@ func ExecMeshifier(ctx context.Context, pcdPath, meshPath string, kdTreeKNN, ori
 		strconv.Itoa(kdTreeKNN),
 		strconv.Itoa(orientNN),
 		strconv.Itoa(lodMultiplier),
+		strconv.Itoa(targetTriangles),
 	)
 	cmd.Env = append(os.Environ(), "PYTHONPATH="+depsDir)
 	cmd.Stdout = os.Stdout

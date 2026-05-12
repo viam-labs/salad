@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
 
+	"salad/filter"
 	"salad/segmentation"
 	saladutils "salad/utils"
 )
@@ -32,11 +34,56 @@ var categoryOrder = map[string]int{
 	"dressing": 3,
 }
 
+const defaultMeshTargetTriangles = 5000
+
 type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
 	Category        string  `json:"category"`
 	ZoneID          *int    `json:"zone-id"`
+}
+
+type BuildCoordinatorFilterConfig struct {
+	VoxelMM            *float64 `json:"voxel-mm"`
+	NeighborRadius     *int     `json:"neighbor-radius"`
+	MinNeighbors       *int     `json:"min-neighbors"`
+	MinComponentVoxels *int     `json:"min-component-voxels"`
+}
+
+func (c *BuildCoordinatorFilterConfig) Validate(path string) error {
+	if c.VoxelMM != nil && *c.VoxelMM <= 0 {
+		return fmt.Errorf("%s.voxel-mm must be > 0, got %v", path, *c.VoxelMM)
+	}
+	if c.NeighborRadius != nil && *c.NeighborRadius < 1 {
+		return fmt.Errorf("%s.neighbor-radius must be >= 1, got %d", path, *c.NeighborRadius)
+	}
+	if c.MinNeighbors != nil && *c.MinNeighbors < 0 {
+		return fmt.Errorf("%s.min-neighbors must be >= 0, got %d", path, *c.MinNeighbors)
+	}
+	if c.MinComponentVoxels != nil && *c.MinComponentVoxels < 0 {
+		return fmt.Errorf("%s.min-component-voxels must be >= 0, got %d", path, *c.MinComponentVoxels)
+	}
+	return nil
+}
+
+func (c *BuildCoordinatorFilterConfig) toOptions() filter.Options {
+	opts := filter.DefaultOptions()
+	if c == nil {
+		return opts
+	}
+	if c.VoxelMM != nil {
+		opts.VoxelMM = *c.VoxelMM
+	}
+	if c.NeighborRadius != nil {
+		opts.NeighborRadius = *c.NeighborRadius
+	}
+	if c.MinNeighbors != nil {
+		opts.MinNeighbors = *c.MinNeighbors
+	}
+	if c.MinComponentVoxels != nil {
+		opts.MinComponentVoxels = *c.MinComponentVoxels
+	}
+	return opts
 }
 
 type BuildCoordinatorSegmentationConfig struct {
@@ -71,17 +118,22 @@ func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
 }
 
 type BuildCoordinatorConfig struct {
-	GrabberControls   string                              `json:"grabber-controls"`
-	BowlControls      string                              `json:"bowl-controls"`
-	ScaleSensor       string                              `json:"scale-sensor"`
-	Ingredients       []BuildCoordinatorIngredientConfig  `json:"ingredients"`
-	DressingControls  string                              `json:"dressing-controls"`
-	ChefsKissControls string                              `json:"chefs-kiss-controls"`
-	TextToSpeech      string                              `json:"text-to-speech"`
-	ImagingCamera     string                              `json:"imaging-camera"`
-	CaptureDir        string                              `json:"capture-dir"`
-	Simulate          bool                                `json:"simulate"`
-	Segmentation      *BuildCoordinatorSegmentationConfig `json:"segmentation"`
+	GrabberControls     string                              `json:"grabber-controls"`
+	BowlControls        string                              `json:"bowl-controls"`
+	ScaleSensor         string                              `json:"scale-sensor"`
+	Ingredients         []BuildCoordinatorIngredientConfig  `json:"ingredients"`
+	DressingControls    string                              `json:"dressing-controls"`
+	ChefsKissControls   string                              `json:"chefs-kiss-controls"`
+	TextToSpeech        string                              `json:"text-to-speech"`
+	ImagingCamera       string                              `json:"imaging-camera"`
+	CaptureDir          string                              `json:"capture-dir"`
+	Simulate            bool                                `json:"simulate"`
+	SkipLilArm          bool                                `json:"skip-lil-arm"`
+	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
+	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
+	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
+	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
+	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
 }
 
 func init() {
@@ -150,10 +202,20 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		}
 	}
 
+	if cfg.Filter != nil {
+		if err := cfg.Filter.Validate(path + ".filter"); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	if cfg.Segmentation != nil {
 		if err := cfg.Segmentation.Validate(path + ".segmentation"); err != nil {
 			return nil, nil, err
 		}
+	}
+
+	if cfg.MeshTargetTriangles != nil && *cfg.MeshTargetTriangles < 0 {
+		return nil, nil, fmt.Errorf("%s.mesh-target-triangles must be >= 0, got %d", path, *cfg.MeshTargetTriangles)
 	}
 
 	return deps, nil, nil
@@ -189,6 +251,7 @@ type buildCoordinator struct {
 	customerName string
 	errorMsg     string
 	simulate     bool
+	skipLilArm   bool
 	opCancelFunc func()
 	opDone       chan struct{}
 
@@ -220,6 +283,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredientZoneIDs:    make(map[string]int),
 		status:               "idle",
 		simulate:             conf.Simulate,
+		skipLilArm:           conf.SkipLilArm,
 		assetsDir:            "/home/viam/assets",
 	}
 
@@ -553,6 +617,7 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	// Write the PCD to the stable path first so meshification uses a
 	// consistent location. Also write to the capture dir so it syncs to cloud.
 	stablePCDPath := s.assetsDir + "/merged.pcd"
+	stableFilteredPCDPath := s.assetsDir + "/filtered_merged.pcd"
 	stableZonesPath := s.assetsDir + "/zones.json"
 	if err := os.MkdirAll(s.assetsDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create assets directory %q: %w", s.assetsDir, err)
@@ -568,9 +633,31 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	}
 	s.logger.Infof("Wrote %s", pcdPath)
 
-	s.logger.Infof("Running meshifier on %s", stablePCDPath)
+	filterOpts := s.cfg.Filter.toOptions()
+	s.logger.Infof("Filtering merged PCD (voxel=%vmm, neighbor-radius=%d, min-neighbors=%d, min-component-voxels=%d)",
+		filterOpts.VoxelMM, filterOpts.NeighborRadius, filterOpts.MinNeighbors, filterOpts.MinComponentVoxels)
+	filteredPC, _, err := filter.Apply(pc, filterOpts, s.logger)
+	if err != nil {
+		return fmt.Errorf("filter failed: %w", err)
+	}
+	if err := saladutils.WritePCD(filteredPC, stableFilteredPCDPath); err != nil {
+		return fmt.Errorf("failed to write stable filtered PCD: %w", err)
+	}
+	s.logger.Infof("Wrote %s (%d points)", stableFilteredPCDPath, filteredPC.Size())
+
+	filteredPCDPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-filtered.pcd", ts))
+	if err := saladutils.WritePCD(filteredPC, filteredPCDPath); err != nil {
+		return fmt.Errorf("failed to write filtered point cloud: %w", err)
+	}
+	s.logger.Infof("Wrote %s", filteredPCDPath)
+
+	s.logger.Infof("Running meshifier on %s", stableFilteredPCDPath)
 	meshPath := filepath.Join(s.cfg.CaptureDir, fmt.Sprintf("setup-%s-mesh.ply", ts))
-	if err := saladutils.ExecMeshifier(ctx, stablePCDPath, meshPath, 30, 50, 0); err != nil {
+	targetTriangles := defaultMeshTargetTriangles
+	if s.cfg.MeshTargetTriangles != nil {
+		targetTriangles = *s.cfg.MeshTargetTriangles
+	}
+	if err := saladutils.ExecMeshifier(ctx, stableFilteredPCDPath, meshPath, 30, 50, 0, targetTriangles); err != nil {
 		return fmt.Errorf("meshification failed: %w", err)
 	}
 	s.logger.Infof("Wrote mesh %s", meshPath)
@@ -718,8 +805,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 
 	var result map[string]interface{}
 	lilArmControls, _ := s.bowlControls.(*bowlControls)
+	lilArmEnabled := !s.skipLilArm && lilArmControls != nil && lilArmControls.lilArmGripper != nil
+	if s.skipLilArm {
+		s.logger.Infof("skip-lil-arm is set; skipping lil-arm grab_bowl/grab_lid steps")
+	}
 
-	if lilArmControls != nil && lilArmControls.lilArmGripper != nil {
+	if lilArmEnabled {
 		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
 			"target":    80,
@@ -733,7 +824,8 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
+		"reset":        true,
+		"skip_lil_arm": s.skipLilArm,
 	})
 	if err != nil {
 		return map[string]interface{}{
@@ -823,7 +915,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	if lilArmControls != nil && lilArmControls.lilArmGripper != nil {
+	if lilArmEnabled {
 		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_lid": true,
 			"target":   80,
@@ -856,7 +948,8 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
+		"reset":        true,
+		"skip_lil_arm": s.skipLilArm,
 	})
 	if err != nil {
 		return map[string]interface{}{
@@ -880,7 +973,36 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}, nil
 }
 
-const zeroChangeTolerance = 0.5 // grams
+const (
+	zeroChangeTolerance     = 0.5 // grams
+	defaultDepthStepMM      = 20.0
+	defaultMaxDepthOffsetMM = 80.0
+)
+
+func (s *buildCoordinator) depthProbeParams() (step, max float64) {
+	step = defaultDepthStepMM
+	if s.cfg.DepthStepMM != nil {
+		step = *s.cfg.DepthStepMM
+	}
+	max = defaultMaxDepthOffsetMM
+	if s.cfg.MaxDepthOffsetMM != nil {
+		max = *s.cfg.MaxDepthOffsetMM
+	}
+	if step <= 0 || max <= 0 {
+		return 0, 0
+	}
+	return step, max
+}
+
+func isMotionPlanningFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "physically unreachable") ||
+		strings.Contains(msg, "zero IK solutions") ||
+		strings.Contains(msg, "no plan found")
+}
 
 func (s *buildCoordinator) addDressing(ctx context.Context) error {
 	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
@@ -895,6 +1017,9 @@ func (s *buildCoordinator) addDressing(ctx context.Context) error {
 func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targetGrams float64) error {
 	var totalAdded float64
 	var zeroChangeStreak int
+	var depthOffset float64
+
+	depthStep, maxDepth := s.depthProbeParams()
 
 	for totalAdded < targetGrams {
 		if ctx.Err() != nil {
@@ -905,11 +1030,23 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			return fmt.Errorf("failed to read scale before grab: %w", err)
 		}
 
-		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg)", name, totalAdded, targetGrams)
+		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, depth-offset %.1fmm)",
+			name, totalAdded, targetGrams, depthOffset)
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
-			"get_from_bin": s.ingredientZoneIDs[name],
+			"get_from_bin":    s.ingredientZoneIDs[name],
+			"depth-offset-mm": depthOffset,
 		})
 		if err != nil {
+			if isMotionPlanningFailure(err) && depthOffset > 0 {
+				newOffset := depthOffset / 2
+				if newOffset < 0.5 {
+					newOffset = 0
+				}
+				s.logger.Warnf("Motion planning failed for %q at depth-offset %.1fmm; halving to %.1fmm",
+					name, depthOffset, newOffset)
+				depthOffset = newOffset
+				continue
+			}
 			return fmt.Errorf("failed to grab from bin %q: %w", name, err)
 		}
 		if success, ok := result["success"].(bool); ok && !success {
@@ -933,6 +1070,13 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 				break
 			}
 			s.logger.Warnf("No weight change detected for %q (streak: %d/3)", name, zeroChangeStreak)
+			if depthStep > 0 && zeroChangeStreak >= 2 && depthOffset < maxDepth {
+				depthOffset += depthStep
+				if depthOffset > maxDepth {
+					depthOffset = maxDepth
+				}
+				s.logger.Infof("Probing deeper for %q: depth-offset now %.1fmm", name, depthOffset)
+			}
 		} else {
 			zeroChangeStreak = 0
 		}
@@ -967,7 +1111,8 @@ func (s *buildCoordinator) resetAll(ctx context.Context) error {
 		return fmt.Errorf("failed to reset grabber controls: %w", err)
 	}
 	_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset": true,
+		"reset":        true,
+		"skip_lil_arm": s.skipLilArm,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reset bowl controls: %w", err)

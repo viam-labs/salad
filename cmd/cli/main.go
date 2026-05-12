@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"salad/filter"
 	"salad/segmentation"
 )
 
@@ -21,20 +22,25 @@ type DisplayFlags struct {
 }
 
 type FilterFlags struct {
-	InputPath    string
-	OutputPath   string
-	VoxelMM      float64
-	MinNeighbors int
+	InputPath          string
+	OutputPath         string
+	VoxelMM            float64
+	NeighborRadius     int
+	MinNeighbors       int
+	MinComponentVoxels int
+	Viz                bool
+	VizURL             string
 }
 
 type MeshifyFlags struct {
-	InputPath     string
-	OutputPath    string
-	KDTreeKNN     int
-	OrientNN      int
-	LODMultiplier int
-	Viz           bool
-	VizURL        string
+	InputPath       string
+	OutputPath      string
+	KDTreeKNN       int
+	OrientNN        int
+	LODMultiplier   int
+	TargetTriangles int
+	Viz             bool
+	VizURL          string
 }
 
 type CropFlags struct {
@@ -110,17 +116,22 @@ func init() {
 	displayCmd.Flags().BoolVar(&displayFlags.ShowMesh, "mesh", false, "display only meshes (when combined with --pcd, shows both)")
 
 	filterCmd.Flags().StringVar(&filterFlags.InputPath, "input", "", "input PCD file (required)")
-	filterCmd.Flags().StringVar(&filterFlags.OutputPath, "output", "", "output PCD file (required)")
-	filterCmd.Flags().Float64Var(&filterFlags.VoxelMM, "voxel", 10.0, "voxel size in mm for neighbor check")
-	filterCmd.Flags().IntVar(&filterFlags.MinNeighbors, "min-neighbors", 3, "minimum occupied neighbor voxels to keep a point (1-26)")
+	filterCmd.Flags().StringVar(&filterFlags.OutputPath, "output", "", "output PCD file (default: output/<timestamp>/filtered.pcd)")
+	filterDefaults := filter.DefaultOptions()
+	filterCmd.Flags().Float64Var(&filterFlags.VoxelMM, "voxel", filterDefaults.VoxelMM, "voxel size in mm for neighbor check")
+	filterCmd.Flags().IntVar(&filterFlags.NeighborRadius, "neighbor-radius", filterDefaults.NeighborRadius, "neighborhood radius in voxels; search cube is (2r+1)^3, max neighbors = (2r+1)^3 - 1")
+	filterCmd.Flags().IntVar(&filterFlags.MinNeighbors, "min-neighbors", filterDefaults.MinNeighbors, "minimum occupied neighbor voxels (within --neighbor-radius cube) to keep a point; 0 disables this pass")
+	filterCmd.Flags().IntVar(&filterFlags.MinComponentVoxels, "min-component-voxels", filterDefaults.MinComponentVoxels, "drop 26-connected voxel components smaller than this; 0 disables this pass")
+	filterCmd.Flags().BoolVar(&filterFlags.Viz, "viz", false, "display input, kept, and removed point clouds in the motion-tools visualizer")
+	filterCmd.Flags().StringVar(&filterFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	_ = filterCmd.MarkFlagRequired("input")
-	_ = filterCmd.MarkFlagRequired("output")
 
 	meshifyCmd.Flags().StringVar(&meshifyFlags.InputPath, "input", "", "input PCD file (required)")
 	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (default: output/<timestamp>/mesh.ply)")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.KDTreeKNN, "kd-tree-knn", 30, "KNN for normal estimation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.OrientNN, "orient-nn", 50, "KNN for normal orientation")
 	meshifyCmd.Flags().IntVar(&meshifyFlags.LODMultiplier, "lod-multiplier", 0, "Poisson reconstruction depth (8-11, higher=finer; 0=default 9)")
+	meshifyCmd.Flags().IntVar(&meshifyFlags.TargetTriangles, "target-triangles", 0, "decimate output to this many triangles via quadric error metrics; 0 disables")
 	meshifyCmd.Flags().BoolVar(&meshifyFlags.Viz, "viz", false, "display the output mesh in the motion-tools visualizer")
 	meshifyCmd.Flags().StringVar(&meshifyFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	_ = meshifyCmd.MarkFlagRequired("input")

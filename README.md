@@ -10,6 +10,12 @@ For each ingredient, reads the scale before and after each grab to verify weight
 If 3 consecutive grabs produce no weight change (< 0.5g), errors out (possible empty bin).
 Once all ingredients are added, calls deliver_bowl.
 
+When a grab adds no weight, the next attempt probes deeper into the bin by `depth-step-mm`
+(capped at `max-depth-offset-mm`) to reach lower food levels. If motion planning rejects
+a depth as unreachable, the offset is halved and retried — a binary search for the
+deepest reachable Z. The same grab is retried once at the original depth before the
+deeper probe begins.
+
 ### config
 ```
 {
@@ -56,8 +62,64 @@ Once all ingredients are added, calls deliver_bowl.
             "grams-per-serving" : 20.0,
             "category" : "dressing"
         }
-    ]
+    ],
+
+    // optional - voxel-based filter applied to the merged PCD before
+    // meshification, to remove "ghost" points (depth-camera artifacts that
+    // float inside otherwise-empty bins). Two passes run in sequence:
+    //   1. neighbor-count: drop a voxel if its (2r+1)^3 cube has fewer than
+    //      "min-neighbors" occupied voxels — strips thin chains/wisps of
+    //      noise that bridge unrelated clusters.
+    //   2. connected-components: build 26-connected components over the
+    //      survivors and drop any component smaller than
+    //      "min-component-voxels" — kills locally dense but globally
+    //      isolated ghost blobs.
+    // Set min-neighbors or min-component-voxels to 0 to disable a pass.
+    // Defaults shown below were tuned against typical fridge captures.
+    "filter" : {
+        "voxel-mm"             : 10,
+        "neighbor-radius"      : 1,
+        "min-neighbors"        : 8,
+        "min-component-voxels" : 1000
+    },
+
+    // optional - decimate the Poisson-reconstructed mesh down to roughly
+    // this many triangles using quadric error metrics. The mesh is loaded
+    // as a world obstacle for every motion plan, so a smaller mesh means
+    // faster planning. Set to 0 to disable decimation. Default: 5000.
+    "mesh-target-triangles" : 5000,
+
+    // optional - if true, skip ALL lil-arm motion during build_salad:
+    // grab_bowl/grab_lid are skipped, and bowl-controls.reset will not
+    // send the lil-arm home. Useful when the lil-arm is unreliable but
+    // you still want it configured in bowl-controls. Default: false.
+    "skip-lil-arm" : false,
+
+    // optional - mm to descend deeper into the bin on each empty-handed
+    // grab retry. Set <= 0 to disable depth probing. Default: 20.
+    "depth-step-mm" : 20,
+
+    // optional - cap on how many mm below the configured grab Z the
+    // depth probe is allowed to reach. Set <= 0 to disable depth
+    // probing. Default: 80.
+    "max-depth-offset-mm" : 80
 }
+```
+
+#### setup_station
+
+Captures a point cloud from `imaging-camera`, filters it, runs meshification, and segments the mesh into bins. Writes the following stable assets to `/home/viam/assets/`:
+
+- `merged.pcd` — raw merged point cloud captured from the camera.
+- `filtered_merged.pcd` — point cloud after the filter pass; this is what gets meshed.
+- `mesh.ply` — surface mesh (Poisson reconstruction).
+- `zones.json` — per-bin segmentation of the mesh.
+
+Tune the filter against any captured PCD via the CLI before changing config:
+
+```
+./bin/salad-cli filter --input <path>.pcd --viz \
+  --voxel 10 --neighbor-radius 1 --min-neighbors 8 --min-component-voxels 1000
 ```
 
 ### DoCommand
@@ -123,10 +185,22 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
 ### DoCommand
 
 #### get_from_bin
-Grabs from the named bin and drops into the bowl.
+Grabs from the bin with the given zone ID and drops into the bowl.
+Optionally descend `depth-offset-mm` below the configured grab Z to
+reach lower food levels.
 ```
 {
-    "get_from_bin" : "lettuce"
+    "get_from_bin" : 2,
+    "depth-offset-mm" : 0  // optional, default 0
+}
+```
+Response includes the depth offset that was used:
+```
+{
+    "success" : true,
+    "bin" : "croutons",
+    "depth-offset-mm" : 0,
+    "message" : "..."
 }
 ```
 
@@ -226,11 +300,20 @@ Uses the lil-arm to grab a bowl from its stack and move it to the center drop po
 }
 ```
 
-#### reset
-Sends the right arm home. If `lil-arm-gripper` is configured, also sends the lil-arm home.
+#### lil_arm_home
+Sends the lil-arm to its home position. Requires `lil-arm-home` to be configured.
 ```
 {
-    "reset" : true
+    "lil_arm_home" : true
+}
+```
+
+#### reset
+Sends the right arm home. If `lil-arm-gripper` is configured, also sends the lil-arm home unless `skip_lil_arm` is true.
+```
+{
+    "reset" : true,
+    "skip_lil_arm" : false
 }
 ```
 
