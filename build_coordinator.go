@@ -914,19 +914,19 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 			}
 		}
 	}
-
-	if lilArmEnabled {
-		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-			"grab_lid": true,
-			"target":   80,
-		})
-		if err != nil {
-			return map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("Failed to grab lid: %v", err),
-			}, nil
-		}
-	}
+	// commenting out for demo, not reliable yet
+	// if lilArmEnabled {
+	// 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+	// 		"grab_lid": true,
+	// 		"target":   80,
+	// 	})
+	// 	if err != nil {
+	// 		return map[string]interface{}{
+	// 			"success": false,
+	// 			"message": fmt.Sprintf("Failed to grab lid: %v", err),
+	// 		}, nil
+	// 	}
+	// }
 
 	s.updateStatus("delivering salad", completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added, delivering bowl")
