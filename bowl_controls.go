@@ -42,6 +42,7 @@ type BowlControlsConfig struct {
 	LilArmGripper      string             `json:"lil-arm-gripper"`
 	LilArmHome         string             `json:"lil-arm-home"`
 	LilArmPoses        []LilArmPoseConfig `json:"lil-arm-poses"`
+	XArmForceMover     string             `json:"xarm-force-mover,omitempty"`
 }
 
 func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -80,6 +81,10 @@ func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error)
 	}
 
 	var optionalDeps []string
+
+	if cfg.XArmForceMover != "" {
+		optionalDeps = append(optionalDeps, cfg.XArmForceMover)
+	}
 
 	if cfg.LilArmGripper != "" {
 		if cfg.LilArmHome == "" {
@@ -139,6 +144,8 @@ type bowlControls struct {
 	lilArmGripper gripper.Gripper
 	lilArmHome    sw.Switch
 	lilArmPoses   map[string]*lilArmPoseSwitches
+
+	xarmForceMover resource.Resource
 }
 
 func newBowlControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -204,6 +211,14 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 	}
 	s.littleArm = littleArmComponent
 
+	if conf.XArmForceMover != "" {
+		mover, err := genericservice.FromProvider(deps, conf.XArmForceMover)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get xarm-force-mover '%s': %w", conf.XArmForceMover, err)
+		}
+		s.xarmForceMover = mover
+	}
+
 	if conf.LilArmGripper != "" {
 		lilArmGripperComponent, err := gripper.FromProvider(deps, conf.LilArmGripper)
 		if err != nil {
@@ -263,10 +278,10 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		return s.doPrepareBowl(ctx)
 	}
 	if _, ok := cmd["grab_lid"]; ok {
-		return s.doGrabLid(ctx)
+		return s.doGrabLid(ctx, cmd)
 	}
 	if _, ok := cmd["grab_bowl"]; ok {
-		return s.doGrabBowl(ctx)
+		return s.doGrabBowl(ctx, cmd)
 	}
 	if _, ok := cmd["lil_arm_home"]; ok {
 		return s.doLilArmHome(ctx)
@@ -283,7 +298,39 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		}
 		return map[string]interface{}{"success": true}, nil
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'lil_arm_home', 'move_down_to_bowl', 'move_down_to_lid', or 'reset' field")
+	if _, ok := cmd["force_move"]; ok {
+		return s.doForceMove(ctx, cmd)
+	}
+	if _, ok := cmd["use_tool"]; ok {
+		return s.doUseTool(ctx, cmd)
+	}
+	if _, ok := cmd["grab_and_use_tool"]; ok {
+		return s.doGrabAndUseTool(ctx, cmd)
+	}
+	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', 'force_move', 'use_tool', 'grab_and_use_tool', or 'reset' field")
+}
+
+// doForceMove forwards a call to the configured xarm-force-mover service.
+// Expected cmd fields: "joint" (number), "axis" (string), "target" (number).
+func (s *bowlControls) doForceMove(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	if s.xarmForceMover == nil {
+		return nil, fmt.Errorf("xarm-force-mover is not configured")
+	}
+	for _, k := range []string{"joint", "axis", "target"} {
+		if _, ok := cmd[k]; !ok {
+			return nil, fmt.Errorf("force_move requires field %q", k)
+		}
+	}
+	args := map[string]interface{}{
+		"joint":  cmd["joint"],
+		"axis":   cmd["axis"],
+		"target": cmd["target"],
+	}
+	resp, err := s.xarmForceMover.DoCommand(ctx, args)
+	if err != nil {
+		return nil, fmt.Errorf("xarm-force-mover failed: %w", err)
+	}
+	return resp, nil
 }
 
 func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
@@ -456,7 +503,7 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}, nil
 }
 
-func (s *bowlControls) doGrabLid(ctx context.Context) (map[string]interface{}, error) {
+func (s *bowlControls) doGrabLid(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	s.logger.Infof("Executing grab_lid")
 	if s.lilArmGripper == nil {
 		return nil, fmt.Errorf("lil-arm is not configured")
@@ -465,10 +512,14 @@ func (s *bowlControls) doGrabLid(ctx context.Context) (map[string]interface{}, e
 	if !ok {
 		return nil, fmt.Errorf("lil-arm pose 'lid' not found in configuration")
 	}
-	return s.doLilArmGrab(ctx, pose, "lid")
+	target, err := extractTarget(cmd, "grab_lid")
+	if err != nil {
+		return nil, err
+	}
+	return s.doLilArmGrab(ctx, pose, "lid", float64(1), "z", target)
 }
 
-func (s *bowlControls) doGrabBowl(ctx context.Context) (map[string]interface{}, error) {
+func (s *bowlControls) doGrabBowl(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	s.logger.Infof("Executing grab_bowl")
 	if s.lilArmGripper == nil {
 		return nil, fmt.Errorf("lil-arm is not configured")
@@ -477,10 +528,28 @@ func (s *bowlControls) doGrabBowl(ctx context.Context) (map[string]interface{}, 
 	if !ok {
 		return nil, fmt.Errorf("lil-arm pose 'bowl' not found in configuration")
 	}
-	return s.doLilArmGrab(ctx, pose, "bowl")
+	target, err := extractTarget(cmd, "grab_bowl")
+	if err != nil {
+		return nil, err
+	}
+	return s.doLilArmGrab(ctx, pose, "bowl", float64(1), "z", target)
 }
 
-func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string) (map[string]interface{}, error) {
+// extractTarget reads the "target" field from cmd, required for grab_lid/grab_bowl
+// when using the xarm-force-mover for the descent.
+func extractTarget(cmd map[string]interface{}, op string) (float64, error) {
+	raw, ok := cmd["target"]
+	if !ok {
+		return 0, fmt.Errorf("%s requires 'target' field (number, e.g. {%q: true, \"target\": 50})", op, op)
+	}
+	t, ok := raw.(float64)
+	if !ok {
+		return 0, fmt.Errorf("%s 'target' must be a number, got %T", op, raw)
+	}
+	return t, nil
+}
+
+func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string, joint interface{}, axis interface{}, target float64) (map[string]interface{}, error) {
 	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
 	}
@@ -491,10 +560,20 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	}
 	s.logger.Debugf("Set above-%s switch to position 2", name)
 
-	if err := s.moveDownTo(ctx, name); err != nil {
-		return nil, fmt.Errorf("failed to move down to %s: %w", name, err)
+	// if err := s.moveDownTo(ctx, name); err != nil {
+	// 	return nil, fmt.Errorf("failed to move down to %s: %w", name, err)
+	// }
+	if s.xarmForceMover == nil {
+		return nil, fmt.Errorf("xarm-force-mover is not configured")
 	}
-	s.logger.Debugf("Moved down to %s", name)
+	if _, err := s.xarmForceMover.DoCommand(ctx, map[string]interface{}{
+		"joint":  joint,
+		"axis":   axis,
+		"target": target,
+	}); err != nil {
+		return nil, fmt.Errorf("force descent to %s failed: %w", name, err)
+	}
+	s.logger.Debugf("Force-descended to %s (target=%f)", name, target)
 
 	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to grab %s: %w", name, err)
@@ -531,6 +610,158 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	return map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Successfully grabbed %s", name),
+	}, nil
+}
+
+func (s *bowlControls) doUseTool(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	s.logger.Infof("Executing use_tool")
+	if s.lilArmGripper == nil {
+		return nil, fmt.Errorf("lil-arm is not configured")
+	}
+	toolPose, ok := s.lilArmPoses["tool"]
+	if !ok {
+		return nil, fmt.Errorf("lil-arm pose 'tool' not found in configuration")
+	}
+
+	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
+	}
+
+	// Move above the tool, then to the tool.
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch: %w", err)
+	}
+	if err := toolPose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set at-tool switch: %w", err)
+	}
+
+	// Pick up the tool.
+	if _, err := s.lilArmGripper.Grab(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to grab tool: %w", err)
+	}
+
+	// Move above the tool, then above the scale.
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch (return): %w", err)
+	}
+	if err := toolPose.centerAbovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-above (above-scale) switch: %w", err)
+	}
+
+	// Apply force to secure the lid.
+	if _, err := s.doForceMove(ctx, cmd); err != nil {
+		return nil, fmt.Errorf("force_move failed: %w", err)
+	}
+
+	// Move back to the scale.
+	if err := toolPose.centerAtPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-at (on-scale) switch: %w", err)
+	}
+
+	// Move back to where we picked up the tool.
+	if err := toolPose.centerAbovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set center-above (above-scale) switch (return): %w", err)
+	}
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch (return to tool): %w", err)
+	}
+	if err := toolPose.atPose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set at-tool switch (return to tool): %w", err)
+	}
+
+	// Drop the tool.
+	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
+	}
+
+	// Return to home.
+	if err := toolPose.abovePose.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set above-tool switch (after drop): %w", err)
+	}
+	if s.lilArmHome != nil {
+		if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
+			return nil, fmt.Errorf("failed to set lil-arm home switch: %w", err)
+		}
+	}
+
+	s.logger.Infof("Successfully completed use_tool")
+	return map[string]interface{}{
+		"success": true,
+		"message": "Successfully used tool",
+	}, nil
+}
+
+// doGrabAndUseTool runs grab_bowl, grab_lid, and use_tool back-to-back, sharing
+// a single joint and axis across all three force-driven descents. Expected cmd
+// fields: "joint" (number), "axis" (string), "targets" (array of 3 numbers in
+// the order [bowl, lid, tool]).
+func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	s.logger.Infof("Executing grab_and_use_tool")
+
+	joint, ok := cmd["joint"]
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool requires 'joint' field")
+	}
+	axis, ok := cmd["axis"]
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool requires 'axis' field")
+	}
+	targetsRaw, ok := cmd["targets"]
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool requires 'targets' field (array of 3 numbers: [bowl, lid, tool])")
+	}
+	targets, ok := targetsRaw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool 'targets' must be an array, got %T", targetsRaw)
+	}
+	if len(targets) != 3 {
+		return nil, fmt.Errorf("grab_and_use_tool 'targets' must have exactly 3 entries, got %d", len(targets))
+	}
+	bowlTarget, ok := targets[0].(float64)
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool targets[0] (bowl) must be a number, got %T", targets[0])
+	}
+	lidTarget, ok := targets[1].(float64)
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool targets[1] (lid) must be a number, got %T", targets[1])
+	}
+	toolTarget, ok := targets[2].(float64)
+	if !ok {
+		return nil, fmt.Errorf("grab_and_use_tool targets[2] (tool) must be a number, got %T", targets[2])
+	}
+
+	if s.lilArmGripper == nil {
+		return nil, fmt.Errorf("lil-arm is not configured")
+	}
+
+	bowlPose, ok := s.lilArmPoses["bowl"]
+	if !ok {
+		return nil, fmt.Errorf("lil-arm pose 'bowl' not found in configuration")
+	}
+	if _, err := s.doLilArmGrab(ctx, bowlPose, "bowl", joint, axis, bowlTarget); err != nil {
+		return nil, fmt.Errorf("grab_bowl failed: %w", err)
+	}
+
+	lidPose, ok := s.lilArmPoses["lid"]
+	if !ok {
+		return nil, fmt.Errorf("lil-arm pose 'lid' not found in configuration")
+	}
+	if _, err := s.doLilArmGrab(ctx, lidPose, "lid", joint, axis, lidTarget); err != nil {
+		return nil, fmt.Errorf("grab_lid failed: %w", err)
+	}
+
+	if _, err := s.doUseTool(ctx, map[string]interface{}{
+		"joint":  joint,
+		"axis":   axis,
+		"target": toolTarget,
+	}); err != nil {
+		return nil, fmt.Errorf("use_tool failed: %w", err)
+	}
+
+	s.logger.Infof("Successfully completed grab_and_use_tool")
+	return map[string]interface{}{
+		"success": true,
+		"message": "Successfully grabbed bowl, grabbed lid, and used tool",
 	}, nil
 }
 

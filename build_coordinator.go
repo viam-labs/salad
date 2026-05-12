@@ -813,6 +813,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	if lilArmEnabled {
 		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
+			"target":    60,
 		})
 		if err != nil {
 			return map[string]interface{}{
@@ -917,6 +918,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	if lilArmEnabled {
 		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_lid": true,
+			"target":   80,
 		})
 		if err != nil {
 			return map[string]interface{}{
