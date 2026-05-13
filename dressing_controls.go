@@ -21,15 +21,20 @@ func init() {
 	)
 }
 
+type DressingOptionConfig struct {
+	Grab   string `json:"grab"`
+	Return string `json:"return"`
+}
+
 type DressingControlsConfig struct {
-	Gripper          string  `json:"gripper"`
-	PrepareDressing  string  `json:"prepare-dressing"`
-	GrabDressing     string  `json:"grab-dressing"`
-	PourDressing     string  `json:"pour-dressing"`
-	PourDressing2    string  `json:"pour-dressing2"`
-	PostPourDressing string  `json:"post-pour-dressing"`
-	Home             string  `json:"home"`
-	ShakeArmService  *string `json:"shake-arm-service,omitempty"`
+	Gripper          string                          `json:"gripper"`
+	PrepareDressing  string                          `json:"prepare-dressing"`
+	PourDressing     string                          `json:"pour-dressing"`
+	PourDressing2    string                          `json:"pour-dressing2"`
+	PostPourDressing string                          `json:"post-pour-dressing"`
+	Home             string                          `json:"home"`
+	ShakeArmService  *string                         `json:"shake-arm-service,omitempty"`
+	Dressings        map[string]DressingOptionConfig `json:"dressings"`
 }
 
 func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -39,10 +44,6 @@ func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, er
 
 	if cfg.PrepareDressing == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "prepare-dressing")
-	}
-
-	if cfg.GrabDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "grab-dressing")
 	}
 
 	if cfg.PourDressing == "" {
@@ -60,15 +61,35 @@ func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, er
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "home")
 	}
 
+	if len(cfg.Dressings) == 0 {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dressings")
+	}
+
 	requiredDeps := []string{}
 
 	requiredDeps = append(requiredDeps, cfg.Gripper)
-	requiredDeps = append(requiredDeps, cfg.PrepareDressing, cfg.GrabDressing, cfg.PourDressing, cfg.PourDressing2, cfg.Home, cfg.PostPourDressing)
+	requiredDeps = append(requiredDeps, cfg.PrepareDressing, cfg.PourDressing, cfg.PourDressing2, cfg.Home, cfg.PostPourDressing)
+
+	for name, opt := range cfg.Dressings {
+		if opt.Grab == "" {
+			return nil, nil, resource.NewConfigValidationFieldRequiredError(path, fmt.Sprintf("dressings.%s.grab", name))
+		}
+		if opt.Return == "" {
+			return nil, nil, resource.NewConfigValidationFieldRequiredError(path, fmt.Sprintf("dressings.%s.return", name))
+		}
+		requiredDeps = append(requiredDeps, opt.Grab, opt.Return)
+	}
+
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
 		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}
 
 	return requiredDeps, []string{}, nil
+}
+
+type dressingOption struct {
+	grabSwitch   sw.Switch
+	returnSwitch sw.Switch
 }
 
 type dressingControls struct {
@@ -83,13 +104,13 @@ type dressingControls struct {
 	cancelFunc func()
 
 	gripper          gripper.Gripper
-	grabDressing     sw.Switch
 	prepareDressing  sw.Switch
 	dressingPour     sw.Switch
 	dressingPour2    sw.Switch
 	postPourDressing sw.Switch
 	home             sw.Switch
 	shakeArmService  genericservice.Service
+	dressings        map[string]dressingOption
 }
 
 func newDressingControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -124,12 +145,6 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.prepareDressing = prepareDressingSwitch
 
-	grabDressingSwitch, err := sw.FromProvider(deps, conf.GrabDressing)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get grab-dressing switch '%s': %w", conf.GrabDressing, err)
-	}
-	s.grabDressing = grabDressingSwitch
-
 	pourDressingSwitch, err := sw.FromProvider(deps, conf.PourDressing)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pour-dressing switch '%s': %w", conf.PourDressing, err)
@@ -162,7 +177,20 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 		s.shakeArmService = shakeArmService
 	}
 
-	s.logger.Infof("Bowl controls initialized")
+	s.dressings = make(map[string]dressingOption, len(conf.Dressings))
+	for name, optCfg := range conf.Dressings {
+		grabSwitch, err := sw.FromProvider(deps, optCfg.Grab)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get grab switch '%s' for dressing %q: %w", optCfg.Grab, name, err)
+		}
+		returnSwitch, err := sw.FromProvider(deps, optCfg.Return)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get return switch '%s' for dressing %q: %w", optCfg.Return, name, err)
+		}
+		s.dressings[name] = dressingOption{grabSwitch: grabSwitch, returnSwitch: returnSwitch}
+	}
+
+	s.logger.Infof("Dressing controls initialized")
 	return s, nil
 }
 
@@ -171,17 +199,26 @@ func (s *dressingControls) Name() resource.Name {
 }
 
 func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
-	if _, ok := cmd["pour_dressing"]; ok {
-		return s.doPourDressing(ctx)
+	if v, ok := cmd["pour_dressing"]; ok {
+		name, ok := v.(string)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("pour_dressing requires a dressing name (string)")
+		}
+		return s.doPourDressing(ctx, name)
 	}
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'pour_dressing' or 'reset' field")
 }
 
-func (s *dressingControls) doPourDressing(ctx context.Context) (map[string]interface{}, error) {
-	s.logger.Infof("Executing prepare_bowl")
+func (s *dressingControls) doPourDressing(ctx context.Context, name string) (map[string]interface{}, error) {
+	opt, ok := s.dressings[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown dressing %q", name)
+	}
+
+	s.logger.Infof("Executing pour_dressing for %q", name)
 
 	// open gripper
 	if err := s.gripper.Open(ctx, nil); err != nil {
@@ -189,10 +226,10 @@ func (s *dressingControls) doPourDressing(ctx context.Context) (map[string]inter
 	}
 	s.logger.Debugf("Opened gripper")
 
-	if err := s.grabDressing.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set grab-dressing switch to position 2: %w", err)
+	if err := opt.grabSwitch.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set grab switch for dressing %q to position 2: %w", name, err)
 	}
-	s.logger.Debugf("Set grab-dressing switch to position 2")
+	s.logger.Debugf("Set grab switch to position 2 for dressing %q", name)
 
 	if _, err := s.gripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open right gripper: %w", err)
@@ -256,10 +293,10 @@ func (s *dressingControls) doPourDressing(ctx context.Context) (map[string]inter
 	}
 	s.logger.Debugf("Set prepare-dressing switch to position 2")
 
-	if err := s.grabDressing.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set grab-dressing switch to position 2: %w", err)
+	if err := opt.returnSwitch.SetPosition(ctx, 2, nil); err != nil {
+		return nil, fmt.Errorf("failed to set return switch for dressing %q to position 2: %w", name, err)
 	}
-	s.logger.Debugf("Set grab-dressing switch to position 2")
+	s.logger.Debugf("Set return switch to position 2 for dressing %q", name)
 
 	if err := s.gripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open gripper: %w", err)
