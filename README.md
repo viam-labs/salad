@@ -177,10 +177,11 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
     // bin-clearance-x-offset-mm in X before the bowl delivery swing
     "enable-bin-clearance" : false,
 
-    // optional - mm to shift in X at hover height for fridge clearance.
-    // Negative values move toward the fridge opening. Default: -25.
-    // Only used when enable-bin-clearance is true.
+    // optional - mm to shift in X and/or Z from hover for fridge clearance.
+    // At least one must be non-zero when enable-bin-clearance is true.
+    // A combined X+Z move gives the planner more freedom to satisfy orientation constraints.
     "bin-clearance-x-offset-mm" : -25,
+    "bin-clearance-z-offset-mm" : 20,
 
     // optional - linear constraint tolerances for the post-grab clearance move
     "clearance-line-tolerance-mm" : 1.0,          // default 1.0
