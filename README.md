@@ -178,7 +178,11 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
     "right-grab-bowl" : "<switch>",       // switch to lower right arm to grab bowl
     "right-above-delivery" : "<switch>",  // switch to position right arm above delivery
     "right-bowl-delivery" : "<switch>",   // switch to lower right arm for delivery
-    "right-home" : "<switch>"             // switch to send right arm home
+    "right-home" : "<switch>",            // switch to send right arm home
+
+    // optional - linear constraint tolerances for bin grab descent and ascent (default 1.0)
+    "grab-line-tolerance-mm" : 1.0,          // max deviation from straight line during descent/ascent
+    "grab-orientation-tolerance-degs" : 1.0  // max orientation deviation during descent/ascent
 }
 ```
 

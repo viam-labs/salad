@@ -54,9 +54,11 @@ type GrabberControlsConfig struct {
 	LeftHome            string                                `json:"left-home"`
 	ShakeArmService     *string                               `json:"shake-arm-service,omitempty"`
 	AssetsDir           string                                `json:"assets-dir"`
-	XOffsetMM           float64                               `json:"x-offset-mm,omitempty"`
-	YOffsetMM           float64                               `json:"y-offset-mm,omitempty"`
-	SavePlans           bool                                  `json:"save-plans,omitempty"`
+	XOffsetMM                    float64 `json:"x-offset-mm,omitempty"`
+	YOffsetMM                    float64 `json:"y-offset-mm,omitempty"`
+	SavePlans                    bool    `json:"save-plans,omitempty"`
+	GrabLineToleranceMM          float64 `json:"grab-line-tolerance-mm,omitempty"`
+	GrabOrientationToleranceDegs float64 `json:"grab-orientation-tolerance-degs,omitempty"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -272,10 +274,18 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, useLinearConstraints bool) error {
 	var constraints *motionplan.Constraints
 	if useLinearConstraints {
+		lineTol := s.cfg.GrabLineToleranceMM
+		if lineTol == 0 {
+			lineTol = 1.0
+		}
+		orientTol := s.cfg.GrabOrientationToleranceDegs
+		if orientTol == 0 {
+			orientTol = 1.0
+		}
 		constraints = &motionplan.Constraints{
 			LinearConstraint: []motionplan.LinearConstraint{{
-				LineToleranceMm:          1.0,
-				OrientationToleranceDegs: 1.0,
+				LineToleranceMm:          lineTol,
+				OrientationToleranceDegs: orientTol,
 			}},
 		}
 	}
