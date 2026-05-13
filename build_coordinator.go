@@ -906,14 +906,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}, nil
 	}
 
-	// if targets contains a dressing item
-	for _, target := range targets {
-		if target.category == "dressing" {
-			if err := s.addDressing(ctx, target.name); err != nil {
-				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
-			}
-		}
-	}
 	// commenting out for demo, not reliable yet
 	// if lilArmEnabled {
 	// 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
@@ -957,6 +949,19 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
 		}, nil
 	}
+
+	// if target contains dressing item:
+	// Dressing pours over the bowl at the delivery position, after both
+	// the grabber and bowl-controls arms have gone home.
+	for _, target := range targets {
+		if target.category == "dressing" {
+			s.updateStatus(fmt.Sprintf("adding %s", target.name), 100)
+			if err := s.addDressing(ctx, target.name); err != nil {
+				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
+			}
+		}
+	}
+
 	s.updateStatus("complete", 100)
 
 	// chefs kiss
