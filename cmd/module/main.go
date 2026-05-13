@@ -3,6 +3,7 @@ package main
 import (
 	"salad"
 
+	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/module"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
@@ -19,5 +20,6 @@ func main() {
 		resource.APIModel{API: genericservice.API, Model: salad.DressingControls},
 		resource.APIModel{API: genericservice.API, Model: salad.ChefsKissControls},
 		resource.APIModel{API: genericservice.API, Model: salad.SupplyDetector},
+		resource.APIModel{API: sensor.API, Model: salad.MaintenanceSensor},
 	)
 }
