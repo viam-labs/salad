@@ -337,7 +337,11 @@ Sends the right arm home. If `lil-arm-gripper` is configured, also sends the lil
 
 ## dressing-controls
 
-Controls the gripper and switches for pouring dressing onto the salad.
+Controls the gripper and switches for pouring dressing onto the salad. Supports
+multiple dressing bottles — the prepare/pour/post-pour/home poses are shared
+across all dressings, while each dressing has its own `approach-grab` and
+`grab` poses so different bottles can be picked up from and returned to
+different slots.
 
 ### config
 ```
@@ -347,9 +351,6 @@ Controls the gripper and switches for pouring dressing onto the salad.
 
     // required - switch to prepare dressing position
     "prepare-dressing" : "<switch>",
-
-    // required - switch to grab the dressing container
-    "grab-dressing" : "<switch>",
 
     // required - switch to pour dressing
     "pour-dressing" : "<switch>",
@@ -364,17 +365,37 @@ Controls the gripper and switches for pouring dressing onto the salad.
     "home" : "<switch>",
 
     // optional - generic service to shake the arm while pouring
-    "shake-arm-service" : "<generic service>"
+    "shake-arm-service" : "<generic service>",
+
+    // required - map of dressing options, keyed by ingredient name.
+    // the name must match an ingredient with category "dressing" in the
+    // build-coordinator config. each dressing's bottle is picked up and
+    // returned to the same slot, sandwiched between approach-grab moves.
+    "dressings" : {
+        "<name>" : {
+            // required - safe approach pose above this bottle slot.
+            // visited before descending to grab and after lifting away,
+            // on both pickup and put-back.
+            "approach-grab" : "<switch>",
+
+            // required - descent pose at the bottle slot, used for both
+            // grabbing the bottle and setting it back down.
+            "grab" : "<switch>"
+        }
+    }
 }
 ```
 
 ### DoCommand
 
 #### pour_dressing
-Grabs the dressing container, pours dressing over the bowl, then returns the container and sends the arm home.
+Picks up the named dressing's bottle, pours over the bowl, returns the bottle
+to its slot, and sends the arm home. The value must be the name of an entry in
+the `dressings` map (and match an ingredient with category `dressing` in the
+build-coordinator config).
 ```
 {
-    "pour_dressing" : true
+    "pour_dressing" : "<dressing name>"
 }
 ```
 
