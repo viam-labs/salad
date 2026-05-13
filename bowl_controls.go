@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/gripper"
@@ -473,6 +474,8 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Closed right gripper")
 
+	time.Sleep(1000 * time.Millisecond)
+
 	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2 (second time): %w", err)
 	}
@@ -488,9 +491,10 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-bowl-delivery switch to position 2")
 
-	if err := s.rightGripper.Open(ctx, nil); err != nil {
+	if _, err := s.rightGripper.DoCommand(ctx, map[string]interface{}{"set_position": 400}); err != nil {
 		return nil, fmt.Errorf("failed to open right gripper: %w", err)
 	}
+
 	s.logger.Debugf("Opened right gripper")
 
 	s.logger.Debugf("Set right-home switch to position 2")
