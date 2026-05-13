@@ -280,13 +280,15 @@ func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, us
 		}
 	}
 	pt := dest.Point()
-	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f", pt.X, pt.Y, pt.Z)
+	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f (linear=%v)", pt.X, pt.Y, pt.Z, useLinearConstraints)
+	start := time.Now()
 	_, err := s.motionService.Move(ctx, motion.MoveReq{
 		ComponentName: s.arm.Name().ShortName(),
 		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
 		WorldState:    s.worldState,
 		Constraints:   constraints,
 	})
+	s.logger.Infof("motion planning took %.2fs", time.Since(start).Seconds())
 	return err
 }
 
@@ -559,25 +561,29 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Ascended from bin")
 
+	start := time.Now()
 	if err := s.highAboveBowl.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set high-above-bowl switch to position 2: %w", err)
 	}
-	s.logger.Debugf("Set high-above-bowl switch to position 2")
+	s.logger.Infof("high-above-bowl SetPosition took %.2fs", time.Since(start).Seconds())
 
+	start = time.Now()
 	if err := s.leftInBowl.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set in-bowl switch to position 2: %w", err)
 	}
-	s.logger.Debugf("Set in-bowl switch to position 2")
+	s.logger.Infof("in-bowl SetPosition took %.2fs", time.Since(start).Seconds())
 
+	start = time.Now()
 	if err := s.gripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open left gripper: %w", err)
 	}
-	s.logger.Debugf("Opened left gripper")
+	s.logger.Infof("gripper open took %.2fs", time.Since(start).Seconds())
 
+	start = time.Now()
 	if err := s.highAboveBowl.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set high-above-bowl switch to position 2: %w", err)
 	}
-	s.logger.Debugf("Set high-above-bowl switch to position 2")
+	s.logger.Infof("high-above-bowl return SetPosition took %.2fs", time.Since(start).Seconds())
 
 	if s.shakeArmService != nil {
 		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
