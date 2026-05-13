@@ -43,8 +43,9 @@ type GrabberControlsBinConfig struct {
 type GrabberControlsConfig struct {
 	Bins                []GrabberControlsBinConfig            `json:"bins"`
 	BinHoverHeightMM                  float64                               `json:"bin-hover-height-mm"`
-	BinClearanceHeightMM              float64                               `json:"bin-clearance-height-mm"`
 	BinHoverOrientation               *spatialmath.OrientationVectorDegrees `json:"bin-hover-orientation,omitempty"`
+	EnableBinClearance                bool                                  `json:"enable-bin-clearance,omitempty"`
+	BinClearanceHeightMM              float64                               `json:"bin-clearance-height-mm,omitempty"`
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
@@ -73,7 +74,7 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-height-mm")
 	}
 
-	if cfg.BinClearanceHeightMM == 0 {
+	if cfg.EnableBinClearance && cfg.BinClearanceHeightMM == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-clearance-height-mm")
 	}
 
@@ -313,6 +314,21 @@ func (s *grabberControls) grabLinearConstraints() *motionplan.Constraints {
 	}
 }
 
+func (s *grabberControls) moveToClearance(ctx context.Context, dest spatialmath.Pose) error {
+	pt := dest.Point()
+	s.logger.Infof("moving arm to clearance x=%.2f y=%.2f z=%.2f (position-only)", pt.X, pt.Y, pt.Z)
+	start := time.Now()
+	_, err := s.motionService.Move(ctx, motion.MoveReq{
+		ComponentName: s.arm.Name().ShortName(),
+		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
+		WorldState:    s.worldState,
+		Constraints:   s.clearanceLinearConstraints(),
+		Extra:         map[string]interface{}{"position_only": true},
+	})
+	s.logger.Infof("clearance motion planning took %.2fs", time.Since(start).Seconds())
+	return err
+}
+
 func (s *grabberControls) clearanceLinearConstraints() *motionplan.Constraints {
 	lineTol := s.cfg.ClearanceLineToleranceMM
 	if lineTol == 0 {
@@ -546,11 +562,6 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 
 	hover := s.applyXYOffset(bin.hoverPose)
-	hoverPt := hover.Point()
-	clearancePose := spatialmath.NewPose(
-		r3.Vector{X: hoverPt.X, Y: hoverPt.Y, Z: hoverPt.Z + s.cfg.BinClearanceHeightMM},
-		hover.Orientation(),
-	)
 	grab := s.applyXYOffset(grabPose)
 	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
 
@@ -603,12 +614,19 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Ascended from bin")
 
-	err = s.moveArm(ctx, clearancePose, s.clearanceLinearConstraints())
-	recordMove("clearance", clearancePose, true, err)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ascend to clearance height: %w", err)
+	if s.cfg.EnableBinClearance {
+		hoverPt := hover.Point()
+		clearancePose := spatialmath.NewPose(
+			r3.Vector{X: hoverPt.X, Y: hoverPt.Y, Z: hoverPt.Z + s.cfg.BinClearanceHeightMM},
+			hover.Orientation(),
+		)
+		err = s.moveToClearance(ctx, clearancePose)
+		recordMove("clearance", clearancePose, true, err)
+		if err != nil {
+			return nil, fmt.Errorf("failed to ascend to clearance height: %w", err)
+		}
+		s.logger.Debugf("Reached clearance height")
 	}
-	s.logger.Debugf("Reached clearance height")
 
 	start := time.Now()
 	if err := s.highAboveBowl.SetPosition(ctx, 2, nil); err != nil {
