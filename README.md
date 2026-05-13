@@ -173,6 +173,10 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
     "bin-approach-height-mm" : 100,  // height when hovering above the bin before descent
     "bin-retreat-height-mm" : 100,   // height to rise to after ascending from the bin
 
+    // required - arm orientations for approach and retreat
+    "bin-approach-orientation" : { "x": 0, "y": 0, "z": 1, "th": 0 },  // orientation when hovering before descent
+    "bin-retreat-orientation"  : { "x": 0, "y": 0, "z": 1, "th": 0 },  // orientation when rising after grab (may differ due to kinematics at higher Z)
+
     // required - switches and grippers
     "high-above-bowl" : "<switch>",       // switch to position arm high above the bowl
     "left-gripper" : "<gripper>",         // left gripper for grabbing ingredients
