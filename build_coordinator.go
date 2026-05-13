@@ -909,8 +909,8 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// if targets contains a dressing item
 	for _, target := range targets {
 		if target.category == "dressing" {
-			if err := s.addDressing(ctx); err != nil {
-				s.logger.Errorf("Failed to add dressing: %v", err)
+			if err := s.addDressing(ctx, target.name); err != nil {
+				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
 			}
 		}
 	}
@@ -1004,12 +1004,12 @@ func isMotionPlanningFailure(err error) bool {
 		strings.Contains(msg, "no plan found")
 }
 
-func (s *buildCoordinator) addDressing(ctx context.Context) error {
+func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
 	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
-		"pour_dressing": true,
+		"pour_dressing": name,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to pour dressing: %w", err)
+		return fmt.Errorf("failed to pour dressing %q: %w", name, err)
 	}
 	return nil
 }
