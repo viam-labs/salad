@@ -271,26 +271,9 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'bin_hover' field")
 }
-func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, useLinearConstraints bool) error {
-	var constraints *motionplan.Constraints
-	if useLinearConstraints {
-		lineTol := s.cfg.GrabLineToleranceMM
-		if lineTol == 0 {
-			lineTol = 1.0
-		}
-		orientTol := s.cfg.GrabOrientationToleranceDegs
-		if orientTol == 0 {
-			orientTol = 1.0
-		}
-		constraints = &motionplan.Constraints{
-			LinearConstraint: []motionplan.LinearConstraint{{
-				LineToleranceMm:          lineTol,
-				OrientationToleranceDegs: orientTol,
-			}},
-		}
-	}
+func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, constraints *motionplan.Constraints) error {
 	pt := dest.Point()
-	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f (linear=%v)", pt.X, pt.Y, pt.Z, useLinearConstraints)
+	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f (linear=%v)", pt.X, pt.Y, pt.Z, constraints != nil)
 	start := time.Now()
 	_, err := s.motionService.Move(ctx, motion.MoveReq{
 		ComponentName: s.arm.Name().ShortName(),
@@ -300,6 +283,23 @@ func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, us
 	})
 	s.logger.Infof("motion planning took %.2fs", time.Since(start).Seconds())
 	return err
+}
+
+func (s *grabberControls) grabLinearConstraints() *motionplan.Constraints {
+	lineTol := s.cfg.GrabLineToleranceMM
+	if lineTol == 0 {
+		lineTol = 1.0
+	}
+	orientTol := s.cfg.GrabOrientationToleranceDegs
+	if orientTol == 0 {
+		orientTol = 1.0
+	}
+	return &motionplan.Constraints{
+		LinearConstraint: []motionplan.LinearConstraint{{
+			LineToleranceMm:          lineTol,
+			OrientationToleranceDegs: orientTol,
+		}},
+	}
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
@@ -336,7 +336,7 @@ func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{
 		if bin.aboveBinPose == nil {
 			return nil, fmt.Errorf("zone %d has no computed hover pose; check that zones.json contains zone %d", zoneID, zoneID)
 		}
-		return nil, s.moveArm(ctx, s.applyXYOffset(bin.aboveBinPose), false)
+		return nil, s.moveArm(ctx, s.applyXYOffset(bin.aboveBinPose), nil)
 	}
 	return nil, fmt.Errorf("unknown command")
 }
@@ -526,7 +526,9 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 
 	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
 
-	err = s.moveArm(ctx, aboveBin, false)
+	grabConstraints := s.grabLinearConstraints()
+
+	err = s.moveArm(ctx, aboveBin, nil)
 	recordMove("above_bin", aboveBin, false, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to move arm above bin: %w", err)
@@ -538,14 +540,14 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Opened gripper")
 
-	err = s.moveArm(ctx, grab, true)
+	err = s.moveArm(ctx, grab, grabConstraints)
 	recordMove("descend", grab, true, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to descend into bin: %w", err)
 	}
 	s.logger.Debugf("Descended into bin")
 
-	err = s.moveArm(ctx, tilted, false)
+	err = s.moveArm(ctx, tilted, nil)
 	recordMove("tilt", tilted, false, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to tilt gripper: %w", err)
@@ -557,14 +559,14 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Grabbed")
 
-	err = s.moveArm(ctx, grab, false)
+	err = s.moveArm(ctx, grab, nil)
 	recordMove("untilt", grab, false, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to untilt gripper: %w", err)
 	}
 	s.logger.Debugf("Untilted gripper")
 
-	err = s.moveArm(ctx, aboveBin, true)
+	err = s.moveArm(ctx, aboveBin, grabConstraints)
 	recordMove("ascend", aboveBin, true, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ascend from bin: %w", err)
