@@ -491,7 +491,7 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-bowl-delivery switch to position 2")
 
-	if _, err := s.rightGripper.DoCommand(ctx, map[string]interface{}{"set_position": 400}); err != nil {
+	if _, err := s.rightGripper.DoCommand(ctx, map[string]interface{}{"set": 400.0}); err != nil {
 		return nil, fmt.Errorf("failed to open right gripper: %w", err)
 	}
 
