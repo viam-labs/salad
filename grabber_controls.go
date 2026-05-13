@@ -42,9 +42,10 @@ type GrabberControlsBinConfig struct {
 
 type GrabberControlsConfig struct {
 	Bins                []GrabberControlsBinConfig            `json:"bins"`
-	BinApproachHeightMM float64                               `json:"bin-approach-height-mm"`
-	BinRetreatHeightMM  float64                               `json:"bin-retreat-height-mm"`
-	AboveBinOrientation *spatialmath.OrientationVectorDegrees `json:"above-bin-orientation,omitempty"`
+	BinApproachHeightMM  float64                               `json:"bin-approach-height-mm"`
+	BinRetreatHeightMM   float64                               `json:"bin-retreat-height-mm"`
+	BinApproachOrientation *spatialmath.OrientationVectorDegrees `json:"bin-approach-orientation,omitempty"`
+	BinRetreatOrientation  *spatialmath.OrientationVectorDegrees `json:"bin-retreat-orientation,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
 	GrabOrientation     *spatialmath.OrientationVectorDegrees `json:"grab-orientation,omitempty"`
 	HighAboveBowl       string                                `json:"high-above-bowl"`
@@ -75,8 +76,12 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-retreat-height-mm")
 	}
 
-	if cfg.AboveBinOrientation == nil {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "above-bin-orientation")
+	if cfg.BinApproachOrientation == nil {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-approach-orientation")
+	}
+
+	if cfg.BinRetreatOrientation == nil {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-retreat-orientation")
 	}
 
 	if cfg.GrabOrientation == nil {
@@ -393,11 +398,11 @@ func (s *grabberControls) loadAssets() error {
 			}
 			s.bins[binCfg.ZoneID].approachPose = spatialmath.NewPose(
 				r3.Vector{X: cx, Y: cy, Z: s.zones.ZMean + s.cfg.BinApproachHeightMM},
-				s.cfg.AboveBinOrientation,
+				s.cfg.BinApproachOrientation,
 			)
 			s.bins[binCfg.ZoneID].retreatPose = spatialmath.NewPose(
 				r3.Vector{X: cx, Y: cy, Z: s.zones.ZMean + s.cfg.BinRetreatHeightMM},
-				s.cfg.AboveBinOrientation,
+				s.cfg.BinRetreatOrientation,
 			)
 		}
 	}
@@ -424,7 +429,7 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, depthOffsetMM
 		Y: cy,
 		Z: zone.MinZ() + s.cfg.GrabHeightMM - depthOffsetMM,
 	}
-	return spatialmath.NewPose(point, s.cfg.AboveBinOrientation), nil
+	return spatialmath.NewPose(point, s.cfg.BinApproachOrientation), nil
 }
 
 const grabPlansDir = "/root/.viam/capture"
