@@ -15,6 +15,7 @@ import (
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/motionplan"
+	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
@@ -399,9 +400,14 @@ func (s *grabberControls) loadAssets() error {
 		}
 		s.binMesh = mesh
 
+		octree, err := pointcloud.NewFromMesh(s.binMesh)
+		if err != nil {
+			return fmt.Errorf("failed to convert bin mesh to octree: %w", err)
+		}
+
 		ws, err := referenceframe.NewWorldState(
 			[]*referenceframe.GeometriesInFrame{
-				referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{s.binMesh}),
+				referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{octree}),
 			},
 			nil,
 		)
