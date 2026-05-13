@@ -1003,7 +1003,8 @@ func isMotionPlanningFailure(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "physically unreachable") ||
 		strings.Contains(msg, "zero IK solutions") ||
-		strings.Contains(msg, "no plan found")
+		strings.Contains(msg, "no plan found") ||
+		strings.Contains(msg, "fatal early collision")
 }
 
 func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
