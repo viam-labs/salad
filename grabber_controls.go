@@ -45,7 +45,7 @@ type GrabberControlsConfig struct {
 	BinHoverHeightMM                  float64                               `json:"bin-hover-height-mm"`
 	BinHoverOrientation               *spatialmath.OrientationVectorDegrees `json:"bin-hover-orientation,omitempty"`
 	EnableBinClearance                bool                                  `json:"enable-bin-clearance,omitempty"`
-	BinClearanceHeightMM              float64                               `json:"bin-clearance-height-mm,omitempty"`
+	BinClearanceXOffsetMM             float64                               `json:"bin-clearance-x-offset-mm,omitempty"`
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
@@ -74,9 +74,6 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-height-mm")
 	}
 
-	if cfg.EnableBinClearance && cfg.BinClearanceHeightMM == 0 {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-clearance-height-mm")
-	}
 
 	if cfg.BinHoverOrientation == nil {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-orientation")
@@ -323,7 +320,6 @@ func (s *grabberControls) moveToClearance(ctx context.Context, dest spatialmath.
 		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
 		WorldState:    s.worldState,
 		Constraints:   s.clearanceLinearConstraints(),
-		Extra:         map[string]interface{}{"position_only": true},
 	})
 	s.logger.Infof("clearance motion planning took %.2fs", time.Since(start).Seconds())
 	return err
@@ -615,9 +611,13 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	s.logger.Debugf("Ascended from bin")
 
 	if s.cfg.EnableBinClearance {
+		xOffset := s.cfg.BinClearanceXOffsetMM
+		if xOffset == 0 {
+			xOffset = -25
+		}
 		hoverPt := hover.Point()
 		clearancePose := spatialmath.NewPose(
-			r3.Vector{X: hoverPt.X, Y: hoverPt.Y, Z: hoverPt.Z + s.cfg.BinClearanceHeightMM},
+			r3.Vector{X: hoverPt.X + xOffset, Y: hoverPt.Y, Z: hoverPt.Z},
 			hover.Orientation(),
 		)
 		err = s.moveToClearance(ctx, clearancePose)

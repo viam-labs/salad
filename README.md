@@ -173,9 +173,18 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
     "bin-hover-height-mm" : 100,
     "bin-hover-orientation" : { "x": 0, "y": 0, "z": 1, "th": 0 },
 
-    // required - after returning to hover, the arm ascends a further bin-clearance-height-mm straight up
-    // using a tight line tolerance and loose orientation tolerance to guarantee fridge clearance
-    "bin-clearance-height-mm" : 50,
+    // optional - if true, after ascending to hover the arm shifts laterally by
+    // bin-clearance-x-offset-mm in X before the bowl delivery swing
+    "enable-bin-clearance" : false,
+
+    // optional - mm to shift in X at hover height for fridge clearance.
+    // Negative values move toward the fridge opening. Default: -25.
+    // Only used when enable-bin-clearance is true.
+    "bin-clearance-x-offset-mm" : -25,
+
+    // optional - linear constraint tolerances for the post-grab clearance move
+    "clearance-line-tolerance-mm" : 1.0,          // default 1.0
+    "clearance-orientation-tolerance-degs" : 45.0, // default 45.0
 
     // required - switches and grippers
     "high-above-bowl" : "<switch>",       // switch to position arm high above the bowl
@@ -192,9 +201,7 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
     "grab-line-tolerance-mm" : 1.0,          // max deviation from straight line during descent/ascent
     "grab-orientation-tolerance-degs" : 1.0, // max orientation deviation during descent/ascent
 
-    // optional - linear constraint tolerances for the post-grab clearance ascent
-    // tight line keeps the arm straight up (guarantees fridge clearance)
-    // loose orientation lets the arm reach a natural configuration at the higher Z
+    // optional - linear constraint tolerances for the post-grab clearance move
     "clearance-line-tolerance-mm" : 1.0,          // default 1.0
     "clearance-orientation-tolerance-degs" : 45.0 // default 45.0
 }
