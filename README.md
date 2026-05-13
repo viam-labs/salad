@@ -169,13 +169,13 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
         }
     ],
 
-    // required - hover heights above the bin's mean Z (mm)
-    "bin-approach-height-mm" : 100,  // height when hovering above the bin before descent
-    "bin-retreat-height-mm" : 100,   // height to rise to after ascending from the bin
+    // required - hover height above the bin's mean Z (mm), used for both approach and post-grab return
+    "bin-hover-height-mm" : 100,
+    "bin-hover-orientation" : { "x": 0, "y": 0, "z": 1, "th": 0 },
 
-    // required - arm orientations for approach and retreat
-    "bin-approach-orientation" : { "x": 0, "y": 0, "z": 1, "th": 0 },  // orientation when hovering before descent
-    "bin-retreat-orientation"  : { "x": 0, "y": 0, "z": 1, "th": 0 },  // orientation when rising after grab (may differ due to kinematics at higher Z)
+    // required - after returning to hover, the arm ascends a further bin-clearance-height-mm straight up
+    // using a tight line tolerance and loose orientation tolerance to guarantee fridge clearance
+    "bin-clearance-height-mm" : 50,
 
     // required - switches and grippers
     "high-above-bowl" : "<switch>",       // switch to position arm high above the bowl
@@ -190,7 +190,13 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
 
     // optional - linear constraint tolerances for bin grab descent and ascent (default 1.0)
     "grab-line-tolerance-mm" : 1.0,          // max deviation from straight line during descent/ascent
-    "grab-orientation-tolerance-degs" : 1.0  // max orientation deviation during descent/ascent
+    "grab-orientation-tolerance-degs" : 1.0, // max orientation deviation during descent/ascent
+
+    // optional - linear constraint tolerances for the post-grab clearance ascent
+    // tight line keeps the arm straight up (guarantees fridge clearance)
+    // loose orientation lets the arm reach a natural configuration at the higher Z
+    "clearance-line-tolerance-mm" : 1.0,          // default 1.0
+    "clearance-orientation-tolerance-degs" : 45.0 // default 45.0
 }
 ```
 
