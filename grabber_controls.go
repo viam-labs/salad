@@ -42,7 +42,8 @@ type GrabberControlsBinConfig struct {
 
 type GrabberControlsConfig struct {
 	Bins                []GrabberControlsBinConfig            `json:"bins"`
-	AboveBinExtra       float64                               `json:"above-bin-extra"`
+	BinApproachHeightMM float64                               `json:"bin-approach-height-mm"`
+	BinRetreatHeightMM  float64                               `json:"bin-retreat-height-mm"`
 	AboveBinOrientation *spatialmath.OrientationVectorDegrees `json:"above-bin-orientation,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
 	GrabOrientation     *spatialmath.OrientationVectorDegrees `json:"grab-orientation,omitempty"`
@@ -64,6 +65,14 @@ type GrabberControlsConfig struct {
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
 	if len(cfg.Bins) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bins")
+	}
+
+	if cfg.BinApproachHeightMM == 0 {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-approach-height-mm")
+	}
+
+	if cfg.BinRetreatHeightMM == 0 {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-retreat-height-mm")
 	}
 
 	if cfg.AboveBinOrientation == nil {
@@ -148,7 +157,8 @@ type grabberControls struct {
 
 type grabberBinSwitches struct {
 	name         string
-	aboveBinPose spatialmath.Pose
+	approachPose spatialmath.Pose
+	retreatPose  spatialmath.Pose
 }
 
 type grabPlanStep struct {
@@ -333,10 +343,10 @@ func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{
 		if !ok {
 			return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
 		}
-		if bin.aboveBinPose == nil {
+		if bin.approachPose == nil {
 			return nil, fmt.Errorf("zone %d has no computed hover pose; check that zones.json contains zone %d", zoneID, zoneID)
 		}
-		return nil, s.moveArm(ctx, s.applyXYOffset(bin.aboveBinPose), nil)
+		return nil, s.moveArm(ctx, s.applyXYOffset(bin.approachPose), nil)
 	}
 	return nil, fmt.Errorf("unknown command")
 }
@@ -381,13 +391,14 @@ func (s *grabberControls) loadAssets() error {
 			if err != nil {
 				return fmt.Errorf("bin %q: %w", binCfg.Name, err)
 			}
-			point := r3.Vector{
-				X: cx,
-				Y: cy,
-				Z: s.zones.ZMean + s.cfg.AboveBinExtra,
-			}
-
-			s.bins[binCfg.ZoneID].aboveBinPose = spatialmath.NewPose(point, s.cfg.AboveBinOrientation)
+			s.bins[binCfg.ZoneID].approachPose = spatialmath.NewPose(
+				r3.Vector{X: cx, Y: cy, Z: s.zones.ZMean + s.cfg.BinApproachHeightMM},
+				s.cfg.AboveBinOrientation,
+			)
+			s.bins[binCfg.ZoneID].retreatPose = spatialmath.NewPose(
+				r3.Vector{X: cx, Y: cy, Z: s.zones.ZMean + s.cfg.BinRetreatHeightMM},
+				s.cfg.AboveBinOrientation,
+			)
 		}
 	}
 
@@ -520,7 +531,8 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		}
 	}
 
-	aboveBin := s.applyXYOffset(bin.aboveBinPose)
+	aboveBin := s.applyXYOffset(bin.approachPose)
+	retreatPose := s.applyXYOffset(bin.retreatPose)
 	grab := s.applyXYOffset(grabPose)
 	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
 
@@ -566,8 +578,8 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Debugf("Untilted gripper")
 
-	err = s.moveArm(ctx, aboveBin, grabConstraints)
-	recordMove("ascend", aboveBin, true, err)
+	err = s.moveArm(ctx, retreatPose, grabConstraints)
+	recordMove("ascend", retreatPose, true, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ascend from bin: %w", err)
 	}
