@@ -603,9 +603,16 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 
 func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	s.logger.Infof("Capturing point cloud from imaging camera")
+	// imaging-camera must be a salad:bin-imaging-camera (or another model that
+	// gates its arm-moving capture sequence behind DoCommand). NextPointCloud
+	// alone must not move the arm; that would trigger every time the app's 3D
+	// scene tab polls.
+	if _, err := s.imagingCamera.DoCommand(ctx, map[string]interface{}{"capture": true}); err != nil {
+		return fmt.Errorf("failed to trigger imaging capture: %w", err)
+	}
 	pc, err := s.imagingCamera.NextPointCloud(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to capture point cloud: %w", err)
+		return fmt.Errorf("failed to read captured point cloud: %w", err)
 	}
 
 	if err := os.MkdirAll(s.cfg.CaptureDir, 0o755); err != nil {

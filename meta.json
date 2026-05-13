@@ -61,6 +61,12 @@
       "short_description": "vision service that returns a 3D mesh from a PLY file"
     },
     {
+      "api": "rdk:component:camera",
+      "model": "ncs:salad:bin-imaging-camera",
+      "markdown_link": "README.md#bin-imaging-camera",
+      "short_description": "moves an arm through configured position switches and merges per-pose point clouds; capture sequence runs only via DoCommand({\"capture\": true}) so polling NextPointCloud does not move the arm"
+    },
+    {
       "api": "rdk:service:generic",
       "model": "ncs:salad:supply-detector",
       "markdown_link": "README.md#supply-detector",
