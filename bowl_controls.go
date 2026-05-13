@@ -265,6 +265,14 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 		}
 	}
 
+	if conf.ShakeArmService != nil && *conf.ShakeArmService != "" {
+		shakeArmService, err := genericservice.FromProvider(deps, *conf.ShakeArmService)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get shake-arm-service '%s': %w", *conf.ShakeArmService, err)
+		}
+		s.shakeArmService = shakeArmService
+	}
+
 	s.logger.Infof("Bowl controls initialized")
 	return s, nil
 }
