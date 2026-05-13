@@ -888,10 +888,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
 			s.logger.Errorf("Failed to add ingredient %q: %v", target.name, err)
-			return map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("Failed to add ingredient %q: %v", target.name, err),
-			}, nil
+			break
 		}
 		completedServings += target.servings
 	}
