@@ -169,6 +169,10 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
         }
     ],
 
+    // required - hover heights above the bin's mean Z (mm)
+    "bin-approach-height-mm" : 100,  // height when hovering above the bin before descent
+    "bin-retreat-height-mm" : 100,   // height to rise to after ascending from the bin
+
     // required - switches and grippers
     "high-above-bowl" : "<switch>",       // switch to position arm high above the bowl
     "left-gripper" : "<gripper>",         // left gripper for grabbing ingredients
