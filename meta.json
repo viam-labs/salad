@@ -19,6 +19,12 @@
   ],
   "models": [
     {
+      "api": "rdk:component:sensor",
+      "model": "ncs:salad:maintenance-sensor",
+      "markdown_link": "README.md#maintenance-sensor",
+      "short_description": "sensor that checks the safety of the salad assembly"
+    },
+    {
       "api": "rdk:service:generic",
       "model": "ncs:salad:build-coordinator",
       "markdown_link": "README.md#build-coordinator",
