@@ -101,38 +101,36 @@ func resolveZoneBackgroundMeshPath(localDir, preferredMesh, sourceMeshInJSON str
 	return "", false
 }
 
-// findNewestZonesJSON returns the path of the most recently modified *zones.json under dir.
+// findNewestZonesJSON returns the path of the most recently modified *zones.json
+// directly inside dir (non-recursive).
 func findNewestZonesJSON(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
 	var best struct {
 		path    string
 		modTime int64
 	}
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
+	for _, d := range entries {
 		if d.IsDir() {
-			return nil
+			continue
 		}
 		name := strings.ToLower(d.Name())
 		if !strings.HasSuffix(name, "zones.json") {
-			return nil
+			continue
 		}
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return "", err
 		}
 		if best.path == "" || info.ModTime().UnixNano() > best.modTime {
-			best.path = path
+			best.path = filepath.Join(dir, d.Name())
 			best.modTime = info.ModTime().UnixNano()
 		}
-		return nil
-	})
-	if err != nil {
-		return "", err
 	}
 	if best.path == "" {
-		return "", fmt.Errorf("no *zones.json under %q", dir)
+		return "", fmt.Errorf("no *zones.json in %q", dir)
 	}
 	return best.path, nil
 }

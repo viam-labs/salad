@@ -160,11 +160,20 @@ func init() {
 	segmentCmd.Flags().Float64Var(&segmentFlags.MinZoneAreaMM2, "min-zone-area", defaults.MinZoneAreaMM2, "minimum zone footprint area in mm² (smaller components discarded as noise)")
 	segmentCmd.Flags().Float64Var(&segmentFlags.MaxZoneAreaMM2, "max-zone-area", defaults.MaxZoneAreaMM2, "maximum zone footprint area in mm² (larger components rejected as non-bin regions; 0=disabled)")
 
+	hoverPosesCmd.Flags().StringVar(&hoverPosesFlags.ZonesPath, "zones", "", "path to zones.json (default: find newest under --local-files)")
+	hoverPosesCmd.Flags().StringVar(&hoverPosesFlags.MeshPath, "mesh", "", "path to mesh.ply (default: locate via zones source or --local-files)")
+	hoverPosesCmd.Flags().StringVar(&hoverPosesFlags.LocalFiles, "local-files", "output", "directory to search for zones.json and mesh.ply")
+	hoverPosesCmd.Flags().Float64Var(&hoverPosesFlags.AboveBinExtra, "above-bin-extra", 200, "mm to add above ZMean for hover Z")
+	hoverPosesCmd.Flags().Float64Var(&hoverPosesFlags.SphereRadius, "sphere-radius", 25, "radius (mm) of hover pose marker spheres")
+	hoverPosesCmd.Flags().StringVar(&hoverPosesFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
+	hoverPosesCmd.Flags().BoolVar(&hoverPosesFlags.ClearFirst, "clear-first", true, "clear visualizer objects before drawing")
+
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(segmentCmd)
+	rootCmd.AddCommand(hoverPosesCmd)
 }
 
 func main() {
