@@ -46,6 +46,7 @@ type GrabberControlsConfig struct {
 	BinHoverOrientation               *spatialmath.OrientationVectorDegrees `json:"bin-hover-orientation,omitempty"`
 	EnableBinClearance                bool                                  `json:"enable-bin-clearance,omitempty"`
 	BinClearanceXOffsetMM             float64                               `json:"bin-clearance-x-offset-mm,omitempty"`
+	BinClearanceZOffsetMM             float64                               `json:"bin-clearance-z-offset-mm,omitempty"`
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
@@ -74,6 +75,10 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-height-mm")
 	}
 
+
+	if cfg.EnableBinClearance && cfg.BinClearanceXOffsetMM == 0 && cfg.BinClearanceZOffsetMM == 0 {
+		return nil, nil, fmt.Errorf("%s: at least one of 'bin-clearance-x-offset-mm' or 'bin-clearance-z-offset-mm' must be set when 'enable-bin-clearance' is true", path)
+	}
 
 	if cfg.BinHoverOrientation == nil {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-orientation")
@@ -611,13 +616,9 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	s.logger.Debugf("Ascended from bin")
 
 	if s.cfg.EnableBinClearance {
-		xOffset := s.cfg.BinClearanceXOffsetMM
-		if xOffset == 0 {
-			xOffset = -25
-		}
 		hoverPt := hover.Point()
 		clearancePose := spatialmath.NewPose(
-			r3.Vector{X: hoverPt.X + xOffset, Y: hoverPt.Y, Z: hoverPt.Z},
+			r3.Vector{X: hoverPt.X + s.cfg.BinClearanceXOffsetMM, Y: hoverPt.Y, Z: hoverPt.Z + s.cfg.BinClearanceZOffsetMM},
 			hover.Orientation(),
 		)
 		err = s.moveToClearance(ctx, clearancePose)
