@@ -173,9 +173,11 @@ Controls left/right grippers and bin switches for grabbing ingredients and deliv
     "bin-hover-height-mm" : 100,
     "bin-hover-orientation" : { "x": 0, "y": 0, "z": 1, "th": 0 },
 
-    // required - after returning to hover, the arm ascends a further bin-clearance-height-mm straight up
-    // using a tight line tolerance and loose orientation tolerance to guarantee fridge clearance
-    "bin-clearance-height-mm" : 50,
+    // optional - after returning to hover, ascend a further bin-clearance-height-mm straight up
+    // uses position_only goal so the planner ignores orientation and only constrains XYZ
+    // guarantees the arm clears the fridge before moving to the bowl
+    "enable-bin-clearance" : false,   // default false; set to true to enable the clearance step
+    "bin-clearance-height-mm" : 50,   // required when enable-bin-clearance is true
 
     // required - switches and grippers
     "high-above-bowl" : "<switch>",       // switch to position arm high above the bowl
