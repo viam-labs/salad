@@ -44,6 +44,7 @@ type BowlControlsConfig struct {
 	LilArmHome         string             `json:"lil-arm-home"`
 	LilArmPoses        []LilArmPoseConfig `json:"lil-arm-poses"`
 	XArmForceMover     string             `json:"xarm-force-mover,omitempty"`
+	ShakeArmService    *string            `json:"shake-arm-service,omitempty"`
 }
 
 func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -79,6 +80,10 @@ func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error)
 		cfg.RightGripper,
 		cfg.RightAboveBowl, cfg.RightGrabBowl, cfg.RightAboveDelivery, cfg.RightBowlDelivery, cfg.RightHome,
 		cfg.LittleArm,
+	}
+
+	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
+		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}
 
 	var optionalDeps []string
@@ -140,6 +145,7 @@ type bowlControls struct {
 	rightAboveDelivery sw.Switch
 	rightBowlDelivery  sw.Switch
 	rightHome          sw.Switch
+	shakeArmService    genericservice.Service
 	littleArm          arm.Arm
 
 	lilArmGripper gripper.Gripper
@@ -468,6 +474,15 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 		return nil, fmt.Errorf("failed to set right-grab-bowl switch to position 2: %w", err)
 	}
 	s.logger.Debugf("Set right-grab-bowl switch to position 2")
+
+	if s.shakeArmService != nil {
+		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
+			"shake_arm": true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to shake arm: %w", err)
+		}
+	}
 
 	if _, err := s.rightGripper.Grab(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to close right gripper: %w", err)
