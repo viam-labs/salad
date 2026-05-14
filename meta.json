@@ -12,76 +12,13 @@
       "name": "salad",
       "type": "single_machine",
       "entrypoint": "dist/index.html",
-      "fragmentIds": [
-        "02188473-58fd-4a54-b794-621c65ea5332"
-      ]
-    }
-  ],
-  "models": [
-    {
-      "api": "rdk:component:sensor",
-      "model": "ncs:salad:maintenance-sensor",
-      "markdown_link": "README.md#maintenance-sensor",
-      "short_description": "sensor that checks the safety of the salad assembly"
-    },
-    {
-      "api": "rdk:service:generic",
-      "model": "ncs:salad:build-coordinator",
-      "markdown_link": "README.md#build-coordinator",
-      "short_description": "orchestrates salad assembly by grabbing ingredients to target weights and delivering the bowl"
-    },
-    {
-      "api": "rdk:service:generic",
-      "model": "ncs:salad:bowl-controls",
-      "markdown_link": "README.md#bowl-controls",
-      "short_description": "controls grippers and bowl switches for delivering bowls"
-    },
-    {
-      "api": "rdk:service:generic",
-      "model": "ncs:salad:grabber-controls",
-      "markdown_link": "README.md#grabber-controls",
-      "short_description": "controls grippers and bin switches for grabbing ingredients and delivering bowls"
-    },
-    {
-      "api": "rdk:service:generic",
-      "model": "ncs:salad:dressing-controls",
-      "markdown_link": "README.md#dressing-controls",
-      "short_description": "controls grippers and dressing switches for pouring dressing"
-    },
-    {
-      "api": "rdk:service:generic",
-      "model": "ncs:salad:chefs-kiss-controls",
-      "markdown_link": "README.md#chefs-kiss-controls",
-      "short_description": "controls grippers and position switches for performing chefs kiss"
-    },
-    {
-      "api": "rdk:service:vision",
-      "model": "ncs:salad:passthrough-to-camera",
-      "markdown_link": "README.md#passthrough-to-camera",
-      "short_description": "vision service that passes through point clouds from a camera"
-    },
-    {
-      "api": "rdk:service:vision",
-      "model": "ncs:salad:file-vision",
-      "markdown_link": "README.md#file-vision",
-      "short_description": "vision service that returns a 3D mesh from a PLY file"
-    },
-    {
-      "api": "rdk:service:generic",
-      "model": "ncs:salad:supply-detector",
-      "markdown_link": "README.md#supply-detector",
-      "short_description": "detects ingredient supply level from overhead camera ROIs"
+      "fragmentIds": ["02188473-58fd-4a54-b794-621c65ea5332"]
     }
   ],
   "build": {
     "build": "make module.tar.gz",
     "setup": "make setup",
     "path": "module.tar.gz",
-    "arch": [
-      "linux/amd64",
-      "linux/arm64",
-      "darwin/arm64",
-      "windows/amd64"
-    ]
+    "arch": ["linux/amd64", "linux/arm64", "darwin/arm64", "windows/amd64"]
   }
 }
