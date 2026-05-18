@@ -24,9 +24,11 @@ type SegmentFlags struct {
 	DividerDilation    int
 	MinZoneAreaMM2     float64
 	MaxZoneAreaMM2     float64
-	FloorBandMM        float64
-	FloorMaxTiltDeg    float64
-	FloorMinPoints     int
+	FloorBandMM         float64
+	FloorMaxTiltDeg     float64
+	FloorMinPoints      int
+	FloorRANSACIters    int
+	FloorRANSACInlierMM float64
 }
 
 var segmentFlags SegmentFlags
@@ -48,9 +50,11 @@ func runSegment(flags SegmentFlags) error {
 		DividerDilation:    flags.DividerDilation,
 		MinZoneAreaMM2:     flags.MinZoneAreaMM2,
 		MaxZoneAreaMM2:     flags.MaxZoneAreaMM2,
-		FloorBandMM:        flags.FloorBandMM,
-		FloorMaxTiltDeg:    flags.FloorMaxTiltDeg,
-		FloorMinPoints:     flags.FloorMinPoints,
+		FloorBandMM:         flags.FloorBandMM,
+		FloorMaxTiltDeg:     flags.FloorMaxTiltDeg,
+		FloorMinPoints:      flags.FloorMinPoints,
+		FloorRANSACIters:    flags.FloorRANSACIters,
+		FloorRANSACInlierMM: flags.FloorRANSACInlierMM,
 	}
 
 	logger.Infof("Segmenting %s", flags.MeshPath)

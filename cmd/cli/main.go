@@ -161,7 +161,9 @@ func init() {
 	segmentCmd.Flags().Float64Var(&segmentFlags.MaxZoneAreaMM2, "max-zone-area", defaults.MaxZoneAreaMM2, "maximum zone footprint area in mm² (larger components rejected as non-bin regions; 0=disabled)")
 	segmentCmd.Flags().Float64Var(&segmentFlags.FloorBandMM, "floor-band", defaults.FloorBandMM, "vertical slab (mm) above each zone's min Z from which to sample floor candidates; must accommodate tilted bins")
 	segmentCmd.Flags().Float64Var(&segmentFlags.FloorMaxTiltDeg, "floor-max-tilt", defaults.FloorMaxTiltDeg, "max angle (deg) between a triangle normal and ±ẑ for it to count as a floor candidate")
-	segmentCmd.Flags().IntVar(&segmentFlags.FloorMinPoints, "floor-min-points", defaults.FloorMinPoints, "minimum candidate vertices required to run PCA fit; below this, fall back to horizontal plane at MinZ")
+	segmentCmd.Flags().IntVar(&segmentFlags.FloorMinPoints, "floor-min-points", defaults.FloorMinPoints, "minimum candidate vertices required to run a real fit; below this, fall back to horizontal plane at MinZ")
+	segmentCmd.Flags().IntVar(&segmentFlags.FloorRANSACIters, "floor-ransac-iters", defaults.FloorRANSACIters, "RANSAC iterations for the bin-floor plane fit; 0 disables RANSAC and uses single-pass PCA")
+	segmentCmd.Flags().Float64Var(&segmentFlags.FloorRANSACInlierMM, "floor-ransac-inlier", defaults.FloorRANSACInlierMM, "max perpendicular distance (mm) from a candidate to a RANSAC plane to count as an inlier")
 
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
