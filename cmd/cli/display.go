@@ -61,16 +61,27 @@ func drawFullZonesViz(opts zoneVizOptions) error {
 }
 
 // appendZoneColoredMeshes draws zone sub-meshes only (no clear, no background).
+// For each zone we also draw a "zone-N-plane" rectangle representing the
+// fitted bin-floor plane, clipped to the zone's XY axis-aligned bounding box.
+// Plane is drawn in the same color as the zone so the pair is visually grouped.
 func appendZoneColoredMeshes(result *segmentation.ZonesResult) error {
 	if result == nil {
 		return fmt.Errorf("no zone result to draw")
 	}
 	for _, zone := range result.Zones {
-		label := fmt.Sprintf("zone-%d", zone.ID)
 		color := zoneVizColors[zone.ID%len(zoneVizColors)]
-		zoneMesh := zone.Mesh.ToSpatialMesh(label)
+
+		zoneMesh := zone.Mesh.ToSpatialMesh(fmt.Sprintf("zone-%d", zone.ID))
 		if err := vizClient.DrawGeometry(zoneMesh, color); err != nil {
 			return fmt.Errorf("drawing zone %d: %w", zone.ID, err)
+		}
+
+		if !zone.Plane.IsZero() {
+			planeMesh := segmentation.PlaneRectMesh(zone.Plane, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY).
+				ToSpatialMesh(fmt.Sprintf("zone-%d-plane", zone.ID))
+			if err := vizClient.DrawGeometry(planeMesh, color); err != nil {
+				return fmt.Errorf("drawing zone %d plane: %w", zone.ID, err)
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
