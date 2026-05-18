@@ -39,6 +39,12 @@ type Zone struct {
 	MaxY  float64  `json:"max_y"`
 	Mesh  ZoneMesh `json:"mesh"`
 	Plane Plane    `json:"plane"`
+	// PlaneRect is the bin-floor plane rendered as a 2-triangle quad whose XY
+	// corners are (MinX|MaxX) × (MinY|MaxY) and whose Z values lie on Plane.
+	// Stored alongside the analytic Plane so external tooling (visualizers,
+	// post-processing scripts) can render the floor without re-doing the
+	// plane math.
+	PlaneRect ZoneMesh `json:"plane_rect"`
 }
 
 // Plane represents a best-fit infinite plane in 3D as a point + unit normal.
@@ -617,14 +623,16 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 			minBX, maxBX = zi.minX, zi.maxX
 			minBY, maxBY = zi.minY, zi.maxY
 		}
+		plane := fitFloorPlane(zoneFaces[i], opts)
 		zones[i] = Zone{
-			ID:    i,
-			MinX:  minBX,
-			MaxX:  maxBX,
-			MinY:  minBY,
-			MaxY:  maxBY,
-			Mesh:  buildZoneMesh(zoneFaces[i]),
-			Plane: fitFloorPlane(zoneFaces[i], opts),
+			ID:        i,
+			MinX:      minBX,
+			MaxX:      maxBX,
+			MinY:      minBY,
+			MaxY:      maxBY,
+			Mesh:      buildZoneMesh(zoneFaces[i]),
+			Plane:     plane,
+			PlaneRect: PlaneRectMesh(plane, minBX, maxBX, minBY, maxBY),
 		}
 	}
 

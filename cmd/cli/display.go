@@ -77,8 +77,12 @@ func appendZoneColoredMeshes(result *segmentation.ZonesResult) error {
 		}
 
 		if !zone.Plane.IsZero() {
-			planeMesh := segmentation.PlaneRectMesh(zone.Plane, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY).
-				ToSpatialMesh(fmt.Sprintf("zone-%d-plane", zone.ID))
+			rect := zone.PlaneRect
+			if len(rect.Vertices) == 0 {
+				// Older zones.json without persisted plane_rect; compute on the fly.
+				rect = segmentation.PlaneRectMesh(zone.Plane, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY)
+			}
+			planeMesh := rect.ToSpatialMesh(fmt.Sprintf("zone-%d-plane", zone.ID))
 			if err := vizClient.DrawGeometry(planeMesh, color); err != nil {
 				return fmt.Errorf("drawing zone %d plane: %w", zone.ID, err)
 			}
