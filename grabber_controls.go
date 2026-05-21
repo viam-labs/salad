@@ -14,7 +14,6 @@ import (
 	"go.viam.com/rdk/components/gripper"
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
-	"go.viam.com/rdk/motionplan"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/resource"
@@ -291,67 +290,6 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'bin_hover' field")
 }
-func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, constraints *motionplan.Constraints) error {
-	pt := dest.Point()
-	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f (linear=%v)", pt.X, pt.Y, pt.Z, constraints != nil)
-	start := time.Now()
-	_, err := s.motionService.Move(ctx, motion.MoveReq{
-		ComponentName: s.arm.Name().ShortName(),
-		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
-		WorldState:    s.worldState,
-		Constraints:   constraints,
-	})
-	s.logger.Infof("motion planning took %.2fs", time.Since(start).Seconds())
-	return err
-}
-
-func (s *grabberControls) grabLinearConstraints() *motionplan.Constraints {
-	lineTol := s.cfg.GrabLineToleranceMM
-	if lineTol == 0 {
-		lineTol = 1.0
-	}
-	orientTol := s.cfg.GrabOrientationToleranceDegs
-	if orientTol == 0 {
-		orientTol = 1.0
-	}
-	return &motionplan.Constraints{
-		LinearConstraint: []motionplan.LinearConstraint{{
-			LineToleranceMm:          lineTol,
-			OrientationToleranceDegs: orientTol,
-		}},
-	}
-}
-
-func (s *grabberControls) moveToClearance(ctx context.Context, dest spatialmath.Pose) error {
-	pt := dest.Point()
-	s.logger.Infof("moving arm to clearance x=%.2f y=%.2f z=%.2f (position-only)", pt.X, pt.Y, pt.Z)
-	start := time.Now()
-	_, err := s.motionService.Move(ctx, motion.MoveReq{
-		ComponentName: s.arm.Name().ShortName(),
-		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
-		WorldState:    s.worldState,
-		Constraints:   s.clearanceLinearConstraints(),
-	})
-	s.logger.Infof("clearance motion planning took %.2fs", time.Since(start).Seconds())
-	return err
-}
-
-func (s *grabberControls) clearanceLinearConstraints() *motionplan.Constraints {
-	lineTol := s.cfg.ClearanceLineToleranceMM
-	if lineTol == 0 {
-		lineTol = 1.0
-	}
-	orientTol := s.cfg.ClearanceOrientationToleranceDegs
-	if orientTol == 0 {
-		orientTol = 45.0
-	}
-	return &motionplan.Constraints{
-		LinearConstraint: []motionplan.LinearConstraint{{
-			LineToleranceMm:          lineTol,
-			OrientationToleranceDegs: orientTol,
-		}},
-	}
-}
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
 	if s.cfg.XOffsetMM == 0 && s.cfg.YOffsetMM == 0 {
@@ -504,7 +442,7 @@ func poseToStep(name string, pose spatialmath.Pose, linear bool, stepErr error) 
 	return step
 }
 
-func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (_ map[string]interface{}, retErr error) {
+func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if err := s.loadAssets(); err != nil {
 		return nil, err
 	}
@@ -544,131 +482,20 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	if err != nil {
 		return nil, err
 	}
-	grabPose, err := s.computeGrabPose(zone, depthOffsetMM)
+
+	s.logger.Infof("Planning get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
+	plan, err := s.planGrab(bin, zoneID, zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d, %d steps)", bin.name, zoneID, len(plan.Steps))
 
-	var plan *grabPlanRecord
-	if s.cfg.SavePlans {
-		plan = &grabPlanRecord{
-			StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
-			BinName:   bin.name,
-			ZoneID:    zoneID,
-		}
-		defer func() {
-			plan.Success = retErr == nil
-			if retErr != nil {
-				plan.Error = retErr.Error()
-			}
-			if saveErr := s.savePlan(plan); saveErr != nil {
-				s.logger.Warnf("failed to save grab plan: %v", saveErr)
-			}
-		}()
+	if err := s.executeGrab(ctx, plan); err != nil {
+		return nil, err
 	}
-
-	recordMove := func(stepName string, pose spatialmath.Pose, linear bool, moveErr error) {
-		if plan != nil {
-			plan.Steps = append(plan.Steps, poseToStep(stepName, pose, linear, moveErr))
-		}
-	}
-
-	hover := s.applyXYOffset(bin.hoverPose)
-	grab := s.applyXYOffset(grabPose)
-	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
-
-	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
-
-	grabConstraints := s.grabLinearConstraints()
-
-	err = s.moveArm(ctx, hover, nil)
-	recordMove("above_bin", hover, false, err)
-	if err != nil {
-		return nil, fmt.Errorf("failed to move arm above bin: %w", err)
-	}
-	s.logger.Debugf("Moved arm above bin")
-
-	if err := s.gripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open gripper: %w", err)
-	}
-	s.logger.Debugf("Opened gripper")
-
-	err = s.moveArm(ctx, grab, grabConstraints)
-	recordMove("descend", grab, true, err)
-	if err != nil {
-		return nil, fmt.Errorf("failed to descend into bin: %w", err)
-	}
-	s.logger.Debugf("Descended into bin")
-
-	err = s.moveArm(ctx, tilted, nil)
-	recordMove("tilt", tilted, false, err)
-	if err != nil {
-		return nil, fmt.Errorf("failed to tilt gripper: %w", err)
-	}
-	s.logger.Debugf("Tilted gripper")
-
-	if _, err := s.gripper.Grab(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to grab: %w", err)
-	}
-	s.logger.Debugf("Grabbed")
-
-	err = s.moveArm(ctx, grab, nil)
-	recordMove("untilt", grab, false, err)
-	if err != nil {
-		return nil, fmt.Errorf("failed to untilt gripper: %w", err)
-	}
-	s.logger.Debugf("Untilted gripper")
-
-	err = s.moveArm(ctx, hover, grabConstraints)
-	recordMove("ascend", hover, true, err)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ascend from bin: %w", err)
-	}
-	s.logger.Debugf("Ascended from bin")
-
-	if s.cfg.EnableBinClearance {
-		hoverPt := hover.Point()
-		clearancePose := spatialmath.NewPose(
-			r3.Vector{X: hoverPt.X + s.cfg.BinClearanceXOffsetMM, Y: hoverPt.Y, Z: hoverPt.Z + s.cfg.BinClearanceZOffsetMM},
-			hover.Orientation(),
-		)
-		err = s.moveToClearance(ctx, clearancePose)
-		recordMove("clearance", clearancePose, true, err)
-		if err != nil {
-			return nil, fmt.Errorf("failed to ascend to clearance height: %w", err)
-		}
-		s.logger.Debugf("Reached clearance height")
-	}
-
-	start := time.Now()
-	if err := s.moveArm(ctx, s.bowlHoverPose, nil); err != nil {
-		return nil, fmt.Errorf("failed to move above bowl: %w", err)
-	}
-	s.logger.Infof("move above bowl took %.2fs", time.Since(start).Seconds())
-
-	start = time.Now()
-	if err := s.moveArm(ctx, s.droppingPose, nil); err != nil {
-		return nil, fmt.Errorf("failed to move to dropping pose: %w", err)
-	}
-	s.logger.Infof("move to dropping pose took %.2fs", time.Since(start).Seconds())
-
-	start = time.Now()
-	if err := s.gripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open left gripper: %w", err)
-	}
-	s.logger.Infof("gripper open took %.2fs", time.Since(start).Seconds())
-
-	start = time.Now()
-	if err := s.moveArm(ctx, s.bowlHoverPose, nil); err != nil {
-		return nil, fmt.Errorf("failed to return above bowl: %w", err)
-	}
-	s.logger.Infof("return above bowl took %.2fs", time.Since(start).Seconds())
 
 	if s.shakeArmService != nil {
-		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
-			"shake_arm": true,
-		})
-		if err != nil {
+		if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
 			return nil, fmt.Errorf("failed to shake arm: %w", err)
 		}
 	}
