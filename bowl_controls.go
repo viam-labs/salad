@@ -3,7 +3,6 @@ package salad
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/gripper"
@@ -33,12 +32,6 @@ type LilArmPoseConfig struct {
 }
 
 type BowlControlsConfig struct {
-	RightGripper       string             `json:"right-gripper"`
-	RightAboveBowl     string             `json:"right-above-bowl"`
-	RightGrabBowl      string             `json:"right-grab-bowl"`
-	RightAboveDelivery string             `json:"right-above-delivery"`
-	RightBowlDelivery  string             `json:"right-bowl-delivery"`
-	RightHome          string             `json:"right-home"`
 	LittleArm          string             `json:"little-arm"`
 	LilArmGripper      string             `json:"lil-arm-gripper"`
 	LilArmHome         string             `json:"lil-arm-home"`
@@ -47,35 +40,7 @@ type BowlControlsConfig struct {
 }
 
 func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error) {
-	if cfg.RightGripper == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-gripper")
-	}
-
-	if cfg.RightAboveBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-bowl")
-	}
-
-	if cfg.RightGrabBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-grab-bowl")
-	}
-
-	if cfg.RightAboveDelivery == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-above-delivery")
-	}
-
-	if cfg.RightBowlDelivery == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-bowl-delivery")
-	}
-
-	if cfg.RightHome == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
-	}
-
-	requiredDeps := []string{
-		cfg.RightGripper,
-		cfg.RightAboveBowl, cfg.RightGrabBowl, cfg.RightAboveDelivery, cfg.RightBowlDelivery, cfg.RightHome,
-	}
-
+	var requiredDeps []string
 	var optionalDeps []string
 
 	if cfg.LittleArm != "" {
@@ -133,12 +98,6 @@ type bowlControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	rightGripper       gripper.Gripper
-	rightAboveBowl     sw.Switch
-	rightGrabBowl      sw.Switch
-	rightAboveDelivery sw.Switch
-	rightBowlDelivery  sw.Switch
-	rightHome          sw.Switch
 	littleArm          arm.Arm
 
 	lilArmGripper gripper.Gripper
@@ -168,42 +127,6 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 		cancelFunc:  cancelFunc,
 		lilArmPoses: make(map[string]*lilArmPoseSwitches),
 	}
-
-	rightGripperComponent, err := gripper.FromProvider(deps, conf.RightGripper)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get right gripper '%s': %w", conf.RightGripper, err)
-	}
-	s.rightGripper = rightGripperComponent
-
-	rightAboveBowlSwitch, err := sw.FromProvider(deps, conf.RightAboveBowl)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get right-above-bowl switch '%s': %w", conf.RightAboveBowl, err)
-	}
-	s.rightAboveBowl = rightAboveBowlSwitch
-
-	rightGrabBowlSwitch, err := sw.FromProvider(deps, conf.RightGrabBowl)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get right-grab-bowl switch '%s': %w", conf.RightGrabBowl, err)
-	}
-	s.rightGrabBowl = rightGrabBowlSwitch
-
-	rightAboveDeliverySwitch, err := sw.FromProvider(deps, conf.RightAboveDelivery)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get right-above-delivery switch '%s': %w", conf.RightAboveDelivery, err)
-	}
-	s.rightAboveDelivery = rightAboveDeliverySwitch
-
-	rightBowlDeliverySwitch, err := sw.FromProvider(deps, conf.RightBowlDelivery)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get right-bowl-delivery switch '%s': %w", conf.RightBowlDelivery, err)
-	}
-	s.rightBowlDelivery = rightBowlDeliverySwitch
-
-	rightHomeSwitch, err := sw.FromProvider(deps, conf.RightHome)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get right-home switch '%s': %w", conf.RightHome, err)
-	}
-	s.rightHome = rightHomeSwitch
 
 	if conf.LittleArm != "" {
 		littleArmComponent, err := arm.FromProvider(deps, conf.LittleArm)
@@ -269,15 +192,9 @@ func (s *bowlControls) Name() resource.Name {
 }
 
 func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
-	if _, ok := cmd["deliver_bowl"]; ok {
-		return s.doDeliverBowl(ctx)
-	}
 	if _, ok := cmd["reset"]; ok {
 		skipLilArm, _ := cmd["skip_lil_arm"].(bool)
 		return s.reset(ctx, skipLilArm)
-	}
-	if _, ok := cmd["prepare_bowl"]; ok {
-		return s.doPrepareBowl(ctx)
 	}
 	if _, ok := cmd["grab_lid"]; ok {
 		return s.doGrabLid(ctx, cmd)
@@ -309,7 +226,7 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 	if _, ok := cmd["grab_and_use_tool"]; ok {
 		return s.doGrabAndUseTool(ctx, cmd)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'deliver_bowl', 'prepare_bowl', 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', 'force_move', 'use_tool', 'grab_and_use_tool', or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'grab_lid', 'grab_bowl', 'move_down_to_bowl', 'move_down_to_lid', 'force_move', 'use_tool', 'grab_and_use_tool', or 'reset' field")
 }
 
 // doForceMove forwards a call to the configured xarm-force-mover service.
@@ -395,120 +312,6 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 		}
 		lastVal = &val
 	}
-}
-
-func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{}, error) {
-	s.logger.Infof("Executing prepare_bowl")
-
-	// open gripper
-	if err := s.rightGripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open right gripper: %w", err)
-	}
-	s.logger.Debugf("Opened right gripper")
-
-	if err := s.rightAboveDelivery.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-delivery switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-above-delivery switch to position 2")
-
-	if err := s.rightBowlDelivery.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-bowl-delivery switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-bowl-delivery switch to position 2")
-
-	if _, err := s.rightGripper.Grab(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to close right gripper: %w", err)
-	}
-	s.logger.Debugf("Closed right gripper")
-
-	if err := s.rightAboveDelivery.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-delivery switch to position 2 (second time): %w", err)
-	}
-	s.logger.Debugf("Set right-above-delivery switch to position 2 (second time)")
-
-	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-above-bowl switch to position 2")
-
-	if err := s.moveDownTo(ctx, "bowl"); err != nil {
-		return nil, fmt.Errorf("failed to move down to bowl: %w", err)
-	}
-	s.logger.Debugf("Moved down to bowl")
-
-	if err := s.rightGripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open right gripper: %w", err)
-	}
-	s.logger.Debugf("Opened right gripper")
-
-	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2 (second time): %w", err)
-	}
-	s.logger.Debugf("Set right-above-bowl switch to position 2 (second time)")
-
-	s.logger.Infof("Successfully completed prepare_bowl")
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "Successfully prepared bowl",
-	}, nil
-}
-
-func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{}, error) {
-	s.logger.Infof("Executing deliver_bowl")
-
-	// open gripper
-	if err := s.rightGripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open right gripper: %w", err)
-	}
-	s.logger.Debugf("Opened right gripper")
-
-	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-above-bowl switch to position 2")
-
-	if err := s.rightGrabBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-grab-bowl switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-grab-bowl switch to position 2")
-
-	if _, err := s.rightGripper.Grab(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to close right gripper: %w", err)
-	}
-	s.logger.Debugf("Closed right gripper")
-
-	time.Sleep(1000 * time.Millisecond)
-
-	if err := s.rightAboveBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-bowl switch to position 2 (second time): %w", err)
-	}
-	s.logger.Debugf("Set right-above-bowl switch to position 2 (second time)")
-
-	if err := s.rightAboveDelivery.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-above-delivery switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-above-delivery switch to position 2")
-
-	if err := s.rightBowlDelivery.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-bowl-delivery switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-bowl-delivery switch to position 2")
-
-	if _, err := s.rightGripper.DoCommand(ctx, map[string]interface{}{"set": 400.0}); err != nil {
-		return nil, fmt.Errorf("failed to open right gripper: %w", err)
-	}
-
-	s.logger.Debugf("Opened right gripper")
-
-	s.logger.Debugf("Set right-home switch to position 2")
-
-	s.logger.Infof("Successfully completed deliver_bowl")
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "Successfully delivered bowl",
-	}, nil
 }
 
 func (s *bowlControls) doGrabLid(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -777,11 +580,6 @@ func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]inte
 }
 
 func (s *bowlControls) reset(ctx context.Context, skipLilArm bool) (map[string]interface{}, error) {
-	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-home switch to position 2")
-
 	if s.lilArmHome != nil {
 		if skipLilArm {
 			s.logger.Debugf("skip_lil_arm set; not moving lil-arm home")

@@ -803,7 +803,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return nil, fmt.Errorf("build_salad requires at least one ingredient")
 	}
 
-	var result map[string]interface{}
 	lilArmControls, _ := s.bowlControls.(*bowlControls)
 	lilArmEnabled := !s.skipLilArm && lilArmControls != nil && lilArmControls.lilArmGripper != nil
 	if s.skipLilArm {
@@ -811,11 +810,10 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	if lilArmEnabled {
-		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		if _, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
 			"target":    60,
-		})
-		if err != nil {
+		}); err != nil {
 			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("Failed to grab bowl: %v", err),
@@ -823,11 +821,10 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+	if _, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 		"reset":        true,
 		"skip_lil_arm": s.skipLilArm,
-	})
-	if err != nil {
+	}); err != nil {
 		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Failed to reset bowl controls after preparing: %v", err),
@@ -871,8 +868,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return categoryOrder[targets[i].category] < categoryOrder[targets[j].category]
 	})
 
-	// Total steps = all servings + 1 for bowl delivery
-	totalSteps := totalServings + 1
+	totalSteps := totalServings
 	var completedServings float64
 
 	s.logger.Infof("Building salad with %d ingredients", len(targets))
@@ -896,10 +892,9 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		completedServings += target.servings
 	}
 
-	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
+	if _, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
-	})
-	if err != nil {
+	}); err != nil {
 		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
@@ -908,47 +903,16 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 
 	// commenting out for demo, not reliable yet
 	// if lilArmEnabled {
-	// 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+	// 	if _, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 	// 		"grab_lid": true,
 	// 		"target":   80,
-	// 	})
-	// 	if err != nil {
+	// 	}); err != nil {
 	// 		return map[string]interface{}{
 	// 			"success": false,
 	// 			"message": fmt.Sprintf("Failed to grab lid: %v", err),
 	// 		}, nil
 	// 	}
 	// }
-
-	s.updateStatus("delivering salad", completedServings/totalSteps*100)
-	s.logger.Infof("All ingredients added, delivering bowl")
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"deliver_bowl": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %v", err),
-		}, nil
-	}
-	if success, ok := result["success"].(bool); ok && !success {
-		msg, _ := result["message"].(string)
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %s", msg),
-		}, nil
-	}
-
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset":        true,
-		"skip_lil_arm": s.skipLilArm,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
-		}, nil
-	}
 
 	// if target contains dressing item:
 	// Dressing pours over the bowl at the delivery position, after both
