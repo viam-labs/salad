@@ -45,17 +45,25 @@ type DressingOptionConfig struct {
 	Grab         DressingPoseConfig `json:"grab"`
 }
 
+type CircularPourConfig struct {
+	RadiusMm     float64                 `json:"radius-mm"`
+	PointsPerRev int                     `json:"points-per-rev,omitempty"`
+	Revolutions  int                     `json:"revolutions,omitempty"`
+	Constraints  *motionplan.Constraints `json:"constraints,omitempty"`
+}
+
 type DressingControlsConfig struct {
-	Arm              string                          `json:"arm"`
-	Gripper          string                          `json:"gripper"`
-	AssetsDir        string                          `json:"assets-dir,omitempty"`
-	PrepareDressing  DressingPoseConfig              `json:"prepare-dressing"`
-	PourDressing     DressingPoseConfig              `json:"pour-dressing"`
-	PostPourDressing DressingPoseConfig              `json:"post-pour-dressing"`
-	Home             DressingPoseConfig              `json:"home"`
-	GrabSpeedDegsPerSec float64                        `json:"grab-speed-degs-per-sec,omitempty"`
-	ShakeArmService     *string                        `json:"shake-arm-service,omitempty"`
-	Dressings        map[string]DressingOptionConfig `json:"dressings"`
+	Arm                 string                          `json:"arm"`
+	Gripper             string                          `json:"gripper"`
+	AssetsDir           string                          `json:"assets-dir,omitempty"`
+	PrepareDressing     DressingPoseConfig              `json:"prepare-dressing"`
+	PourDressing        DressingPoseConfig              `json:"pour-dressing"`
+	CircularPour        *CircularPourConfig             `json:"circular-pour,omitempty"`
+	PostPourDressing    DressingPoseConfig              `json:"post-pour-dressing"`
+	Home                DressingPoseConfig              `json:"home"`
+	GrabSpeedDegsPerSec float64                         `json:"grab-speed-degs-per-sec,omitempty"`
+	ShakeArmService     *string                         `json:"shake-arm-service,omitempty"`
+	Dressings           map[string]DressingOptionConfig `json:"dressings"`
 }
 
 func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, error) {

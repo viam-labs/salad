@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/motionplan"
 	"go.viam.com/rdk/motionplan/armplanning"
@@ -30,6 +31,7 @@ type dressingStep struct {
 	postAction   GrabStepAction
 	postShake    bool
 	moveOptions  *arm.MoveOptions
+	revolutions  int
 }
 
 type dressingPlan struct {
@@ -119,7 +121,81 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 		if len(traj) > 0 {
 			startState = armplanning.NewPlanState(nil, traj[len(traj)-1])
 		}
+
+		if spec.name == "pour" && s.cfg.CircularPour != nil {
+			circStep, newStartState, err := s.planCircularPour(ctx, fs, startState)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, *circStep)
+			startState = newStartState
+		}
 	}
 
 	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
+}
+
+func (s *dressingControls) planCircularPour(ctx context.Context, fs *referenceframe.FrameSystem, startState *armplanning.PlanState) (*dressingStep, *armplanning.PlanState, error) {
+	cfg := s.cfg.CircularPour
+	pointsPerRev := cfg.PointsPerRev
+	if pointsPerRev == 0 {
+		pointsPerRev = 8
+	}
+	revolutions := cfg.Revolutions
+	if revolutions < 1 {
+		revolutions = 1
+	}
+
+	poses := computeCircularPoses(s.cfg.PourDressing.toPose(), cfg.RadiusMm, pointsPerRev)
+	goals := make([]*armplanning.PlanState, len(poses))
+	for i, pose := range poses {
+		goals[i] = armplanning.NewPlanState(
+			referenceframe.FrameSystemPoses{
+				s.cfg.Arm: referenceframe.NewPoseInFrame(referenceframe.World, pose),
+			},
+			nil,
+		)
+	}
+
+	req := &armplanning.PlanRequest{
+		FrameSystem: fs,
+		WorldState:  s.worldState,
+		StartState:  startState,
+		Goals:       goals,
+		Constraints: cfg.Constraints,
+	}
+
+	t := time.Now()
+	plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
+	planDur := time.Since(t)
+	s.logger.Infof("planned step %q in %.2fs", "circular_pour", planDur.Seconds())
+	if err != nil {
+		return nil, nil, fmt.Errorf("planning step %q: %w", "circular_pour", err)
+	}
+
+	traj := plan.Trajectory()
+	var newStartState *armplanning.PlanState
+	if len(traj) > 0 {
+		newStartState = armplanning.NewPlanState(nil, traj[len(traj)-1])
+	} else {
+		newStartState = startState
+	}
+
+	return &dressingStep{
+		name:         "circular_pour",
+		trajectory:   traj,
+		planningTime: planDur,
+		revolutions:  revolutions,
+	}, newStartState, nil
+}
+
+func computeCircularPoses(centerPose spatialmath.Pose, radiusMm float64, pointsPerRev int) []spatialmath.Pose {
+	center := centerPose.Point()
+	poses := make([]spatialmath.Pose, pointsPerRev)
+	for i := range pointsPerRev {
+		angle := 2 * math.Pi * float64(i) / float64(pointsPerRev)
+		offset := r3.Vector{X: radiusMm * math.Cos(angle), Y: radiusMm * math.Sin(angle)}
+		poses[i] = spatialmath.NewPose(center.Add(offset), centerPose.Orientation())
+	}
+	return poses
 }
