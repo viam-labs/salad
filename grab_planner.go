@@ -90,11 +90,11 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		return nil, fmt.Errorf("building frame system: %w", err)
 	}
 
-	currentInputs, err := s.arm.JointPositions(ctx, nil)
+	currentInputs, err := s.fsService.CurrentInputs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting arm joint positions: %w", err)
+		return nil, fmt.Errorf("getting current frame system inputs: %w", err)
 	}
-	startState := armplanning.NewPlanState(nil, referenceframe.FrameSystemInputs{s.cfg.Arm: currentInputs})
+	startState := armplanning.NewPlanState(nil, currentInputs)
 
 	steps := make([]GrabStep, 0, len(specs))
 	for _, spec := range specs {
