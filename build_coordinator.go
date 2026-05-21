@@ -918,23 +918,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// }
 
 	s.updateStatus("delivering salad", completedServings/totalSteps*100)
-	s.logger.Infof("All ingredients added, delivering bowl")
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"deliver_bowl": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %v", err),
-		}, nil
-	}
-	if success, ok := result["success"].(bool); ok && !success {
-		msg, _ := result["message"].(string)
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %s", msg),
-		}, nil
-	}
+	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
 	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 		"reset":        true,
