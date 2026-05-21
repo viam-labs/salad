@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/components/arm"
@@ -74,28 +73,6 @@ func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, er
 		deps = append(deps, *cfg.ShakeArmService)
 	}
 	return deps, []string{}, nil
-}
-
-type dressingStepSpec struct {
-	name        string
-	goal        spatialmath.Pose
-	constraints *motionplan.Constraints
-	postAction  GrabStepAction
-	postShake   bool
-}
-
-type dressingStep struct {
-	name         string
-	trajectory   motionplan.Trajectory
-	planningTime time.Duration
-	postAction   GrabStepAction
-	postShake    bool
-}
-
-type dressingPlan struct {
-	dressingName string
-	steps        []dressingStep
-	plannedAt    time.Time
 }
 
 type dressingControls struct {
@@ -222,127 +199,6 @@ func (s *dressingControls) loadWorldState() error {
 	}
 
 	s.worldState = ws
-	return nil
-}
-
-func (s *dressingControls) planDressing(ctx context.Context, name string) (*dressingPlan, error) {
-	opt, ok := s.cfg.Dressings[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown dressing %q", name)
-	}
-
-	if err := s.loadWorldState(); err != nil {
-		return nil, err
-	}
-
-	specs := []dressingStepSpec{
-		{name: "approach_grab",        goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "grab",                 goal: opt.Grab.toPose(),                constraints: opt.Grab.Constraints,               postAction: GrabStepActionClose},
-		{name: "approach_grab_up",     goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "prepare_dressing",     goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
-		{name: "pour",                 goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postShake: true},
-		{name: "pour_2",               goal: s.cfg.PourDressing2.toPose(),    constraints: s.cfg.PourDressing2.Constraints,     postShake: true},
-		{name: "pour_back",            goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postShake: true},
-		{name: "post_pour",            goal: s.cfg.PostPourDressing.toPose(), constraints: s.cfg.PostPourDressing.Constraints},
-		{name: "prepare_return",       goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
-		{name: "approach_grab_return", goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "grab_return",          goal: opt.Grab.toPose(),               constraints: opt.Grab.Constraints,                postAction: GrabStepActionOpen},
-		{name: "approach_grab_final",  goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "home",                 goal: s.cfg.Home.toPose(),             constraints: s.cfg.Home.Constraints},
-	}
-
-	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
-	if err != nil {
-		return nil, fmt.Errorf("building frame system: %w", err)
-	}
-
-	armCurrentInputs, err := s.arm.CurrentInputs(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting arm current inputs: %w", err)
-	}
-	startInputs := referenceframe.NewZeroInputs(fs)
-	if len(armCurrentInputs) > 0 {
-		startInputs[s.cfg.Arm] = armCurrentInputs
-	}
-	startState := armplanning.NewPlanState(nil, startInputs)
-
-	steps := make([]dressingStep, 0, len(specs))
-	for _, spec := range specs {
-		goalState := armplanning.NewPlanState(
-			referenceframe.FrameSystemPoses{
-				s.cfg.Arm: referenceframe.NewPoseInFrame(referenceframe.World, spec.goal),
-			},
-			nil,
-		)
-		req := &armplanning.PlanRequest{
-			FrameSystem: fs,
-			WorldState:  s.worldState,
-			StartState:  startState,
-			Goals:       []*armplanning.PlanState{goalState},
-			Constraints: spec.constraints,
-		}
-
-		t := time.Now()
-		plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
-		planDur := time.Since(t)
-		s.logger.Infof("planned step %q in %.2fs", spec.name, planDur.Seconds())
-		if err != nil {
-			return nil, fmt.Errorf("planning step %q: %w", spec.name, err)
-		}
-
-		traj := plan.Trajectory()
-		steps = append(steps, dressingStep{
-			name:         spec.name,
-			trajectory:   traj,
-			planningTime: planDur,
-			postAction:   spec.postAction,
-			postShake:    spec.postShake,
-		})
-
-		if len(traj) > 0 {
-			startState = armplanning.NewPlanState(nil, traj[len(traj)-1])
-		}
-	}
-
-	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
-}
-
-func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
-	if err := s.gripper.Open(ctx, nil); err != nil {
-		return fmt.Errorf("open gripper: %w", err)
-	}
-
-	for _, step := range plan.steps {
-		armInputs := make([][]referenceframe.Input, len(step.trajectory))
-		for i, fsInputs := range step.trajectory {
-			armInputs[i] = fsInputs[s.cfg.Arm]
-		}
-
-		if err := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil); err != nil {
-			return fmt.Errorf("step %q: %w", step.name, err)
-		}
-		s.logger.Debugf("completed step %q", step.name)
-
-		switch step.postAction {
-		case GrabStepActionOpen:
-			if err := s.gripper.Open(ctx, nil); err != nil {
-				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
-			}
-			s.logger.Debugf("opened gripper after %q", step.name)
-		case GrabStepActionClose:
-			if _, err := s.gripper.Grab(ctx, nil); err != nil {
-				return fmt.Errorf("step %q: close gripper: %w", step.name, err)
-			}
-			s.logger.Debugf("closed gripper after %q", step.name)
-		}
-
-		if step.postShake && s.shakeArmService != nil {
-			if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
-				return fmt.Errorf("step %q: shake arm: %w", step.name, err)
-			}
-			s.logger.Debugf("shook arm after %q", step.name)
-		}
-	}
 	return nil
 }
 
