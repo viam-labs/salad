@@ -1,14 +1,21 @@
 # Model ncs:salad:passthrough-to-camera
 
-Provide a description of the model and any relevant information.
+A vision service that forwards point clouds from a single camera through
+the `vision` API surface, so callers that only have a `vision` service
+binding can still pull a point cloud out of a camera. Used by the front-end
+to render the captured PCD during station setup.
+
+Only `GetObjectPointClouds` is implemented — every other `vision.Service`
+method (`Detections`, `Classifications`, `GetProperties`,
+`CaptureAllFromCamera`, `DoCommand`) returns `not implemented`.
 
 ## Configuration
+
 The following attribute template can be used to configure this model:
 
 ```json
 {
-"attribute_1": <float>,
-"attribute_2": <string>
+  "camera": <string>
 }
 ```
 
@@ -16,32 +23,30 @@ The following attribute template can be used to configure this model:
 
 The following attributes are available for this model:
 
-| Name          | Type   | Inclusion | Description                |
-|---------------|--------|-----------|----------------------------|
-| `attribute_1` | float  | Required  | Description of attribute 1 |
-| `attribute_2` | string | Optional  | Description of attribute 2 |
+| Name | Type | Inclusion | Description |
+|---|---|---|---|
+| `camera` | string | Required | Name of the `camera` component to read point clouds from. Declared as a required dependency. |
 
 ### Example Configuration
 
 ```json
 {
-  "attribute_1": 1.0,
-  "attribute_2": "foo"
+  "camera": "overhead-cam"
 }
 ```
+
+## API
+
+This model implements `rdk:service:vision`, but only the
+`GetObjectPointClouds` method:
+
+- `GetObjectPointClouds(ctx, cameraName, extra)` — calls `NextPointCloud`
+  on the configured camera and returns a single
+  `vision.Object` wrapping the result. The `cameraName` argument is
+  ignored — the camera configured on this service is always used.
+
+All other vision methods return `not implemented`.
 
 ## DoCommand
 
-If your model implements DoCommand, provide an example payload of each command that is supported and the arguments that can be used. If your model does not implement DoCommand, remove this section.
-
-### Example DoCommand
-
-```json
-{
-  "command_name": {
-    "arg1": "foo",
-    "arg2": 1
-  }
-}
-```
-
+Not implemented; calls return `not implemented`.

@@ -32,16 +32,30 @@ def get_point_cloud(file_name_path, max_nn, orient_nn):
 # hole-free mesh from a point cloud with normals.
 # depth controls the level of detail: higher = finer surface (8-11 typical).
 # density_quantile removes low-confidence exterior "spray" vertices; 0 keeps all.
-def create_poisson_mesh(pcd, depth=9, density_quantile=0.02):
+# target_triangles, if > 0, decimates the mesh down to roughly that many
+# triangles via quadric error metrics. Used to keep the mesh cheap to use as
+# a motion-planning collision obstacle.
+def create_poisson_mesh(pcd, depth=9, density_quantile=0.02, target_triangles=0):
     mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=depth)
 
-    # Remove very low-density vertices (artefacts far from real surface).
     if density_quantile > 0:
         densities = np.asarray(densities)
         thresh = np.quantile(densities, density_quantile)
         mesh.remove_vertices_by_mask(densities < thresh)
 
-    mesh.compute_vertex_normals()
     if len(mesh.vertices) == 0:
         raise RuntimeError("Poisson reconstruction produced an empty mesh")
+
+    if target_triangles > 0 and len(mesh.triangles) > target_triangles:
+        mesh.remove_duplicated_vertices()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_degenerate_triangles()
+        mesh.remove_non_manifold_edges()
+        mesh.remove_unreferenced_vertices()
+        before = len(mesh.triangles)
+        mesh = mesh.simplify_quadric_decimation(target_triangles)
+        print(f"meshifier: decimated {before} -> {len(mesh.triangles)} "
+              f"triangles (target {target_triangles})", flush=True)
+
+    mesh.compute_vertex_normals()
     return mesh

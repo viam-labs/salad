@@ -38,14 +38,26 @@ type Zone struct {
 	Mesh ZoneMesh `json:"mesh"`
 }
 
+// minZPercentile is the vertex Z percentile used as the bin floor.
+// Using a percentile (rather than the absolute min) discards mesh
+// reconstruction outliers (stray vertices that spike below the true
+// floor) which would otherwise pull descent depth too low.
+const minZPercentile = 0.05
+
 func (z *Zone) MinZ() float64 {
-	minZ := math.Inf(1)
-	for _, v := range z.Mesh.Vertices {
-		if v[2] < minZ {
-			minZ = v[2]
-		}
+	if len(z.Mesh.Vertices) == 0 {
+		return math.Inf(1)
 	}
-	return minZ
+	zs := make([]float64, len(z.Mesh.Vertices))
+	for i, v := range z.Mesh.Vertices {
+		zs[i] = v[2]
+	}
+	sort.Float64s(zs)
+	idx := int(float64(len(zs)) * minZPercentile)
+	if idx >= len(zs) {
+		idx = len(zs) - 1
+	}
+	return zs[idx]
 }
 
 // Centroid returns the XY centroid of the zone computed from its mesh vertices.
