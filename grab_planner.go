@@ -87,9 +87,13 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		return nil, fmt.Errorf("building frame system: %w", err)
 	}
 
-	armCurrentInputs, err := s.arm.CurrentInputs(ctx)
+	allCurrentInputs, err := s.fsService.CurrentInputs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting arm current inputs: %w", err)
+		return nil, fmt.Errorf("getting current frame system inputs: %w", err)
+	}
+	armCurrentInputs, ok := allCurrentInputs[s.cfg.Arm]
+	if !ok {
+		return nil, fmt.Errorf("arm %q not found in frame system inputs", s.cfg.Arm)
 	}
 	startState := armplanning.NewPlanState(nil, referenceframe.FrameSystemInputs{
 		s.cfg.Arm: armCurrentInputs,
