@@ -19,6 +19,7 @@ import (
 
 	"salad/segmentation"
 	saladutils "salad/utils"
+	// statemachine "salad/state_machine"
 )
 
 var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
@@ -321,12 +322,14 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 }
 
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.status = status
 	s.progress = progress
 }
 
+// TODO move this inside state machine
 func (s *buildCoordinator) getStatus() map[string]interface{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
