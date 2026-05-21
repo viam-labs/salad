@@ -18,8 +18,14 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			armInputs[i] = fsInputs[s.cfg.Arm]
 		}
 
-		if err := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil); err != nil {
-			return fmt.Errorf("step %q: %w", step.name, err)
+		revolutions := step.revolutions
+		if revolutions < 1 {
+			revolutions = 1
+		}
+		for rev := range revolutions {
+			if err := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil); err != nil {
+				return fmt.Errorf("step %q rev %d: %w", step.name, rev+1, err)
+			}
 		}
 		s.logger.Debugf("completed step %q", step.name)
 
