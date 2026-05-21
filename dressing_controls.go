@@ -51,7 +51,6 @@ type DressingControlsConfig struct {
 	AssetsDir        string                          `json:"assets-dir,omitempty"`
 	PrepareDressing  DressingPoseConfig              `json:"prepare-dressing"`
 	PourDressing     DressingPoseConfig              `json:"pour-dressing"`
-	PourDressing2    DressingPoseConfig              `json:"pour-dressing2"`
 	PostPourDressing DressingPoseConfig              `json:"post-pour-dressing"`
 	Home             DressingPoseConfig              `json:"home"`
 	ShakeArmService  *string                         `json:"shake-arm-service,omitempty"`
