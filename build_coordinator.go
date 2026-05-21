@@ -21,7 +21,7 @@ import (
 	"salad/filter"
 	"salad/segmentation"
 	saladutils "salad/utils"
-	// statemachine "salad/state_machine"
+	statemachine "salad/state_machine"
 )
 
 var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
@@ -257,6 +257,7 @@ type buildCoordinator struct {
 	opDone       chan struct{}
 
 	assetsDir string
+	sm statemachine.StateMachine
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -341,6 +342,8 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		s.ingredientZoneIDs[ing.Name] = *ing.ZoneID
 	}
 
+	s.sm = *statemachine.NewStateMachine(conf.Simulate)
+
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
 	return s, nil
 }
@@ -385,24 +388,13 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
 }
 
+// TODO: possibly remove these helper functions and directly call state machine functions
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status = status
-	s.progress = progress
+	s.sm.UpdateStateMachineStatus(status, progress)
 }
 
-// TODO move this inside state machine
 func (s *buildCoordinator) getStatus() map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return map[string]interface{}{
-		"status":        s.status,
-		"progress":      s.progress,
-		"customer_name": s.customerName,
-		"error_msg":     s.errorMsg,
-	}
+	return s.sm.GetStateMachineStatus(s.customerName, s.errorMsg)
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
@@ -419,6 +411,7 @@ func (s *buildCoordinator) listIngredients() map[string]interface{} {
 	}
 }
 
+// TODO decide whether mutex should stay here or in state machine
 func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	s.mu.RLock()
 	cancelFunc := s.opCancelFunc
@@ -1112,6 +1105,7 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 	return 0, fmt.Errorf("no numeric reading found from scale sensor")
 }
 
+// TODO figure out if I need to incorporate this into state machine
 func (s *buildCoordinator) resetAll(ctx context.Context) error {
 	_, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
