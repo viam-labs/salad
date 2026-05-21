@@ -84,7 +84,6 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-height-mm")
 	}
 
-
 	if cfg.EnableBinClearance && cfg.BinClearanceXOffsetMM == 0 && cfg.BinClearanceZOffsetMM == 0 {
 		return nil, nil, fmt.Errorf("%s: at least one of 'bin-clearance-x-offset-mm' or 'bin-clearance-z-offset-mm' must be set when 'enable-bin-clearance' is true", path)
 	}
@@ -286,11 +285,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return s.reset(ctx)
 	}
 
-	if _, ok := cmd["bin_hover"]; ok {
-		return s.doHover(ctx, cmd)
-	}
-
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'bin_hover' field")
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'reset' field")
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
@@ -302,34 +297,6 @@ func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose 
 		r3.Vector{X: pt.X + s.cfg.XOffsetMM, Y: pt.Y + s.cfg.YOffsetMM, Z: pt.Z},
 		pose.Orientation(),
 	)
-}
-
-func (s *grabberControls) doHover(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
-	if zoneIDVal, ok := cmd["bin_hover"]; ok {
-		if err := s.loadAssets(); err != nil {
-			return nil, err
-		}
-
-		var zoneID int
-		switch v := zoneIDVal.(type) {
-		case int:
-			zoneID = v
-		case float64:
-			zoneID = int(v)
-		default:
-			return nil, fmt.Errorf("'bin_hover' must be an int zone ID, got %T", zoneIDVal)
-		}
-
-		bin, ok := s.bins[zoneID]
-		if !ok {
-			return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
-		}
-		if bin.hoverPose == nil {
-			return nil, fmt.Errorf("zone %d has no computed hover pose; check that zones.json contains zone %d", zoneID, zoneID)
-		}
-		return nil, s.moveArm(ctx, s.applyXYOffset(bin.hoverPose), nil)
-	}
-	return nil, fmt.Errorf("unknown command")
 }
 
 // loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
