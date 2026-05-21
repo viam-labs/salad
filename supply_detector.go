@@ -102,6 +102,10 @@ func (s *supplyDetector) Name() resource.Name {
 	return s.name
 }
 
+func (s *supplyDetector) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
 func (s *supplyDetector) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if _, ok := cmd["check_supply"]; ok {
 		return s.checkSupply(ctx)

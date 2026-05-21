@@ -198,6 +198,10 @@ func (s *dressingControls) Name() resource.Name {
 	return s.name
 }
 
+func (s *dressingControls) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
 func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if v, ok := cmd["pour_dressing"]; ok {
 		name, ok := v.(string)

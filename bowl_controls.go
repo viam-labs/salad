@@ -268,6 +268,10 @@ func (s *bowlControls) Name() resource.Name {
 	return s.name
 }
 
+func (s *bowlControls) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
 func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if _, ok := cmd["deliver_bowl"]; ok {
 		return s.doDeliverBowl(ctx)

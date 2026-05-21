@@ -348,6 +348,10 @@ func (s *buildCoordinator) Name() resource.Name {
 	return s.name
 }
 
+func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, error) {
+	return s.getStatus(), nil
+}
+
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
