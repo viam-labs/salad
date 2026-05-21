@@ -54,7 +54,10 @@ type CropFlags struct {
 }
 
 var (
-	// Persistent flags available to all subcommands.
+	// Persistent flags available to all subcommands. Commands that dial the
+	// machine (currently plane-fit, via --camera) read these through
+	// resolveDialFlags, which also honors VIAM_ADDRESS / VIAM_API_KEY /
+	// VIAM_API_KEY_ID env vars.
 	globalAddress  string
 	globalAPIKey   string
 	globalAPIKeyID string
@@ -103,7 +106,7 @@ var cropCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&globalAddress, "address", "", "robot address (required for scan)")
+	rootCmd.PersistentFlags().StringVar(&globalAddress, "address", os.Getenv("VIAM_ADDRESS"), "robot address (or set VIAM_ADDRESS env var)")
 	rootCmd.PersistentFlags().StringVar(&globalAPIKey, "api-key", os.Getenv("VIAM_API_KEY"), "API key (or set VIAM_API_KEY env var)")
 	rootCmd.PersistentFlags().StringVar(&globalAPIKeyID, "api-key-id", os.Getenv("VIAM_API_KEY_ID"), "API key ID (or set VIAM_API_KEY_ID env var)")
 
@@ -165,11 +168,24 @@ func init() {
 	segmentCmd.Flags().IntVar(&segmentFlags.FloorRANSACIters, "floor-ransac-iters", defaults.FloorRANSACIters, "RANSAC iterations for the bin-floor plane fit; 0 disables RANSAC and uses single-pass PCA")
 	segmentCmd.Flags().Float64Var(&segmentFlags.FloorRANSACInlierMM, "floor-ransac-inlier", defaults.FloorRANSACInlierMM, "max perpendicular distance (mm) from a candidate to a RANSAC plane to count as an inlier")
 
+	planeFitCmd.Flags().StringVar(&planeFitFlags.CameraName, "camera", "", "camera component on the machine to call NextPointCloud on (mutually exclusive with --pcd)")
+	planeFitCmd.Flags().StringVar(&planeFitFlags.PCDPath, "pcd", "", "PCD file to evaluate instead of pulling from a live camera (mutually exclusive with --camera)")
+	planeFitCmd.Flags().StringVar(&planeFitFlags.SavePCD, "save-pcd", "", "if --camera is set, also save the captured cloud to this path")
+	planeFitCmd.Flags().StringVar(&planeFitFlags.ZonesPath, "zones", "", "zones.json with fitted bin-floor planes (required)")
+	planeFitCmd.Flags().IntVar(&planeFitFlags.ZoneID, "zone-id", -1, "restrict to a single zone ID; -1 = all zones")
+	planeFitCmd.Flags().StringVar(&planeFitFlags.OutputPath, "output", "", "if set, write culled PCD(s) here (file path for a single zone, directory for multiple)")
+	planeFitCmd.Flags().BoolVar(&planeFitFlags.Viz, "viz", false, "draw source cloud, culled per-zone clouds, and zone plane rectangles in the motion-tools visualizer")
+	planeFitCmd.Flags().StringVar(&planeFitFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
+	planeFitCmd.MarkFlagsMutuallyExclusive("camera", "pcd")
+	planeFitCmd.MarkFlagsOneRequired("camera", "pcd")
+	_ = planeFitCmd.MarkFlagRequired("zones")
+
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(segmentCmd)
+	rootCmd.AddCommand(planeFitCmd)
 }
 
 func main() {

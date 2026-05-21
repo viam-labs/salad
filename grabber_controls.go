@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/components/arm"
+	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/gripper"
 	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
@@ -51,7 +52,7 @@ type BowlDropPose struct {
 }
 
 type GrabberControlsConfig struct {
-	Bins                []GrabberControlsBinConfig            `json:"bins"`
+	Bins                              []GrabberControlsBinConfig            `json:"bins"`
 	BinHoverHeightMM                  float64                               `json:"bin-hover-height-mm"`
 	BinHoverOrientation               *spatialmath.OrientationVectorDegrees `json:"bin-hover-orientation,omitempty"`
 	EnableBinClearance                bool                                  `json:"enable-bin-clearance,omitempty"`
@@ -59,20 +60,21 @@ type GrabberControlsConfig struct {
 	BinClearanceZOffsetMM             float64                               `json:"bin-clearance-z-offset-mm,omitempty"`
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
-	GrabHeightMM        float64                               `json:"grab-height-mm"`
-	DroppingPose        *BowlDropPose                         `json:"dropping-pose"`
-	BowlHoverHeightMM   float64                               `json:"bowl-hover-height-mm,omitempty"`
-	Arm                 string                                `json:"arm"`
-	Gripper             string                                `json:"gripper"`
-	MotionService       string                                `json:"motion-service"`
-	LeftHome            string                                `json:"left-home"`
-	ShakeArmService     *string                               `json:"shake-arm-service,omitempty"`
-	AssetsDir           string                                `json:"assets-dir"`
-	XOffsetMM                    float64 `json:"x-offset-mm,omitempty"`
-	YOffsetMM                    float64 `json:"y-offset-mm,omitempty"`
-	SavePlans                    bool    `json:"save-plans,omitempty"`
-	GrabLineToleranceMM          float64 `json:"grab-line-tolerance-mm,omitempty"`
-	GrabOrientationToleranceDegs float64 `json:"grab-orientation-tolerance-degs,omitempty"`
+	GrabHeightMM                      float64                               `json:"grab-height-mm"`
+	DroppingPose                      *BowlDropPose                         `json:"dropping-pose"`
+	BowlHoverHeightMM                 float64                               `json:"bowl-hover-height-mm,omitempty"`
+	Arm                               string                                `json:"arm"`
+	Gripper                           string                                `json:"gripper"`
+	MotionService                     string                                `json:"motion-service"`
+	LeftHome                          string                                `json:"left-home"`
+	ShakeArmService                   *string                               `json:"shake-arm-service,omitempty"`
+	AssetsDir                         string                                `json:"assets-dir"`
+	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
+	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
+	SavePlans                         bool                                  `json:"save-plans,omitempty"`
+	GrabLineToleranceMM               float64                               `json:"grab-line-tolerance-mm,omitempty"`
+	GrabOrientationToleranceDegs      float64                               `json:"grab-orientation-tolerance-degs,omitempty"`
+	BinImagingCam                     string                                `json:"bin-imaging-cam"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -111,6 +113,10 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "gripper")
 	}
 
+	if cfg.BinImagingCam == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-imaging-cam")
+	}
+
 	if cfg.LeftHome == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "left-home")
 	}
@@ -119,6 +125,7 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 
 	requiredDeps = append(requiredDeps, cfg.Arm)
 	requiredDeps = append(requiredDeps, cfg.Gripper)
+	requiredDeps = append(requiredDeps, cfg.BinImagingCam)
 	requiredDeps = append(requiredDeps, cfg.MotionService)
 	requiredDeps = append(requiredDeps, cfg.LeftHome)
 	requiredDeps = append(requiredDeps, framesystem.PublicServiceName.String())
@@ -146,12 +153,13 @@ type grabberControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	bins          map[int]*grabberBinSwitches
-	droppingPose  spatialmath.Pose
-	bowlHoverPose spatialmath.Pose
-	arm           arm.Arm
-	gripper       gripper.Gripper
-	leftHome      sw.Switch
+	bins            map[int]*grabberBinSwitches
+	droppingPose    spatialmath.Pose
+	bowlHoverPose   spatialmath.Pose
+	arm             arm.Arm
+	gripper         gripper.Gripper
+	binImagingCam   camera.Camera
+	leftHome        sw.Switch
 	shakeArmService genericservice.Service
 	motionService   motion.Service
 	fsService       framesystem.Service
@@ -227,6 +235,12 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		return nil, fmt.Errorf("failed to get left gripper '%s': %w", conf.Gripper, err)
 	}
 	s.gripper = gripperComponent
+
+	binImagingCam, err := camera.FromProvider(deps, conf.BinImagingCam)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bin-imaging-cam '%s': %w", conf.BinImagingCam, err)
+	}
+	s.binImagingCam = binImagingCam
 
 	leftHomeSwitch, err := sw.FromProvider(deps, conf.LeftHome)
 	if err != nil {
@@ -376,6 +390,50 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, depthOffsetMM
 	return spatialmath.NewPose(point, s.cfg.BinHoverOrientation), nil
 }
 
+// logBinImagingCamPlaneFit snapshots the bin-imaging camera point cloud, culls
+// it to the zone's XY rect, and logs the mean distance from those points to
+// the zone's fitted floor plane.
+//
+// Output format (single info line, mm units):
+//
+//	zone N plane-fit: K/T pts (P%) in zone XY rect; distance-to-floor-plane:
+//	  mean|d|=A.AA mean_signed=S.SS (+above/-below) range=[MIN, MAX] tilt=T.TTdeg; capture+stats E.EEs
+//
+// Failure modes (camera read, empty cloud, no in-bounds points) are logged at
+// warn level and do not propagate: this is observational only.
+func (s *grabberControls) logBinImagingCamPlaneFit(ctx context.Context, zone *segmentation.Zone) {
+	if s.binImagingCam == nil {
+		return
+	}
+	start := time.Now()
+	pc, err := s.binImagingCam.NextPointCloud(ctx, nil)
+	if err != nil {
+		s.logger.Warnf("zone %d: bin-imaging-cam NextPointCloud failed after %.2fs: %v",
+			zone.ID, time.Since(start).Seconds(), err)
+		return
+	}
+	stats, _ := segmentation.ZonePlaneFitStats(pc, zone, s.logger)
+	if stats.PointsInBounds == 0 {
+		s.logger.Warnf("zone %d: 0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
+			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY,
+			stats.PointsInsideX, stats.PointsInsideY)
+		return
+	}
+	pct := 0.0
+	if stats.PointsTotal > 0 {
+		pct = 100 * float64(stats.PointsInBounds) / float64(stats.PointsTotal)
+	}
+	s.logger.Infof(
+		"zone %d plane-fit: %d/%d pts (%.2f%%) in zone XY rect; distance-to-floor-plane (mm): "+
+			"mean|d|=%.2f mean_signed=%+.2f (+above/-below) range=[%+.2f, %+.2f] tilt=%.2fdeg; capture+stats %.2fs",
+		zone.ID, stats.PointsInBounds, stats.PointsTotal, pct,
+		stats.MeanAbsDistanceMM, stats.MeanSignedDistanceMM,
+		stats.MinSignedDistanceMM, stats.MaxSignedDistanceMM,
+		zone.Plane.TiltDeg(),
+		time.Since(start).Seconds(),
+	)
+}
+
 const grabPlansDir = "/root/.viam/capture"
 
 func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
@@ -390,7 +448,6 @@ func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
 	}
 	return os.WriteFile(fname, data, 0o644)
 }
-
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if err := s.loadAssets(); err != nil {
@@ -429,6 +486,13 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 
 	zone, err := s.getZone(zoneID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.logBinImagingCamPlaneFit(ctx, zone)
+
+	_, err = s.computeGrabPose(zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
 	}
