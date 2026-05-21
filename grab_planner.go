@@ -54,8 +54,12 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		return nil, err
 	}
 
-	hover := s.applyXYOffset(bin.hoverPose)
+	// hover := s.applyXYOffset(bin.hoverPose)
 	// grab := s.applyXYOffset(grabPose)
+
+	hoverWithOffset := s.applyXYOffset(bin.hoverPose)
+	// use the grab pose orientation so the orientations are consistent between the two
+	hover := spatialmath.NewPose(hoverWithOffset.Point(), grabPose.Orientation())
 
 	specs := []grabStepSpec{
 		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
