@@ -1,14 +1,21 @@
 package salad
 
 import (
+	"context"
+	"fmt"
+	"time"
+
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/motionplan"
+	"go.viam.com/rdk/motionplan/armplanning"
+	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/robot/framesystem"
 	"go.viam.com/rdk/spatialmath"
 
 	"salad/segmentation"
 )
 
-// GrabStepAction is an optional gripper operation performed after the arm reaches a step's pose.
+// GrabStepAction is an optional gripper operation performed after the arm executes a step's trajectory.
 type GrabStepAction int
 
 const (
@@ -17,23 +24,31 @@ const (
 	GrabStepActionClose                // close gripper (Grab)
 )
 
-// GrabStep is a single motion step: move the arm to Pose under Constraints, then perform PostAction.
+// GrabStep holds the pre-computed trajectory for one motion phase.
 type GrabStep struct {
-	Name        string
-	Pose        spatialmath.Pose
-	Constraints *motionplan.Constraints // nil = unconstrained
-	PostAction  GrabStepAction
+	Name         string
+	Trajectory   motionplan.Trajectory
+	PlanningTime time.Duration
+	PostAction   GrabStepAction
 }
 
-// GrabPlan is the pre-computed sequence of steps for a single ingredient grab.
+// GrabPlan is the fully pre-computed set of trajectories for a single ingredient grab.
 // TODO: add ID field for per-grab tracing/debugging
 type GrabPlan struct {
-	BinName string
-	ZoneID  int
-	Steps   []GrabStep
+	BinName   string
+	ZoneID    int
+	Steps     []GrabStep
+	PlannedAt time.Time
 }
 
-func (s *grabberControls) planGrab(bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
+type grabStepSpec struct {
+	name        string
+	goal        spatialmath.Pose
+	constraints *motionplan.Constraints
+	postAction  GrabStepAction
+}
+
+func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
 	grabPose, err := s.computeGrabPose(zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
@@ -42,14 +57,13 @@ func (s *grabberControls) planGrab(bin *grabberBinSwitches, zoneID int, zone *se
 	hover := s.applyXYOffset(bin.hoverPose)
 	grab := s.applyXYOffset(grabPose)
 	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
-	grabConstraints := s.grabLinearConstraints()
 
-	steps := []GrabStep{
-		{Name: "above_bin", Pose: hover, PostAction: GrabStepActionOpen},
-		{Name: "descend", Pose: grab, Constraints: grabConstraints},
-		{Name: "tilt", Pose: tilted, PostAction: GrabStepActionClose},
-		{Name: "untilt", Pose: grab},
-		{Name: "ascend", Pose: hover, Constraints: grabConstraints},
+	specs := []grabStepSpec{
+		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
+		{name: "descend", goal: grab, constraints: s.grabLinearConstraints()},
+		{name: "tilt", goal: tilted, postAction: GrabStepActionClose},
+		{name: "untilt", goal: grab},
+		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
 
 	if s.cfg.EnableBinClearance {
@@ -62,16 +76,64 @@ func (s *grabberControls) planGrab(bin *grabberBinSwitches, zoneID int, zone *se
 			},
 			hover.Orientation(),
 		)
-		steps = append(steps, GrabStep{Name: "clearance", Pose: clearancePose, Constraints: s.clearanceLinearConstraints()})
+		specs = append(specs, grabStepSpec{name: "clearance", goal: clearancePose, constraints: s.clearanceLinearConstraints()})
 	}
 
-	steps = append(steps,
-		GrabStep{Name: "bowl_hover", Pose: s.bowlHoverPose},
-		GrabStep{Name: "drop", Pose: s.droppingPose, PostAction: GrabStepActionOpen},
-		GrabStep{Name: "return_bowl_hover", Pose: s.bowlHoverPose},
+	specs = append(specs,
+		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose},
+		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
+		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
 	)
 
-	return &GrabPlan{BinName: bin.name, ZoneID: zoneID, Steps: steps}, nil
+	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building frame system: %w", err)
+	}
+
+	currentInputs, err := s.arm.JointPositions(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("getting arm joint positions: %w", err)
+	}
+	startState := armplanning.NewPlanState(nil, referenceframe.FrameSystemInputs{s.cfg.Arm: currentInputs})
+
+	steps := make([]GrabStep, 0, len(specs))
+	for _, spec := range specs {
+		goalState := armplanning.NewPlanState(
+			referenceframe.FrameSystemPoses{
+				s.cfg.Arm: referenceframe.NewPoseInFrame(referenceframe.World, spec.goal),
+			},
+			nil,
+		)
+		req := &armplanning.PlanRequest{
+			FrameSystem: fs,
+			WorldState:  s.worldState,
+			StartState:  startState,
+			Goals:       []*armplanning.PlanState{goalState},
+			Constraints: spec.constraints,
+		}
+
+		t := time.Now()
+		plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
+		planDur := time.Since(t)
+		s.logger.Infof("planned step %q in %.2fs", spec.name, planDur.Seconds())
+		if err != nil {
+			return nil, fmt.Errorf("planning step %q: %w", spec.name, err)
+		}
+
+		traj := plan.Trajectory()
+		steps = append(steps, GrabStep{
+			Name:         spec.name,
+			Trajectory:   traj,
+			PlanningTime: planDur,
+			PostAction:   spec.postAction,
+		})
+
+		if len(traj) > 0 {
+			startState = armplanning.NewPlanState(nil, traj[len(traj)-1])
+		}
+	}
+
+	return &GrabPlan{BinName: bin.name, ZoneID: zoneID, Steps: steps, PlannedAt: time.Now()}, nil
 }
 
 func (s *grabberControls) grabLinearConstraints() *motionplan.Constraints {

@@ -15,7 +15,7 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 	var record *grabPlanRecord
 	if s.cfg.SavePlans {
 		record = &grabPlanRecord{
-			StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			StartedAt: plan.PlannedAt.UTC().Format(time.RFC3339Nano),
 			BinName:   plan.BinName,
 			ZoneID:    plan.ZoneID,
 		}
@@ -31,12 +31,25 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 	}
 
 	for _, step := range plan.Steps {
-		moveErr := s.moveArm(ctx, step.Pose, step.Constraints)
-		if record != nil {
-			record.Steps = append(record.Steps, poseToStep(step.Name, step.Pose, step.Constraints != nil, moveErr))
+		armInputs := make([][]referenceframe.Input, len(step.Trajectory))
+		for i, fsInputs := range step.Trajectory {
+			armInputs[i] = fsInputs[s.cfg.Arm]
 		}
-		if moveErr != nil {
-			return fmt.Errorf("step %q: %w", step.Name, moveErr)
+
+		execErr := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil)
+		if record != nil {
+			ps := grabPlanStep{
+				Step:          step.Name,
+				TrajectoryLen: len(step.Trajectory),
+				PlanningDurMS: step.PlanningTime.Milliseconds(),
+			}
+			if execErr != nil {
+				ps.ExecError = execErr.Error()
+			}
+			record.Steps = append(record.Steps, ps)
+		}
+		if execErr != nil {
+			return fmt.Errorf("step %q: %w", step.Name, execErr)
 		}
 		s.logger.Debugf("completed step %q", step.Name)
 
@@ -56,6 +69,7 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 	return nil
 }
 
+// moveArm is used by doHover, which still goes through the motion service.
 func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, constraints *motionplan.Constraints) error {
 	pt := dest.Point()
 	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f (linear=%v)", pt.X, pt.Y, pt.Z, constraints != nil)
