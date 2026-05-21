@@ -390,11 +390,10 @@ func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentatio
 		Y: zonePlane.Normal[1],
 		Z: zonePlane.Normal[2],
 	}
-
-	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
 	if foodLevelMM < 35.0 {
 		return nil, fmt.Errorf("food level is too low: %.2f mm", foodLevelMM)
 	}
+	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
 
 	// hardcoding for now but want to detect this at some point
 	closedGripperToArmBaseHeightMM := 365.0
@@ -539,13 +538,13 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	_, err = s.getBinFoodLevel(ctx, zone)
+	binFoodLevelMM, err := s.getBinFoodLevel(ctx, zone)
 	if err != nil {
 		return nil, err
 	}
 
 	s.logger.Infof("Planning get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
-	plan, err := s.planGrab(ctx, bin, zoneID, zone, depthOffsetMM)
+	plan, err := s.planGrab(ctx, bin, zoneID, zone, binFoodLevelMM)
 	if err != nil {
 		return nil, err
 	}

@@ -50,6 +50,13 @@ type Zone struct {
 // Plane represents a best-fit infinite plane in 3D as a point + unit normal.
 // Normal is forced to point "up" (Normal[2] > 0) by the fitter so callers can
 // use it directly as the local +Z of a bin-floor frame.
+//
+// Point is the geometric center of the zone's rendered PlaneRect quad —
+// i.e. the midpoint of (MinX|MaxX, MinY|MaxY) projected onto the plane via
+// ZAt. Choosing a well-defined center (rather than e.g. a RANSAC sample
+// point or the inlier centroid, which depend on the fit path taken) lets
+// callers use Plane.Point as a stable "center of the plane" for downstream
+// motion planning.
 type Plane struct {
 	Point  [3]float64 `json:"point"`
 	Normal [3]float64 `json:"normal"`
@@ -624,6 +631,14 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 			minBY, maxBY = zi.minY, zi.maxY
 		}
 		plane := fitFloorPlane(zoneFaces[i], opts)
+		// Recenter Plane.Point onto the center of the rendered PlaneRect so
+		// it has a consistent geometric meaning regardless of which fit path
+		// (PCA / RANSAC-only / fallback) produced the plane. Moving Point
+		// along the plane does not change the plane equation, so ZAt and
+		// SignedDistance results are unaffected.
+		midX := (minBX + maxBX) / 2
+		midY := (minBY + maxBY) / 2
+		plane.Point = [3]float64{midX, midY, plane.ZAt(midX, midY)}
 		zones[i] = Zone{
 			ID:        i,
 			MinX:      minBX,

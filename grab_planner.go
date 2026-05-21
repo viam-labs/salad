@@ -49,17 +49,17 @@ type grabStepSpec struct {
 }
 
 func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
-	grabPose, err := s.computeGrabPose(zone, depthOffsetMM)
+	grabPose, err := s.computeGrabPose(ctx, zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
 	}
 
 	hover := s.applyXYOffset(bin.hoverPose)
-	grab := s.applyXYOffset(grabPose)
+	// grab := s.applyXYOffset(grabPose)
 
 	specs := []grabStepSpec{
 		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
-		{name: "descend", goal: grab, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
+		{name: "descend", goal: grabPose, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
 
