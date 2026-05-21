@@ -139,7 +139,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 func (s *dressingControls) planCircularPour(ctx context.Context, fs *referenceframe.FrameSystem, startState *armplanning.PlanState) (*dressingStep, *armplanning.PlanState, error) {
 	cfg := s.cfg.CircularPour
 	pointsPerRev := cfg.PointsPerRev
-	if pointsPerRev < 4 {
+	if pointsPerRev == 0 {
 		pointsPerRev = 8
 	}
 	revolutions := cfg.Revolutions
