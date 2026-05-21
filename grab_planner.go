@@ -56,13 +56,10 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 
 	hover := s.applyXYOffset(bin.hoverPose)
 	grab := s.applyXYOffset(grabPose)
-	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
 
 	specs := []grabStepSpec{
 		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
-		{name: "descend", goal: grab, constraints: s.grabLinearConstraints()},
-		{name: "tilt", goal: tilted, postAction: GrabStepActionClose},
-		{name: "untilt", goal: grab},
+		{name: "descend", goal: grab, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
 
@@ -90,11 +87,11 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		return nil, fmt.Errorf("building frame system: %w", err)
 	}
 
-	currentInputs, err := s.arm.JointPositions(ctx, nil)
+	currentInputs, err := s.fsService.CurrentInputs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting arm joint positions: %w", err)
+		return nil, fmt.Errorf("getting current frame system inputs: %w", err)
 	}
-	startState := armplanning.NewPlanState(nil, referenceframe.FrameSystemInputs{s.cfg.Arm: currentInputs})
+	startState := armplanning.NewPlanState(nil, currentInputs)
 
 	steps := make([]GrabStep, 0, len(specs))
 	for _, spec := range specs {
