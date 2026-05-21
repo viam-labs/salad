@@ -65,7 +65,6 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 		{name: "approach_grab_return", goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
 		{name: "grab_return",          goal: opt.Grab.toPose(),               constraints: opt.Grab.Constraints,                postAction: GrabStepActionOpen,  moveOptions: grabMoveOptions},
 		{name: "approach_grab_final",  goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "home",                 goal: s.cfg.Home.toPose(),             constraints: s.cfg.Home.Constraints},
 	}
 
 	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
