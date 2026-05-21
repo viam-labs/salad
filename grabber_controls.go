@@ -17,6 +17,7 @@ import (
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/rdk/robot/framesystem"
 	genericservice "go.viam.com/rdk/services/generic"
 	"go.viam.com/rdk/services/motion"
 	"go.viam.com/rdk/spatialmath"
@@ -126,6 +127,7 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 	requiredDeps = append(requiredDeps, cfg.Gripper)
 	requiredDeps = append(requiredDeps, cfg.MotionService)
 	requiredDeps = append(requiredDeps, cfg.LeftHome)
+	requiredDeps = append(requiredDeps, framesystem.PublicServiceName.String())
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
 		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}
@@ -158,6 +160,7 @@ type grabberControls struct {
 	leftHome      sw.Switch
 	shakeArmService genericservice.Service
 	motionService   motion.Service
+	fsService       framesystem.Service
 
 	assetsMu   sync.Mutex
 	assetsDir  string
@@ -172,16 +175,10 @@ type grabberBinSwitches struct {
 }
 
 type grabPlanStep struct {
-	Step   string  `json:"step"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
-	Z      float64 `json:"z"`
-	OX     float64 `json:"ox"`
-	OY     float64 `json:"oy"`
-	OZ     float64 `json:"oz"`
-	Theta  float64 `json:"theta"`
-	Linear bool    `json:"linear"`
-	Error  string  `json:"error,omitempty"`
+	Step          string `json:"step"`
+	TrajectoryLen int    `json:"trajectory_len"`
+	PlanningDurMS int64  `json:"planning_dur_ms"`
+	ExecError     string `json:"exec_error,omitempty"`
 }
 
 type grabPlanRecord struct {
@@ -252,6 +249,12 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		return nil, fmt.Errorf("failed to get motion service '%s': %w", conf.MotionService, err)
 	}
 	s.motionService = motionSvc
+
+	fsSvc, err := framesystem.FromProvider(deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get framesystem service: %w", err)
+	}
+	s.fsService = fsSvc
 
 	if conf.ShakeArmService != nil && *conf.ShakeArmService != "" {
 		shakeArmService, err := genericservice.FromProvider(deps, *conf.ShakeArmService)
@@ -426,25 +429,6 @@ func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
 	return os.WriteFile(fname, data, 0o644)
 }
 
-func poseToStep(name string, pose spatialmath.Pose, linear bool, stepErr error) grabPlanStep {
-	pt := pose.Point()
-	ov := pose.Orientation().OrientationVectorDegrees()
-	step := grabPlanStep{
-		Step:   name,
-		X:      pt.X,
-		Y:      pt.Y,
-		Z:      pt.Z,
-		OX:     ov.OX,
-		OY:     ov.OY,
-		OZ:     ov.OZ,
-		Theta:  ov.Theta,
-		Linear: linear,
-	}
-	if stepErr != nil {
-		step.Error = stepErr.Error()
-	}
-	return step
-}
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if err := s.loadAssets(); err != nil {
@@ -488,7 +472,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 
 	s.logger.Infof("Planning get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
-	plan, err := s.planGrab(bin, zoneID, zone, depthOffsetMM)
+	plan, err := s.planGrab(ctx, bin, zoneID, zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
 	}
