@@ -10,6 +10,7 @@ export default defineConfig({
     esbuildOptions: {
       loader: {
         ".hdr": "dataurl",
+        ".glsl": "text",
       },
     },
   },
