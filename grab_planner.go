@@ -56,13 +56,10 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 
 	hover := s.applyXYOffset(bin.hoverPose)
 	grab := s.applyXYOffset(grabPose)
-	tilted := spatialmath.NewPose(grab.Point(), s.cfg.GrabOrientation)
 
 	specs := []grabStepSpec{
 		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
-		{name: "descend", goal: grab, constraints: s.grabLinearConstraints()},
-		{name: "tilt", goal: tilted, postAction: GrabStepActionClose},
-		{name: "untilt", goal: grab},
+		{name: "descend", goal: grab, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
 
