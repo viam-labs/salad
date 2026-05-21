@@ -19,8 +19,10 @@ first command after startup, this model lazy-loads `mesh.ply` and
   `bin-hover-orientation`. The bin is then re-entered with orientation
   `grab-orientation` (a "tilt") so the gripper can scoop sideways.
 
-The bowl drop-off uses two `switch` components (`high-above-bowl` and
-`in-bowl`) — these are saved positions, not full poses.
+The bowl drop-off is driven by an inline `dropping-pose` (position + orientation)
+configured directly on this service. A hover pose is computed at startup as
+`dropping-pose` offset upward by `bowl-hover-height-mm` (default 150 mm). Both
+moves go through the motion planner with the bin mesh as a world obstacle.
 
 ## Configuration
 
@@ -31,8 +33,8 @@ The following attribute template can be used to configure this model:
   "arm": <string>,
   "gripper": <string>,
   "motion-service": <string>,
-  "high-above-bowl": <string>,
-  "in-bowl": <string>,
+  "dropping-pose": { "x": <float>, "y": <float>, "z": <float>, "orientation": { "x": <float>, "y": <float>, "z": <float>, "th": <float> } },
+  "bowl-hover-height-mm": <float>,
   "left-home": <string>,
   "bins": [
     { "name": <string>, "zone-id": <int> }
@@ -65,8 +67,8 @@ The following attributes are available for this model:
 | `arm` | string | Required | Name of the `arm` component this service moves. |
 | `gripper` | string | Required | Name of the `gripper` component on the arm. |
 | `motion-service` | string | Required | Name of the `motion` service used to plan moves with the bin mesh as a world obstacle. |
-| `high-above-bowl` | string | Required | Name of a `switch` representing the "high above the bowl" saved position. Set to `2` to drive the arm there. |
-| `in-bowl` | string | Required | Name of a `switch` representing the "in the bowl" drop position. Set to `2` to release the ingredient. |
+| `dropping-pose` | object | Required | Inline pose (fields: `x`, `y`, `z` in mm, `orientation` as OV-degrees) where the gripper opens to drop the ingredient into the bowl. |
+| `bowl-hover-height-mm` | float | Optional | Height (mm) added to `dropping-pose.z` to compute the hover pose used before and after dropping. Defaults to `150`. |
 | `left-home` | string | Required | Name of a `switch` used by `reset` to send the arm home. |
 | `bins` | array | Required | Map from bin name to segmentation zone ID. Must be non-empty; each entry must have a non-empty `name`. The `zone-id` must exist in `zones.json` at runtime. |
 | `bin-hover-height-mm` | float | Required | Hover height above the bin's mean Z (mm). Used for both pre-grab approach and post-grab return. Must be non-zero. |
@@ -93,8 +95,11 @@ The following attributes are available for this model:
   "arm": "left-arm",
   "gripper": "left-gripper",
   "motion-service": "builtin",
-  "high-above-bowl": "high-above-bowl",
-  "in-bowl": "in-bowl",
+  "dropping-pose": {
+    "x": 361.75, "y": 529.73, "z": 534.00,
+    "orientation": { "x": 0.084, "y": 0.037, "z": -0.996, "th": 111.76 }
+  },
+  "bowl-hover-height-mm": 150,
   "left-home": "left-home",
   "shake-arm-service": "left-shake",
   "bins": [
@@ -130,10 +135,10 @@ Plans and executes a full grab cycle for a single bin:
 6. Un-tilt back to the grab pose orientation.
 7. Linearly ascend back to hover pose.
 8. (If `enable-bin-clearance`) move to the clearance pose.
-9. Set `high-above-bowl` switch to position `2`.
-10. Set `in-bowl` switch to position `2`.
+9. Move arm to bowl hover pose (`dropping-pose` + `bowl-hover-height-mm`).
+10. Move arm to `dropping-pose`.
 11. Open gripper to release.
-12. Set `high-above-bowl` switch to position `2` (return).
+12. Move arm back to bowl hover pose.
 13. (If `shake-arm-service` is configured) call `{"shake_arm": true}`.
 
 The required `get_from_bin` value is the integer zone ID to grab from
