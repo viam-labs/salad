@@ -60,7 +60,6 @@ type GrabberControlsConfig struct {
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
-	GrabOrientation     *spatialmath.OrientationVectorDegrees `json:"grab-orientation,omitempty"`
 	DroppingPose        *BowlDropPose                         `json:"dropping-pose"`
 	BowlHoverHeightMM   float64                               `json:"bowl-hover-height-mm,omitempty"`
 	Arm                 string                                `json:"arm"`
@@ -92,10 +91,6 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 
 	if cfg.BinHoverOrientation == nil {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-hover-orientation")
-	}
-
-	if cfg.GrabOrientation == nil {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "grab-orientation")
 	}
 
 	if cfg.MotionService == "" {
