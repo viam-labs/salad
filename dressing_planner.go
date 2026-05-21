@@ -3,8 +3,10 @@ package salad
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/motionplan"
 	"go.viam.com/rdk/motionplan/armplanning"
 	"go.viam.com/rdk/referenceframe"
@@ -18,6 +20,7 @@ type dressingStepSpec struct {
 	constraints *motionplan.Constraints
 	postAction  GrabStepAction
 	postShake   bool
+	moveOptions *arm.MoveOptions
 }
 
 type dressingStep struct {
@@ -26,6 +29,7 @@ type dressingStep struct {
 	planningTime time.Duration
 	postAction   GrabStepAction
 	postShake    bool
+	moveOptions  *arm.MoveOptions
 }
 
 type dressingPlan struct {
@@ -44,16 +48,22 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 		return nil, err
 	}
 
+	grabSpeedDegsPerSec := s.cfg.GrabSpeedDegsPerSec
+	if grabSpeedDegsPerSec == 0 {
+		grabSpeedDegsPerSec = 30
+	}
+	grabMoveOptions := &arm.MoveOptions{MaxVelRads: grabSpeedDegsPerSec * math.Pi / 180}
+
 	specs := []dressingStepSpec{
 		{name: "approach_grab",        goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "grab",                 goal: opt.Grab.toPose(),                constraints: opt.Grab.Constraints,               postAction: GrabStepActionClose},
+		{name: "grab",                 goal: opt.Grab.toPose(),                constraints: opt.Grab.Constraints,               postAction: GrabStepActionClose, moveOptions: grabMoveOptions},
 		{name: "approach_grab_up",     goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
 		{name: "prepare_dressing",     goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
-		{name: "pour",      goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postShake: true},
-		{name: "post_pour", goal: s.cfg.PostPourDressing.toPose(), constraints: s.cfg.PostPourDressing.Constraints},
+		{name: "pour",                 goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postShake: true},
+		{name: "post_pour",            goal: s.cfg.PostPourDressing.toPose(), constraints: s.cfg.PostPourDressing.Constraints},
 		{name: "prepare_return",       goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
 		{name: "approach_grab_return", goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "grab_return",          goal: opt.Grab.toPose(),               constraints: opt.Grab.Constraints,                postAction: GrabStepActionOpen},
+		{name: "grab_return",          goal: opt.Grab.toPose(),               constraints: opt.Grab.Constraints,                postAction: GrabStepActionOpen,  moveOptions: grabMoveOptions},
 		{name: "approach_grab_final",  goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
 		{name: "home",                 goal: s.cfg.Home.toPose(),             constraints: s.cfg.Home.Constraints},
 	}
@@ -104,6 +114,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 			planningTime: planDur,
 			postAction:   spec.postAction,
 			postShake:    spec.postShake,
+			moveOptions:  spec.moveOptions,
 		})
 
 		if len(traj) > 0 {

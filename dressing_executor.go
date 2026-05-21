@@ -18,7 +18,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			armInputs[i] = fsInputs[s.cfg.Arm]
 		}
 
-		if err := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil); err != nil {
+		if err := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil); err != nil {
 			return fmt.Errorf("step %q: %w", step.name, err)
 		}
 		s.logger.Debugf("completed step %q", step.name)

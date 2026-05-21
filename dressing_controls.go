@@ -53,7 +53,8 @@ type DressingControlsConfig struct {
 	PourDressing     DressingPoseConfig              `json:"pour-dressing"`
 	PostPourDressing DressingPoseConfig              `json:"post-pour-dressing"`
 	Home             DressingPoseConfig              `json:"home"`
-	ShakeArmService  *string                         `json:"shake-arm-service,omitempty"`
+	GrabSpeedDegsPerSec float64                        `json:"grab-speed-degs-per-sec,omitempty"`
+	ShakeArmService     *string                        `json:"shake-arm-service,omitempty"`
 	Dressings        map[string]DressingOptionConfig `json:"dressings"`
 }
 
