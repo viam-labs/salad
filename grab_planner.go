@@ -91,9 +91,12 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	if err != nil {
 		return nil, fmt.Errorf("getting arm current inputs: %w", err)
 	}
-	startState := armplanning.NewPlanState(nil, referenceframe.FrameSystemInputs{
-		s.cfg.Arm: armCurrentInputs,
-	})
+	s.logger.Debugf("arm frame key %q, inputs len=%d, frame system frames: %v", s.cfg.Arm, len(armCurrentInputs), fs.FrameNames())
+	startInputs := referenceframe.NewZeroInputs(fs)
+	if len(armCurrentInputs) > 0 {
+		startInputs[s.cfg.Arm] = armCurrentInputs
+	}
+	startState := armplanning.NewPlanState(nil, startInputs)
 
 	steps := make([]GrabStep, 0, len(specs))
 	for _, spec := range specs {
