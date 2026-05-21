@@ -27,6 +27,8 @@ import (
 
 var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
 
+const defaultBowlHoverHeightMM = 150.0
+
 func init() {
 	resource.RegisterService(genericservice.API, GrabberControls,
 		resource.Registration[resource.Resource, *GrabberControlsConfig]{
@@ -41,6 +43,13 @@ type GrabberControlsBinConfig struct {
 	ZoneID int    `json:"zone-id"`
 }
 
+type BowlDropPose struct {
+	X           float64                               `json:"x"`
+	Y           float64                               `json:"y"`
+	Z           float64                               `json:"z"`
+	Orientation *spatialmath.OrientationVectorDegrees `json:"orientation"`
+}
+
 type GrabberControlsConfig struct {
 	Bins                []GrabberControlsBinConfig            `json:"bins"`
 	BinHoverHeightMM                  float64                               `json:"bin-hover-height-mm"`
@@ -52,8 +61,8 @@ type GrabberControlsConfig struct {
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	GrabHeightMM        float64                               `json:"grab-height-mm"`
 	GrabOrientation     *spatialmath.OrientationVectorDegrees `json:"grab-orientation,omitempty"`
-	HighAboveBowl       string                                `json:"high-above-bowl"`
-	InBowl              string                                `json:"in-bowl"`
+	DroppingPose        *BowlDropPose                         `json:"dropping-pose"`
+	BowlHoverHeightMM   float64                               `json:"bowl-hover-height-mm,omitempty"`
 	Arm                 string                                `json:"arm"`
 	Gripper             string                                `json:"gripper"`
 	MotionService       string                                `json:"motion-service"`
@@ -93,8 +102,11 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "motion-service")
 	}
 
-	if cfg.HighAboveBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "high-above-bowl")
+	if cfg.DroppingPose == nil {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dropping-pose")
+	}
+	if cfg.DroppingPose.Orientation == nil {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dropping-pose.orientation")
 	}
 
 	if cfg.Arm == "" {
@@ -109,18 +121,12 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "left-home")
 	}
 
-	if cfg.InBowl == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "in-bowl")
-	}
-
 	requiredDeps := []string{}
 
-	requiredDeps = append(requiredDeps, cfg.HighAboveBowl)
 	requiredDeps = append(requiredDeps, cfg.Arm)
 	requiredDeps = append(requiredDeps, cfg.Gripper)
 	requiredDeps = append(requiredDeps, cfg.MotionService)
 	requiredDeps = append(requiredDeps, cfg.LeftHome)
-	requiredDeps = append(requiredDeps, cfg.InBowl)
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
 		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}
@@ -145,12 +151,12 @@ type grabberControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	bins            map[int]*grabberBinSwitches
-	highAboveBowl   sw.Switch
-	arm             arm.Arm
-	gripper         gripper.Gripper
-	leftInBowl      sw.Switch
-	leftHome        sw.Switch
+	bins          map[int]*grabberBinSwitches
+	droppingPose  spatialmath.Pose
+	bowlHoverPose spatialmath.Pose
+	arm           arm.Arm
+	gripper       gripper.Gripper
+	leftHome      sw.Switch
 	shakeArmService genericservice.Service
 	motionService   motion.Service
 
@@ -209,11 +215,16 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		bins:       make(map[int]*grabberBinSwitches),
 	}
 
-	highAboveBowlSwitch, err := sw.FromProvider(deps, conf.HighAboveBowl)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get high-above-bowl switch '%s': %w", conf.HighAboveBowl, err)
+	droppingPt := r3.Vector{X: conf.DroppingPose.X, Y: conf.DroppingPose.Y, Z: conf.DroppingPose.Z}
+	s.droppingPose = spatialmath.NewPose(droppingPt, conf.DroppingPose.Orientation)
+	hoverHeight := conf.BowlHoverHeightMM
+	if hoverHeight == 0 {
+		hoverHeight = defaultBowlHoverHeightMM
 	}
-	s.highAboveBowl = highAboveBowlSwitch
+	s.bowlHoverPose = spatialmath.NewPose(
+		r3.Vector{X: droppingPt.X, Y: droppingPt.Y, Z: droppingPt.Z + hoverHeight},
+		conf.DroppingPose.Orientation,
+	)
 
 	armComponent, err := arm.FromProvider(deps, conf.Arm)
 	if err != nil {
@@ -232,12 +243,6 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		return nil, fmt.Errorf("failed to get left-home switch '%s': %w", conf.LeftHome, err)
 	}
 	s.leftHome = leftHomeSwitch
-
-	leftInBowlSwitch, err := sw.FromProvider(deps, conf.InBowl)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get in-bowl switch '%s': %w", conf.InBowl, err)
-	}
-	s.leftInBowl = leftInBowlSwitch
 
 	for _, binCfg := range conf.Bins {
 		s.bins[binCfg.ZoneID] = &grabberBinSwitches{name: binCfg.Name}
@@ -636,16 +641,16 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 
 	start := time.Now()
-	if err := s.highAboveBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set high-above-bowl switch to position 2: %w", err)
+	if err := s.moveArm(ctx, s.bowlHoverPose, nil); err != nil {
+		return nil, fmt.Errorf("failed to move above bowl: %w", err)
 	}
-	s.logger.Infof("high-above-bowl SetPosition took %.2fs", time.Since(start).Seconds())
+	s.logger.Infof("move above bowl took %.2fs", time.Since(start).Seconds())
 
 	start = time.Now()
-	if err := s.leftInBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set in-bowl switch to position 2: %w", err)
+	if err := s.moveArm(ctx, s.droppingPose, nil); err != nil {
+		return nil, fmt.Errorf("failed to move to dropping pose: %w", err)
 	}
-	s.logger.Infof("in-bowl SetPosition took %.2fs", time.Since(start).Seconds())
+	s.logger.Infof("move to dropping pose took %.2fs", time.Since(start).Seconds())
 
 	start = time.Now()
 	if err := s.gripper.Open(ctx, nil); err != nil {
@@ -654,10 +659,10 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	s.logger.Infof("gripper open took %.2fs", time.Since(start).Seconds())
 
 	start = time.Now()
-	if err := s.highAboveBowl.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set high-above-bowl switch to position 2: %w", err)
+	if err := s.moveArm(ctx, s.bowlHoverPose, nil); err != nil {
+		return nil, fmt.Errorf("failed to return above bowl: %w", err)
 	}
-	s.logger.Infof("high-above-bowl return SetPosition took %.2fs", time.Since(start).Seconds())
+	s.logger.Infof("return above bowl took %.2fs", time.Since(start).Seconds())
 
 	if s.shakeArmService != nil {
 		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
