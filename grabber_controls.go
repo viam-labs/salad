@@ -377,17 +377,52 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, depthOffsetMM float64) (spatialmath.Pose, error) {
-	cx, cy, err := zone.Centroid()
+func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentation.Zone, foodLevelMM float64) (spatialmath.Pose, error) {
+	zonePlane := zone.Plane
+	zoneCenterVec := r3.Vector{
+		X: zonePlane.Point[0],
+		Y: zonePlane.Point[1],
+		Z: zonePlane.Point[2],
+	}
+
+	zoneNormalVec := r3.Vector{
+		X: zonePlane.Normal[0],
+		Y: zonePlane.Normal[1],
+		Z: zonePlane.Normal[2],
+	}
+
+	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
+	if foodLevelMM < 35.0 {
+		return nil, fmt.Errorf("food level is too low: %.2f mm", foodLevelMM)
+	}
+
+	// hardcoding for now but want to detect this at some point
+	closedGripperToArmBaseHeightMM := 365.0
+
+	// food grab position is 30mm beneath food height
+	grabBasePoint := foodHeightPosition.Add(zoneNormalVec.Mul(-30.0))
+
+	idealArmBasePosition := grabBasePoint.Add(zoneNormalVec.Mul(closedGripperToArmBaseHeightMM))
+
+	currentGripperPose, err := s.fsService.GetPose(ctx, s.gripper.Name().Name, referenceframe.World, nil, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get current gripper pose: %w", err)
 	}
-	point := r3.Vector{
-		X: cx,
-		Y: cy,
-		Z: zone.MinZ() + s.cfg.GrabHeightMM - depthOffsetMM,
+	gripperBasePoint := currentGripperPose.Pose().Point()
+
+	// Signed distance from the gripper to the zone plane along the (unit) normal.
+	// Positive means the gripper is on the +normal side of the plane.
+	signedDist := gripperBasePoint.Sub(zoneCenterVec).Dot(zoneNormalVec)
+	// Vector pointing from gripperBasePoint to its projection on the plane.
+	gripperToPlaneDirection := zoneNormalVec.Mul(-signedDist).Normalize()
+	gripperOrientationVec := spatialmath.OrientationVectorDegrees{
+		Theta: s.cfg.BinHoverOrientation.Theta,
+		OX:    gripperToPlaneDirection.X,
+		OY:    gripperToPlaneDirection.Y,
+		OZ:    gripperToPlaneDirection.Z,
 	}
-	return spatialmath.NewPose(point, s.cfg.BinHoverOrientation), nil
+
+	return spatialmath.NewPose(idealArmBasePosition, &gripperOrientationVec), nil
 }
 
 // logBinImagingCamPlaneFit snapshots the bin-imaging camera point cloud, culls
@@ -401,29 +436,39 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, depthOffsetMM
 //
 // Failure modes (camera read, empty cloud, no in-bounds points) are logged at
 // warn level and do not propagate: this is observational only.
-func (s *grabberControls) logBinImagingCamPlaneFit(ctx context.Context, zone *segmentation.Zone) {
+func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentation.Zone) (float64, error) {
 	if s.binImagingCam == nil {
-		return
+		return 0, fmt.Errorf("bin-imaging-cam is not set")
 	}
 	start := time.Now()
-	pc, err := s.binImagingCam.NextPointCloud(ctx, nil)
+	camPc, err := s.binImagingCam.NextPointCloud(ctx, nil)
 	if err != nil {
 		s.logger.Warnf("zone %d: bin-imaging-cam NextPointCloud failed after %.2fs: %v",
 			zone.ID, time.Since(start).Seconds(), err)
-		return
+		return 0, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %v", time.Since(start).Seconds(), err)
 	}
+
+	camName := s.binImagingCam.Name().ShortName()
+	pc, err := s.fsService.TransformPointCloud(ctx, camPc, camName, referenceframe.World)
+	if err != nil {
+		s.logger.Warnf("zone %d: failed to transform bin-imaging-cam point cloud from %q to world frame: %v",
+			zone.ID, camName, err)
+		return 0, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %v", camName, err)
+	}
+
 	stats, _ := segmentation.ZonePlaneFitStats(pc, zone, s.logger)
 	if stats.PointsInBounds == 0 {
 		s.logger.Warnf("zone %d: 0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
 			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY,
 			stats.PointsInsideX, stats.PointsInsideY)
-		return
+		return 0, fmt.Errorf("0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
+			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY, stats.PointsInsideX, stats.PointsInsideY)
 	}
 	pct := 0.0
 	if stats.PointsTotal > 0 {
 		pct = 100 * float64(stats.PointsInBounds) / float64(stats.PointsTotal)
 	}
-	s.logger.Infof(
+	s.logger.Debugf(
 		"zone %d plane-fit: %d/%d pts (%.2f%%) in zone XY rect; distance-to-floor-plane (mm): "+
 			"mean|d|=%.2f mean_signed=%+.2f (+above/-below) range=[%+.2f, %+.2f] tilt=%.2fdeg; capture+stats %.2fs",
 		zone.ID, stats.PointsInBounds, stats.PointsTotal, pct,
@@ -432,6 +477,10 @@ func (s *grabberControls) logBinImagingCamPlaneFit(ctx context.Context, zone *se
 		zone.Plane.TiltDeg(),
 		time.Since(start).Seconds(),
 	)
+	if stats.MeanSignedDistanceMM < 0 {
+		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
+	}
+	return stats.MeanSignedDistanceMM, nil
 }
 
 const grabPlansDir = "/root/.viam/capture"
@@ -490,9 +539,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	s.logBinImagingCamPlaneFit(ctx, zone)
-
-	_, err = s.computeGrabPose(zone, depthOffsetMM)
+	_, err = s.getBinFoodLevel(ctx, zone)
 	if err != nil {
 		return nil, err
 	}
