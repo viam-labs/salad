@@ -807,7 +807,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return nil, fmt.Errorf("build_salad requires at least one ingredient")
 	}
 
-	var result map[string]interface{}
 	lilArmControls, _ := s.bowlControls.(*bowlControls)
 	lilArmEnabled := !s.skipLilArm && lilArmControls != nil && lilArmControls.lilArmGripper != nil
 	if s.skipLilArm {
@@ -815,7 +814,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	if lilArmEnabled {
-		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
 			"target":    60,
 		})
@@ -827,7 +826,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+	_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 		"reset":        true,
 		"skip_lil_arm": s.skipLilArm,
 	})
@@ -900,7 +899,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		completedServings += target.servings
 	}
 
-	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
+	_, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
 	if err != nil {
@@ -927,7 +926,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	s.updateStatus("delivering salad", completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+	_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 		"reset":        true,
 		"skip_lil_arm": s.skipLilArm,
 	})
