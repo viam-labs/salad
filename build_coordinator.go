@@ -457,6 +457,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	s.customerName = customerName
 	s.errorMsg = ""
 	s.mu.Unlock()
+	/////
 
 	if customerName != "" {
 		s.logger.Infof("New salad order received for %q: %v", customerName, value)
@@ -473,7 +474,9 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		s.opDone = nil
 		s.mu.Unlock()
 	}()
+	////
 
+	// TODO move simulate outside of state maching back to coordinator?
 	var result map[string]interface{}
 	var err error
 	if s.simulate {
