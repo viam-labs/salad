@@ -45,16 +45,25 @@ type DressingOptionConfig struct {
 	Grab         DressingPoseConfig `json:"grab"`
 }
 
+type CircularPourConfig struct {
+	RadiusMm     float64                 `json:"radius-mm"`
+	PointsPerRev int                     `json:"points-per-rev,omitempty"`
+	Revolutions  int                     `json:"revolutions,omitempty"`
+	Constraints  *motionplan.Constraints `json:"constraints,omitempty"`
+}
+
 type DressingControlsConfig struct {
-	Arm              string                          `json:"arm"`
-	Gripper          string                          `json:"gripper"`
-	AssetsDir        string                          `json:"assets-dir,omitempty"`
-	PrepareDressing  DressingPoseConfig              `json:"prepare-dressing"`
-	PourDressing     DressingPoseConfig              `json:"pour-dressing"`
-	PostPourDressing DressingPoseConfig              `json:"post-pour-dressing"`
-	Home             DressingPoseConfig              `json:"home"`
-	ShakeArmService  *string                         `json:"shake-arm-service,omitempty"`
-	Dressings        map[string]DressingOptionConfig `json:"dressings"`
+	Arm                 string                          `json:"arm"`
+	Gripper             string                          `json:"gripper"`
+	AssetsDir           string                          `json:"assets-dir,omitempty"`
+	PrepareDressing     DressingPoseConfig              `json:"prepare-dressing"`
+	PourDressing        DressingPoseConfig              `json:"pour-dressing"`
+	CircularPour        *CircularPourConfig             `json:"circular-pour,omitempty"`
+	PostPourDressing    DressingPoseConfig              `json:"post-pour-dressing"`
+	Home                DressingPoseConfig              `json:"home"`
+	GrabSpeedDegsPerSec float64                         `json:"grab-speed-degs-per-sec,omitempty"`
+	ShakeArmService     *string                         `json:"shake-arm-service,omitempty"`
+	Dressings           map[string]DressingOptionConfig `json:"dressings"`
 }
 
 func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -91,6 +100,9 @@ type dressingControls struct {
 
 	assetsMu   sync.Mutex
 	worldState *referenceframe.WorldState
+
+	cachedPlansMu sync.Mutex
+	cachedPlans   map[string]*dressingPlan
 }
 
 func newDressingControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -138,6 +150,8 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 		s.shakeArmService = shakeArmService
 	}
 
+	s.cachedPlans = make(map[string]*dressingPlan)
+
 	s.logger.Infof("Dressing controls initialized")
 	return s, nil
 }
@@ -158,10 +172,17 @@ func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interfa
 		}
 		return s.doPourDressing(ctx, name)
 	}
+	if v, ok := cmd["pre_plan_dressing"]; ok {
+		name, ok := v.(string)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("pre_plan_dressing requires a dressing name (string)")
+		}
+		return s.doPrePlanDressing(ctx, name)
+	}
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'pour_dressing' or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'pour_dressing', 'pre_plan_dressing', or 'reset' field")
 }
 
 func (s *dressingControls) loadWorldState() error {
@@ -201,12 +222,38 @@ func (s *dressingControls) loadWorldState() error {
 	return nil
 }
 
-func (s *dressingControls) doPourDressing(ctx context.Context, name string) (map[string]interface{}, error) {
-	s.logger.Infof("Planning pour_dressing for %q", name)
+func (s *dressingControls) doPrePlanDressing(ctx context.Context, name string) (map[string]interface{}, error) {
+	s.logger.Infof("Pre-planning dressing %q", name)
 	plan, err := s.planDressing(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pre-planning dressing %q: %w", name, err)
 	}
+	s.cachedPlansMu.Lock()
+	s.cachedPlans[name] = plan
+	s.cachedPlansMu.Unlock()
+	s.logger.Infof("Pre-planning dressing %q complete", name)
+	return map[string]interface{}{"success": true}, nil
+}
+
+func (s *dressingControls) doPourDressing(ctx context.Context, name string) (map[string]interface{}, error) {
+	s.cachedPlansMu.Lock()
+	plan, cached := s.cachedPlans[name]
+	if cached {
+		delete(s.cachedPlans, name)
+	}
+	s.cachedPlansMu.Unlock()
+
+	if cached {
+		s.logger.Infof("Using pre-planned trajectories for %q", name)
+	} else {
+		s.logger.Infof("Planning pour_dressing for %q", name)
+		var err error
+		plan, err = s.planDressing(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	s.logger.Infof("Executing pour_dressing for %q (%d steps)", name, len(plan.steps))
 	if err := s.executeDressing(ctx, plan); err != nil {
 		return nil, err

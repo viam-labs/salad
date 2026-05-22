@@ -885,6 +885,21 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 
 	s.logger.Infof("Building salad with %d ingredients", len(targets))
 
+	// kick off background pre-planning for each dressing while ingredients are grabbed
+	for _, t := range targets {
+		if t.category != "dressing" {
+			continue
+		}
+		name := t.name
+		go func() {
+			if _, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
+				"pre_plan_dressing": name,
+			}); err != nil {
+				s.logger.Warnf("Pre-planning dressing %q failed, will plan on demand: %v", name, err)
+			}
+		}()
+	}
+
 	for _, target := range targets {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
