@@ -57,13 +57,19 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	if err != nil {
 		return nil, fmt.Errorf("getting left home cfg: %w", err)
 	}
-	homePoint := homePoseCfg["point"].(map[string]float64)
-	homeOrientation := homePoseCfg["orientation"].(map[string]float64)
+	homePoint, ok := homePoseCfg["point"].(map[string]float64)
+	if !ok {
+		return nil, fmt.Errorf("home point is not a map[string]float64")
+	}
+	homeOrientation, ok := homePoseCfg["orientation"].(map[string]float64)
+	if !ok {
+		return nil, fmt.Errorf("home orientation is not a map[string]float64")
+	}
 
 	homePose := spatialmath.NewPose(r3.Vector{
-		X: homePoint["x"],
-		Y: homePoint["y"],
-		Z: homePoint["z"],
+		X: homePoint["X"],
+		Y: homePoint["Y"],
+		Z: homePoint["Z"],
 	}, &spatialmath.OrientationVectorDegrees{
 		OX:    homeOrientation["x"],
 		OY:    homeOrientation["y"],
