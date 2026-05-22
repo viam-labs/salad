@@ -52,6 +52,24 @@ type grabStepSpec struct {
 }
 
 func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
+
+	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
+	if err != nil {
+		return nil, fmt.Errorf("getting left home cfg: %w", err)
+	}
+	homePoint := homePoseCfg["point"].(map[string]float64)
+	homeOrientation := homePoseCfg["orientation"].(map[string]float64)
+
+	homePose := spatialmath.NewPose(r3.Vector{
+		X: homePoint["x"],
+		Y: homePoint["y"],
+		Z: homePoint["z"],
+	}, &spatialmath.OrientationVectorDegrees{
+		OX:    homeOrientation["x"],
+		OY:    homeOrientation["y"],
+		OZ:    homeOrientation["z"],
+		Theta: homeOrientation["th"],
+	})
 	grabPose, err := s.computeGrabPose(ctx, zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
@@ -71,7 +89,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	}, grabPose.Orientation())
 
 	specs := []grabStepSpec{
-		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen, preAction: GrabStepActionGoHome},
+		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
 		{name: "descend", preAction: GrabStepActionOpen, goal: grabPoseThatsJustHeightDiff, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
@@ -92,7 +110,8 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	specs = append(specs,
 		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose},
 		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
-		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
+		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose, postAction: GrabStepActionGoHome},
+		grabStepSpec{name: "return_home", goal: homePose},
 	)
 
 	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
