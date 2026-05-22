@@ -61,9 +61,15 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	// use the grab pose orientation so the orientations are consistent between the two
 	hover := spatialmath.NewPose(hoverWithOffset.Point(), grabPose.Orientation())
 
+	grabPoseThatsJustHeightDiff := spatialmath.NewPose(r3.Vector{
+		X: hover.Point().X,
+		Y: hover.Point().Y,
+		Z: grabPose.Point().Z,
+	}, grabPose.Orientation())
+
 	specs := []grabStepSpec{
 		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
-		{name: "descend", goal: grabPose, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
+		{name: "descend", goal: grabPoseThatsJustHeightDiff, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
 

@@ -396,32 +396,28 @@ func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentatio
 	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
 
 	// hardcoding for now but want to detect this at some point
-	closedGripperToArmBaseHeightMM := 365.0
+	closedGripperToArmBaseHeightMM := 330.0
 
 	// food grab position is 30mm beneath food height
 	grabBasePoint := foodHeightPosition.Add(zoneNormalVec.Mul(-30.0))
 
 	idealArmBasePosition := grabBasePoint.Add(zoneNormalVec.Mul(closedGripperToArmBaseHeightMM))
 
-	currentGripperPose, err := s.fsService.GetPose(ctx, s.gripper.Name().Name, referenceframe.World, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current gripper pose: %w", err)
-	}
-	gripperBasePoint := currentGripperPose.Pose().Point()
+	// compute orientation from gripper dynamically
+	// currentGripperPose, err := s.fsService.GetPose(ctx, s.gripper.Name().Name, referenceframe.World, nil, nil)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to get current gripper pose: %w", err)
+	// }
+	// gripperBasePoint := currentGripperPose.Pose().Point()
 
 	// Signed distance from the gripper to the zone plane along the (unit) normal.
 	// Positive means the gripper is on the +normal side of the plane.
-	signedDist := gripperBasePoint.Sub(zoneCenterVec).Dot(zoneNormalVec)
+	// signedDist := gripperBasePoint.Sub(zoneCenterVec).Dot(zoneNormalVec)
 	// Vector pointing from gripperBasePoint to its projection on the plane.
-	gripperToPlaneDirection := zoneNormalVec.Mul(-signedDist).Normalize()
-	gripperOrientationVec := spatialmath.OrientationVectorDegrees{
-		Theta: s.cfg.BinHoverOrientation.Theta,
-		OX:    gripperToPlaneDirection.X,
-		OY:    gripperToPlaneDirection.Y,
-		OZ:    gripperToPlaneDirection.Z,
-	}
+	// gripperToPlaneDirection := zoneNormalVec.Mul(-signedDist).Normalize()
+	gripperOrientationVec := s.cfg.BinHoverOrientation
 
-	return spatialmath.NewPose(idealArmBasePosition, &gripperOrientationVec), nil
+	return spatialmath.NewPose(idealArmBasePosition, gripperOrientationVec), nil
 }
 
 // logBinImagingCamPlaneFit snapshots the bin-imaging camera point cloud, culls
