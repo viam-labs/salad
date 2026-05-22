@@ -8,9 +8,22 @@ import (
 	"go.viam.com/rdk/referenceframe"
 )
 
+func (s *dressingControls) releaseGripper(ctx context.Context) error {
+	if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
+		"grab_with_torque": map[string]interface{}{
+			"position": 840.0,
+			"speed":    3000.0,
+			"torque":   0.0,
+		},
+	}); err != nil {
+		return fmt.Errorf("release command failed: %w", err)
+	}
+	return nil
+}
+
 func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
-	if err := s.gripper.Open(ctx, nil); err != nil {
-		return fmt.Errorf("open gripper: %w", err)
+	if err := s.releaseGripper(ctx); err != nil {
+		return fmt.Errorf("release gripper: %w", err)
 	}
 
 	for _, step := range plan.steps {
@@ -32,10 +45,10 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 
 		switch step.postAction {
 		case GrabStepActionOpen:
-			if err := s.gripper.Open(ctx, nil); err != nil {
-				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
+			if err := s.releaseGripper(ctx); err != nil {
+				return fmt.Errorf("step %q: release gripper: %w", step.name, err)
 			}
-			s.logger.Debugf("opened gripper after %q", step.name)
+			s.logger.Debugf("released gripper after %q", step.name)
 		case GrabStepActionClose:
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
