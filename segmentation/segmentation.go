@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"os"
 	"sort"
 	"time"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/spatialmath"
+	"gonum.org/v1/gonum/mat"
 )
 
 type ZoneMesh struct {
@@ -30,12 +32,70 @@ func (zm ZoneMesh) ToSpatialMesh(label string) *spatialmath.Mesh {
 }
 
 type Zone struct {
-	ID   int      `json:"id"`
-	MinX float64  `json:"min_x"`
-	MaxX float64  `json:"max_x"`
-	MinY float64  `json:"min_y"`
-	MaxY float64  `json:"max_y"`
-	Mesh ZoneMesh `json:"mesh"`
+	ID    int      `json:"id"`
+	MinX  float64  `json:"min_x"`
+	MaxX  float64  `json:"max_x"`
+	MinY  float64  `json:"min_y"`
+	MaxY  float64  `json:"max_y"`
+	Mesh  ZoneMesh `json:"mesh"`
+	Plane Plane    `json:"plane"`
+	// PlaneRect is the bin-floor plane rendered as a 2-triangle quad whose XY
+	// corners are (MinX|MaxX) × (MinY|MaxY) and whose Z values lie on Plane.
+	// Stored alongside the analytic Plane so external tooling (visualizers,
+	// post-processing scripts) can render the floor without re-doing the
+	// plane math.
+	PlaneRect ZoneMesh `json:"plane_rect"`
+}
+
+// Plane represents a best-fit infinite plane in 3D as a point + unit normal.
+// Normal is forced to point "up" (Normal[2] > 0) by the fitter so callers can
+// use it directly as the local +Z of a bin-floor frame.
+//
+// Point is the geometric center of the zone's rendered PlaneRect quad —
+// i.e. the midpoint of (MinX|MaxX, MinY|MaxY) projected onto the plane via
+// ZAt. Choosing a well-defined center (rather than e.g. a RANSAC sample
+// point or the inlier centroid, which depend on the fit path taken) lets
+// callers use Plane.Point as a stable "center of the plane" for downstream
+// motion planning.
+type Plane struct {
+	Point  [3]float64 `json:"point"`
+	Normal [3]float64 `json:"normal"`
+}
+
+// IsZero reports whether the plane is the zero value (no fit performed).
+func (p Plane) IsZero() bool {
+	return p.Normal == [3]float64{}
+}
+
+// TiltDeg returns the angle in degrees between the plane normal and world +Z.
+// 0° means perfectly horizontal; 90° means vertical (and never expected for a
+// bin floor).
+func (p Plane) TiltDeg() float64 {
+	nz := p.Normal[2]
+	if nz > 1 {
+		nz = 1
+	}
+	if nz < -1 {
+		nz = -1
+	}
+	return math.Acos(nz) * 180 / math.Pi
+}
+
+// ZAt returns the plane's Z coordinate at world (x, y). For a near-vertical or
+// zero-value plane the result is degenerate, so we fall back to Point[2].
+func (p Plane) ZAt(x, y float64) float64 {
+	nz := p.Normal[2]
+	if math.Abs(nz) < 1e-6 {
+		return p.Point[2]
+	}
+	return p.Point[2] - (p.Normal[0]*(x-p.Point[0])+p.Normal[1]*(y-p.Point[1]))/nz
+}
+
+// SignedDistance returns the signed distance from world point (x, y, z) to the
+// plane along the plane normal. Positive means "above" the plane (in the
+// direction the normal points).
+func (p Plane) SignedDistance(x, y, z float64) float64 {
+	return p.Normal[0]*(x-p.Point[0]) + p.Normal[1]*(y-p.Point[1]) + p.Normal[2]*(z-p.Point[2])
 }
 
 // minZPercentile is the vertex Z percentile used as the bin floor.
@@ -109,6 +169,31 @@ type Options struct {
 	DividerDilation    int
 	MinZoneAreaMM2     float64
 	MaxZoneAreaMM2     float64
+
+	// FloorBandMM is the vertical slab thickness (mm) above each zone's local
+	// minZ from which we sample candidate floor vertices. Should be generous
+	// enough to capture the whole tilted floor: for a bin of width W tilted by
+	// θ, the floor spans up to ~W·sin(θ) in world Z.
+	FloorBandMM float64
+	// FloorMaxTiltDeg is the max angle (in degrees) between a triangle's
+	// normal and ±ẑ for it to count as a floor candidate, AND the max angle
+	// between a sampled RANSAC plane normal and ẑ for the sample to be kept.
+	// Larger values are more permissive (good for tilted fridges) but risk
+	// including bin walls whose normals are not perfectly horizontal.
+	FloorMaxTiltDeg float64
+	// FloorMinPoints is the minimum number of candidate vertices required to
+	// run a real PCA fit. Below this we fall back to a horizontal plane at
+	// the zone's MinZ percentile.
+	FloorMinPoints int
+	// FloorRANSACIters is the number of RANSAC iterations. 0 disables RANSAC
+	// and reverts to a single-pass PCA over all candidates (faster, but
+	// pulled off-axis by any floor-band outliers that survive the slab and
+	// normal pre-filters).
+	FloorRANSACIters int
+	// FloorRANSACInlierMM is the max perpendicular distance (mm) from a
+	// candidate point to a sampled plane for the point to count as an inlier.
+	// Should be larger than typical Poisson reconstruction noise.
+	FloorRANSACInlierMM float64
 }
 
 func DefaultOptions() Options {
@@ -119,6 +204,11 @@ func DefaultOptions() Options {
 		DividerDilation:    0,
 		MinZoneAreaMM2:     5000.0,
 		MaxZoneAreaMM2:     100000.0,
+		FloorBandMM:         30.0,
+		FloorMaxTiltDeg:     25.0,
+		FloorMinPoints:      30,
+		FloorRANSACIters:    200,
+		FloorRANSACInlierMM: 3.0,
 	}
 }
 
@@ -540,13 +630,24 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 			minBX, maxBX = zi.minX, zi.maxX
 			minBY, maxBY = zi.minY, zi.maxY
 		}
+		plane := fitFloorPlane(zoneFaces[i], opts)
+		// Recenter Plane.Point onto the center of the rendered PlaneRect so
+		// it has a consistent geometric meaning regardless of which fit path
+		// (PCA / RANSAC-only / fallback) produced the plane. Moving Point
+		// along the plane does not change the plane equation, so ZAt and
+		// SignedDistance results are unaffected.
+		midX := (minBX + maxBX) / 2
+		midY := (minBY + maxBY) / 2
+		plane.Point = [3]float64{midX, midY, plane.ZAt(midX, midY)}
 		zones[i] = Zone{
-			ID:   i,
-			MinX: minBX,
-			MaxX: maxBX,
-			MinY: minBY,
-			MaxY: maxBY,
-			Mesh: buildZoneMesh(zoneFaces[i]),
+			ID:        i,
+			MinX:      minBX,
+			MaxX:      maxBX,
+			MinY:      minBY,
+			MaxY:      maxBY,
+			Mesh:      buildZoneMesh(zoneFaces[i]),
+			Plane:     plane,
+			PlaneRect: PlaneRectMesh(plane, minBX, maxBX, minBY, maxBY),
 		}
 	}
 
@@ -575,6 +676,262 @@ func dilateMask(mask [][]bool, rows, cols, radius int) [][]bool {
 		}
 	}
 	return result
+}
+
+// fitFloorPlane estimates the bin-floor plane for a zone's triangle soup.
+//
+// Pipeline:
+//  1. Collect candidate vertices: those near the zone's MinZ percentile (slab
+//     filter) and belonging to a triangle whose normal is roughly vertical
+//     (kills walls).
+//  2. RANSAC: sample 3 candidates many times, count inliers within
+//     FloorRANSACInlierMM of the sampled plane, keep the best.
+//  3. Refine: re-fit a plane via PCA over the best RANSAC plane's inliers.
+//
+// Fallback: a horizontal plane at the zone's MinZ percentile, used when we
+// don't have enough candidates or every step fails. RANSAC can be disabled
+// by setting FloorRANSACIters == 0; we then do a single-pass PCA over all
+// candidates (less robust to non-floor outliers in the slab).
+func fitFloorPlane(faces [][3]r3.Vector, opts Options) Plane {
+	if len(faces) == 0 {
+		return Plane{Normal: [3]float64{0, 0, 1}}
+	}
+
+	cands, fallback := collectFloorCandidates(faces, opts)
+	if len(cands) < opts.FloorMinPoints {
+		return fallback
+	}
+
+	if opts.FloorRANSACIters <= 0 {
+		p, ok := fitPlanePCA(cands)
+		if !ok {
+			return fallback
+		}
+		return p
+	}
+
+	rough, ok := ransacPlane(cands, opts)
+	if !ok {
+		return fallback
+	}
+
+	inliers := planeInliers(cands, rough, opts.FloorRANSACInlierMM)
+	if len(inliers) < opts.FloorMinPoints {
+		return rough
+	}
+	refined, ok := fitPlanePCA(inliers)
+	if !ok {
+		return rough
+	}
+	return refined
+}
+
+// collectFloorCandidates returns the vertices that survive the slab + normal
+// pre-filter, along with a sensible fallback plane (horizontal at the zone's
+// MinZ percentile, centered on the triangle-centroid mean XY).
+func collectFloorCandidates(faces [][3]r3.Vector, opts Options) ([]r3.Vector, Plane) {
+	zs := make([]float64, 0, len(faces)*3)
+	var cx, cy float64
+	for _, f := range faces {
+		zs = append(zs, f[0].Z, f[1].Z, f[2].Z)
+		cx += (f[0].X + f[1].X + f[2].X) / 3
+		cy += (f[0].Y + f[1].Y + f[2].Y) / 3
+	}
+	cx /= float64(len(faces))
+	cy /= float64(len(faces))
+	sort.Float64s(zs)
+	idx := int(float64(len(zs)) * minZPercentile)
+	if idx >= len(zs) {
+		idx = len(zs) - 1
+	}
+	zoneMinZ := zs[idx]
+	fallback := Plane{
+		Point:  [3]float64{cx, cy, zoneMinZ},
+		Normal: [3]float64{0, 0, 1},
+	}
+
+	zCutoff := zoneMinZ + opts.FloorBandMM
+	cosTilt := math.Cos(opts.FloorMaxTiltDeg * math.Pi / 180)
+	pts := make([]r3.Vector, 0, len(faces)*3)
+	for _, f := range faces {
+		e1 := f[1].Sub(f[0])
+		e2 := f[2].Sub(f[0])
+		n := e1.Cross(e2)
+		nLen := n.Norm()
+		if nLen < 1e-9 {
+			continue
+		}
+		if math.Abs(n.Z/nLen) < cosTilt {
+			continue
+		}
+		for _, v := range f {
+			if v.Z <= zCutoff {
+				pts = append(pts, v)
+			}
+		}
+	}
+	return pts, fallback
+}
+
+// ransacPlane runs RANSAC over candidate points, returning the 3-point plane
+// with the most inliers within FloorRANSACInlierMM. Samples whose normal is
+// further than FloorMaxTiltDeg from ẑ are skipped (they cannot represent a
+// bin floor and would only waste an iteration).
+//
+// The RNG is seeded with a fixed value so the same input mesh + options
+// always produces the same plane, which is important for reproducible
+// motion planning.
+func ransacPlane(points []r3.Vector, opts Options) (Plane, bool) {
+	n := len(points)
+	if n < 3 {
+		return Plane{}, false
+	}
+	threshold := opts.FloorRANSACInlierMM
+	if threshold <= 0 {
+		threshold = 3.0
+	}
+	cosTilt := math.Cos(opts.FloorMaxTiltDeg * math.Pi / 180)
+
+	rng := rand.New(rand.NewPCG(1, 2))
+
+	var bestPlane Plane
+	bestInliers := -1
+
+	for it := 0; it < opts.FloorRANSACIters; it++ {
+		i := rng.IntN(n)
+		j := rng.IntN(n)
+		for j == i {
+			j = rng.IntN(n)
+		}
+		k := rng.IntN(n)
+		for k == i || k == j {
+			k = rng.IntN(n)
+		}
+		a, b, c := points[i], points[j], points[k]
+
+		e1 := b.Sub(a)
+		e2 := c.Sub(a)
+		nrm := e1.Cross(e2)
+		nLen := nrm.Norm()
+		if nLen < 1e-9 {
+			continue
+		}
+		nx, ny, nz := nrm.X/nLen, nrm.Y/nLen, nrm.Z/nLen
+		if math.Abs(nz) < cosTilt {
+			continue
+		}
+		if nz < 0 {
+			nx, ny, nz = -nx, -ny, -nz
+		}
+
+		d0 := nx*a.X + ny*a.Y + nz*a.Z
+		inliers := 0
+		for _, p := range points {
+			if math.Abs(nx*p.X+ny*p.Y+nz*p.Z-d0) <= threshold {
+				inliers++
+			}
+		}
+		if inliers > bestInliers {
+			bestInliers = inliers
+			bestPlane = Plane{
+				Point:  [3]float64{a.X, a.Y, a.Z},
+				Normal: [3]float64{nx, ny, nz},
+			}
+		}
+	}
+
+	if bestInliers < 3 {
+		return Plane{}, false
+	}
+	return bestPlane, true
+}
+
+// planeInliers returns the subset of points within threshold (mm) of the
+// plane, measured perpendicular to the plane.
+func planeInliers(points []r3.Vector, p Plane, threshold float64) []r3.Vector {
+	if threshold <= 0 {
+		threshold = 3.0
+	}
+	inliers := make([]r3.Vector, 0, len(points))
+	for _, q := range points {
+		if math.Abs(p.SignedDistance(q.X, q.Y, q.Z)) <= threshold {
+			inliers = append(inliers, q)
+		}
+	}
+	return inliers
+}
+
+// fitPlanePCA fits a least-squares plane through points by taking the
+// eigenvector of the smallest eigenvalue of their 3×3 covariance matrix as
+// the plane normal, and the centroid as a point on the plane. The returned
+// normal is unit-length and forced to satisfy Normal[2] > 0.
+func fitPlanePCA(points []r3.Vector) (Plane, bool) {
+	if len(points) < 3 {
+		return Plane{}, false
+	}
+	n := float64(len(points))
+	var cx, cy, cz float64
+	for _, p := range points {
+		cx += p.X
+		cy += p.Y
+		cz += p.Z
+	}
+	cx /= n
+	cy /= n
+	cz /= n
+
+	var xx, xy, xz, yy, yz, zz float64
+	for _, p := range points {
+		dx := p.X - cx
+		dy := p.Y - cy
+		dz := p.Z - cz
+		xx += dx * dx
+		xy += dx * dy
+		xz += dx * dz
+		yy += dy * dy
+		yz += dy * dz
+		zz += dz * dz
+	}
+
+	cov := mat.NewSymDense(3, []float64{
+		xx, xy, xz,
+		0, yy, yz,
+		0, 0, zz,
+	})
+
+	var eig mat.EigenSym
+	if !eig.Factorize(cov, true) {
+		return Plane{}, false
+	}
+	var vecs mat.Dense
+	eig.VectorsTo(&vecs)
+	nx, ny, nz := vecs.At(0, 0), vecs.At(1, 0), vecs.At(2, 0)
+	nLen := math.Sqrt(nx*nx + ny*ny + nz*nz)
+	if nLen < 1e-9 {
+		return Plane{}, false
+	}
+	nx, ny, nz = nx/nLen, ny/nLen, nz/nLen
+	if nz < 0 {
+		nx, ny, nz = -nx, -ny, -nz
+	}
+	return Plane{
+		Point:  [3]float64{cx, cy, cz},
+		Normal: [3]float64{nx, ny, nz},
+	}, true
+}
+
+// PlaneRectMesh builds a 2-triangle ZoneMesh for the quad whose XY corners
+// are (minX|maxX) × (minY|maxY), with each corner's Z lying on the plane.
+// Used to visualize a zone's bin-floor plane in the motion-tools visualizer.
+func PlaneRectMesh(p Plane, minX, maxX, minY, maxY float64) ZoneMesh {
+	v00 := [3]float64{minX, minY, p.ZAt(minX, minY)}
+	v10 := [3]float64{maxX, minY, p.ZAt(maxX, minY)}
+	v11 := [3]float64{maxX, maxY, p.ZAt(maxX, maxY)}
+	v01 := [3]float64{minX, maxY, p.ZAt(minX, maxY)}
+	return ZoneMesh{
+		Vertices: [][3]float64{v00, v10, v11, v01},
+		Faces:    [][3]int{{0, 1, 2}, {0, 2, 3}},
+	}
 }
 
 func buildZoneMesh(faces [][3]r3.Vector) ZoneMesh {

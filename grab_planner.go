@@ -22,6 +22,7 @@ const (
 	GrabStepActionNone  GrabStepAction = iota
 	GrabStepActionOpen                 // open gripper
 	GrabStepActionClose                // close gripper (Grab)
+	GrabStepActionGoHome
 )
 
 // GrabStep holds the pre-computed trajectory for one motion phase.
@@ -29,6 +30,7 @@ type GrabStep struct {
 	Name         string
 	Trajectory   motionplan.Trajectory
 	PlanningTime time.Duration
+	PreAction    GrabStepAction
 	PostAction   GrabStepAction
 }
 
@@ -46,20 +48,31 @@ type grabStepSpec struct {
 	goal        spatialmath.Pose
 	constraints *motionplan.Constraints
 	postAction  GrabStepAction
+	preAction   GrabStepAction
 }
 
 func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
-	grabPose, err := s.computeGrabPose(zone, depthOffsetMM)
+	grabPose, err := s.computeGrabPose(ctx, zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
 	}
 
-	hover := s.applyXYOffset(bin.hoverPose)
-	grab := s.applyXYOffset(grabPose)
+	// hover := s.applyXYOffset(bin.hoverPose)
+	// grab := s.applyXYOffset(grabPose)
+
+	hoverWithOffset := s.applyXYOffset(bin.hoverPose)
+	// use the grab pose orientation so the orientations are consistent between the two
+	hover := spatialmath.NewPose(hoverWithOffset.Point(), grabPose.Orientation())
+
+	grabPoseThatsJustHeightDiff := spatialmath.NewPose(r3.Vector{
+		X: hover.Point().X,
+		Y: hover.Point().Y,
+		Z: grabPose.Point().Z,
+	}, grabPose.Orientation())
 
 	specs := []grabStepSpec{
-		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
-		{name: "descend", goal: grab, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
+		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen, preAction: GrabStepActionGoHome},
+		{name: "descend", preAction: GrabStepActionOpen, goal: grabPoseThatsJustHeightDiff, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
 
@@ -128,6 +141,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 			Trajectory:   traj,
 			PlanningTime: planDur,
 			PostAction:   spec.postAction,
+			PreAction:    spec.preAction,
 		})
 
 		if len(traj) > 0 {

@@ -9,7 +9,45 @@ import (
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/services/motion"
 	"go.viam.com/rdk/spatialmath"
+	"golang.org/x/sync/errgroup"
 )
+
+func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabStepAction) error {
+	switch action {
+	case GrabStepActionGoHome:
+		if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
+			return fmt.Errorf("set left home: %w", err)
+		}
+		s.logger.Debugf("set left home")
+		return nil
+	case GrabStepActionOpen:
+		if err := s.gripper.Open(ctx, nil); err != nil {
+			return fmt.Errorf("open gripper: %w", err)
+		}
+		s.logger.Debugf("opened gripper")
+	case GrabStepActionClose:
+		g, ctx := errgroup.WithContext(ctx)
+		g.Go(func() error {
+			if _, err := s.gripper.Grab(ctx, nil); err != nil {
+				return fmt.Errorf("close gripper: %w", err)
+			}
+			return nil
+		})
+		// shake arm while closing the gripper to loosen food
+		g.Go(func() error {
+			if _, err := s.scoopShakeService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
+				return fmt.Errorf("shake arm: %w", err)
+			}
+			return nil
+		})
+		err := g.Wait()
+		if err != nil {
+			return fmt.Errorf("%w", err)
+		}
+		s.logger.Debugf("closed gripper")
+	}
+	return nil
+}
 
 func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retErr error) {
 	var record *grabPlanRecord
@@ -31,6 +69,10 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 	}
 
 	for _, step := range plan.Steps {
+		if err := s.executePrePostAction(ctx, step.PreAction); err != nil {
+			return fmt.Errorf("execute pre action: %w", err)
+		}
+
 		armInputs := make([][]referenceframe.Input, len(step.Trajectory))
 		for i, fsInputs := range step.Trajectory {
 			armInputs[i] = fsInputs[s.cfg.Arm]
@@ -53,17 +95,8 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 		}
 		s.logger.Debugf("completed step %q", step.Name)
 
-		switch step.PostAction {
-		case GrabStepActionOpen:
-			if err := s.gripper.Open(ctx, nil); err != nil {
-				return fmt.Errorf("step %q: open gripper: %w", step.Name, err)
-			}
-			s.logger.Debugf("opened gripper after %q", step.Name)
-		case GrabStepActionClose:
-			if _, err := s.gripper.Grab(ctx, nil); err != nil {
-				return fmt.Errorf("step %q: close gripper: %w", step.Name, err)
-			}
-			s.logger.Debugf("closed gripper after %q", step.Name)
+		if err := s.executePrePostAction(ctx, step.PostAction); err != nil {
+			return fmt.Errorf("execute post action: %w", err)
 		}
 	}
 	return nil
