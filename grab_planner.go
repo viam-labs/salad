@@ -23,6 +23,7 @@ const (
 	GrabStepActionOpen                 // open gripper
 	GrabStepActionClose                // close gripper (Grab)
 	GrabStepActionGoHome
+	GrabStepActionShake
 )
 
 // GrabStep holds the pre-computed trajectory for one motion phase.
@@ -52,6 +53,27 @@ type grabStepSpec struct {
 }
 
 func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
+
+	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
+	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
+	if err != nil {
+		return nil, fmt.Errorf("getting left home cfg: %w", err)
+	}
+	get := func(field, key string) float64 {
+		m, _ := homePoseCfg[field].(map[string]interface{})
+		f, _ := m[key].(float64)
+		return f
+	}
+	homePose := spatialmath.NewPose(r3.Vector{
+		X: get("point", "X"),
+		Y: get("point", "Y"),
+		Z: get("point", "Z"),
+	}, &spatialmath.OrientationVectorDegrees{
+		OX:    get("orientation", "x"),
+		OY:    get("orientation", "y"),
+		OZ:    get("orientation", "z"),
+		Theta: get("orientation", "th"),
+	})
 	grabPose, err := s.computeGrabPose(ctx, zone, depthOffsetMM)
 	if err != nil {
 		return nil, err
@@ -71,7 +93,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	}, grabPose.Orientation())
 
 	specs := []grabStepSpec{
-		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen, preAction: GrabStepActionGoHome},
+		{name: "above_bin", goal: hover, postAction: GrabStepActionOpen},
 		{name: "descend", preAction: GrabStepActionOpen, goal: grabPoseThatsJustHeightDiff, constraints: s.grabLinearConstraints(), postAction: GrabStepActionClose},
 		{name: "ascend", goal: hover, constraints: s.grabLinearConstraints()},
 	}
@@ -93,6 +115,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose},
 		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
 		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
+		grabStepSpec{name: "return_home", goal: homePose},
 	)
 
 	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
