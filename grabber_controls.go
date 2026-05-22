@@ -68,6 +68,7 @@ type GrabberControlsConfig struct {
 	MotionService                     string                                `json:"motion-service"`
 	LeftHome                          string                                `json:"left-home"`
 	ShakeArmService                   *string                               `json:"shake-arm-service,omitempty"`
+	ScoopShakeService                 *string                               `json:"scoop-shake-service,omitempty"`
 	AssetsDir                         string                                `json:"assets-dir"`
 	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
 	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
@@ -132,7 +133,9 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
 		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
 	}
-
+	if cfg.ScoopShakeService != nil && *cfg.ScoopShakeService != "" {
+		requiredDeps = append(requiredDeps, *cfg.ScoopShakeService)
+	}
 	for i, bin := range cfg.Bins {
 		if bin.Name == "" {
 			return nil, nil, fmt.Errorf("%s.bins[%d]: 'name' field is required", path, i)
@@ -153,16 +156,17 @@ type grabberControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	bins            map[int]*grabberBinSwitches
-	droppingPose    spatialmath.Pose
-	bowlHoverPose   spatialmath.Pose
-	arm             arm.Arm
-	gripper         gripper.Gripper
-	binImagingCam   camera.Camera
-	leftHome        sw.Switch
-	shakeArmService genericservice.Service
-	motionService   motion.Service
-	fsService       framesystem.Service
+	bins              map[int]*grabberBinSwitches
+	droppingPose      spatialmath.Pose
+	bowlHoverPose     spatialmath.Pose
+	arm               arm.Arm
+	gripper           gripper.Gripper
+	binImagingCam     camera.Camera
+	leftHome          sw.Switch
+	shakeArmService   genericservice.Service
+	scoopShakeService genericservice.Service
+	motionService     motion.Service
+	fsService         framesystem.Service
 
 	assetsMu   sync.Mutex
 	assetsDir  string
@@ -272,6 +276,13 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		s.shakeArmService = shakeArmService
 	}
 
+	if conf.ScoopShakeService != nil && *conf.ScoopShakeService != "" {
+		scoopShakeService, err := genericservice.FromProvider(deps, *conf.ScoopShakeService)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get scoop-shake-service '%s': %w", *conf.ScoopShakeService, err)
+		}
+		s.scoopShakeService = scoopShakeService
+	}
 	if conf.AssetsDir != "" {
 		s.assetsDir = conf.AssetsDir
 	} else {
