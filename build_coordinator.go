@@ -1132,8 +1132,27 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 		return 0, fmt.Errorf("failed to read scale sensor: %w", err)
 	}
 
-	for _, v := range readings {
-		if val, err := toFloat64(v); err == nil {
+	// Prefer explicit weight-like keys from the scale payload.
+	preferredKeys := []string{"weight", "mass", "grams", "gram", "g"}
+	for _, preferred := range preferredKeys {
+		for key, value := range readings {
+			keyLower := strings.ToLower(key)
+			if keyLower == preferred || strings.Contains(keyLower, preferred) {
+				if val, convErr := toFloat64(value); convErr == nil {
+					return val, nil
+				}
+			}
+		}
+	}
+
+	// Deterministic fallback: first numeric key in sorted key order.
+	keys := make([]string, 0, len(readings))
+	for key := range readings {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if val, convErr := toFloat64(readings[key]); convErr == nil {
 			return val, nil
 		}
 	}
