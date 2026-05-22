@@ -14,6 +14,14 @@ import (
 
 func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabStepAction) error {
 	switch action {
+	case GrabStepActionShake:
+		if s.shakeArmService != nil {
+			if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
+				return fmt.Errorf("shake arm: %w", err)
+			}
+			s.logger.Debugf("shook arm")
+			return nil
+		}
 	case GrabStepActionGoHome:
 		if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
 			return fmt.Errorf("set left home: %w", err)

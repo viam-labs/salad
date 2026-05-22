@@ -560,12 +560,6 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	if err := s.executeGrab(ctx, plan); err != nil {
 		return nil, err
 	}
-
-	if s.shakeArmService != nil {
-		if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
-			return nil, fmt.Errorf("failed to shake arm: %w", err)
-		}
-	}
 	s.logger.Infof("Successfully completed get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
 	return map[string]interface{}{
