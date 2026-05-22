@@ -18,6 +18,7 @@ type dressingStepSpec struct {
 	constraints *motionplan.Constraints
 	postAction  GrabStepAction
 	postShake   bool
+	postSqueeze bool
 }
 
 type dressingStep struct {
@@ -26,6 +27,7 @@ type dressingStep struct {
 	planningTime time.Duration
 	postAction   GrabStepAction
 	postShake    bool
+	postSqueeze  bool
 }
 
 type dressingPlan struct {
@@ -49,7 +51,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 		{name: "grab",                 goal: opt.Grab.toPose(),                constraints: opt.Grab.Constraints,               postAction: GrabStepActionClose},
 		{name: "approach_grab_up",     goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
 		{name: "prepare_dressing",     goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
-		{name: "pour",      goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postShake: true},
+		{name: "pour",      goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postShake: true, postSqueeze: true},
 		{name: "post_pour", goal: s.cfg.PostPourDressing.toPose(), constraints: s.cfg.PostPourDressing.Constraints},
 		{name: "prepare_return",       goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
 		{name: "approach_grab_return", goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
@@ -104,6 +106,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 			planningTime: planDur,
 			postAction:   spec.postAction,
 			postShake:    spec.postShake,
+			postSqueeze:  spec.postSqueeze,
 		})
 
 		if len(traj) > 0 {
