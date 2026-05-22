@@ -1132,13 +1132,17 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 		return 0, fmt.Errorf("failed to read scale sensor: %w", err)
 	}
 
-	for _, v := range readings {
-		if val, err := toFloat64(v); err == nil {
-			return val, nil
-		}
+	v, ok := readings["weight"]
+	if !ok {
+		return 0, fmt.Errorf("scale readings missing 'weight' field: %+v", readings)
 	}
 
-	return 0, fmt.Errorf("no numeric reading found from scale sensor")
+	weight, err := toFloat64(v)
+	if err != nil {
+		return 0, fmt.Errorf("'weight' field is not numeric: %w", err)
+	}
+
+	return weight, nil
 }
 
 func (s *buildCoordinator) resetAll(ctx context.Context) error {
