@@ -24,6 +24,11 @@ type SegmentFlags struct {
 	DividerDilation    int
 	MinZoneAreaMM2     float64
 	MaxZoneAreaMM2     float64
+	FloorBandMM         float64
+	FloorMaxTiltDeg     float64
+	FloorMinPoints      int
+	FloorRANSACIters    int
+	FloorRANSACInlierMM float64
 }
 
 var segmentFlags SegmentFlags
@@ -45,6 +50,11 @@ func runSegment(flags SegmentFlags) error {
 		DividerDilation:    flags.DividerDilation,
 		MinZoneAreaMM2:     flags.MinZoneAreaMM2,
 		MaxZoneAreaMM2:     flags.MaxZoneAreaMM2,
+		FloorBandMM:         flags.FloorBandMM,
+		FloorMaxTiltDeg:     flags.FloorMaxTiltDeg,
+		FloorMinPoints:      flags.FloorMinPoints,
+		FloorRANSACIters:    flags.FloorRANSACIters,
+		FloorRANSACInlierMM: flags.FloorRANSACInlierMM,
 	}
 
 	logger.Infof("Segmenting %s", flags.MeshPath)
@@ -71,13 +81,13 @@ func runSegment(flags SegmentFlags) error {
 		stats.ComponentsTotal, stats.ComponentsAfterFilter, opts.MinZoneAreaMM2, opts.MaxZoneAreaMM2)
 
 	logger.Infof("Detected %d zone(s):", len(result.Zones))
-	logger.Infof("%-4s  %-10s  %-10s  %-10s  %-10s  %-12s  %-12s  %-9s",
-		"ID", "MinX", "MaxX", "MinY", "MaxY", "Width(mm)", "Depth(mm)", "Triangles")
-	logger.Infof("%s", strings.Repeat("-", 87))
+	logger.Infof("%-4s  %-10s  %-10s  %-10s  %-10s  %-12s  %-12s  %-9s  %-8s",
+		"ID", "MinX", "MaxX", "MinY", "MaxY", "Width(mm)", "Depth(mm)", "Triangles", "Tilt(deg)")
+	logger.Infof("%s", strings.Repeat("-", 99))
 	for _, z := range result.Zones {
-		logger.Infof("%-4d  %-10.1f  %-10.1f  %-10.1f  %-10.1f  %-12.1f  %-12.1f  %-9d",
+		logger.Infof("%-4d  %-10.1f  %-10.1f  %-10.1f  %-10.1f  %-12.1f  %-12.1f  %-9d  %-8.2f",
 			z.ID, z.MinX, z.MaxX, z.MinY, z.MaxY,
-			z.MaxX-z.MinX, z.MaxY-z.MinY, len(z.Mesh.Faces))
+			z.MaxX-z.MinX, z.MaxY-z.MinY, len(z.Mesh.Faces), z.Plane.TiltDeg())
 	}
 	logger.Info("")
 
