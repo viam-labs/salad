@@ -14,6 +14,7 @@ import (
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
+	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
@@ -129,6 +130,8 @@ type BuildCoordinatorConfig struct {
 	CaptureDir          string                              `json:"capture-dir"`
 	Simulate            bool                                `json:"simulate"`
 	SkipLilArm          bool                                `json:"skip-lil-arm"`
+	LeftHome            string                              `json:"left-home"`
+	RightHome           string                              `json:"right-home"`
 	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
 	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
@@ -157,11 +160,17 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.ChefsKissControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "chefs-kiss-controls")
 	}
+	if cfg.LeftHome == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "left-home")
+	}
+	if cfg.RightHome == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
+	}
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
+	deps := []string{cfg.GrabberControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls, cfg.LeftHome, cfg.RightHome}
 	var optDeps []string
 	if cfg.BowlControls != "" {
 		optDeps = append(optDeps, cfg.BowlControls)
@@ -239,6 +248,8 @@ type buildCoordinator struct {
 	dressingControls     resource.Resource
 	textToSpeech         resource.Resource
 	imagingCamera        camera.Camera
+	leftHome             sw.Switch
+	rightHome            sw.Switch
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 	ingredientZoneIDs    map[string]int     // name -> zone ID
@@ -336,6 +347,18 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("failed to get scale sensor %q: %w", conf.ScaleSensor, err)
 	}
 	s.scaleSensor = scale
+
+	leftHomeSwitch, err := sw.FromProvider(deps, conf.LeftHome)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get left-home switch %q: %w", conf.LeftHome, err)
+	}
+	s.leftHome = leftHomeSwitch
+
+	rightHomeSwitch, err := sw.FromProvider(deps, conf.RightHome)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get right-home switch %q: %w", conf.RightHome, err)
+	}
+	s.rightHome = rightHomeSwitch
 
 	for _, ing := range conf.Ingredients {
 		s.ingredients[ing.Name] = ing.GramsPerServing
@@ -1119,6 +1142,12 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 }
 
 func (s *buildCoordinator) resetAll(ctx context.Context) error {
+	if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
+		return fmt.Errorf("failed to set left-home switch to position 2: %w", err)
+	}
+	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
+		return fmt.Errorf("failed to set right-home switch to position 2: %w", err)
+	}
 	_, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
