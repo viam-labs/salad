@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.viam.com/rdk/referenceframe"
 )
@@ -36,10 +37,38 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			}
 			s.logger.Debugf("opened gripper after %q", step.name)
 		case GrabStepActionClose:
-			if _, err := s.gripper.Grab(ctx, nil); err != nil {
+			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
+				"grab_with_torque": map[string]interface{}{
+					"position": 20.0,
+					"speed":    3000.0,
+					"torque":   0,
+				},
+			}); err != nil {
 				return fmt.Errorf("step %q: close gripper: %w", step.name, err)
 			}
 			s.logger.Debugf("closed gripper after %q", step.name)
+		}
+
+		if step.postSqueeze {
+			for _, pos := range []float64{10.0, 5.0, 2.0} {
+				if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
+					"grab_with_torque": map[string]interface{}{
+						"position": pos,
+						"speed":    3000.0,
+						"torque":   100.0,
+					},
+				}); err != nil {
+					return fmt.Errorf("step %q: squeeze to %v: %w", step.name, pos, err)
+				}
+				s.logger.Debugf("squeezed to position %v after %q", pos, step.name)
+				time.Sleep(700 * time.Millisecond)
+			}
+			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
+				"set_gripper_torque": 0.0,
+			}); err != nil {
+				return fmt.Errorf("step %q: reset gripper torque: %w", step.name, err)
+			}
+			s.logger.Debugf("reset gripper torque to 0 after %q", step.name)
 		}
 
 		if step.postShake && s.shakeArmService != nil {
