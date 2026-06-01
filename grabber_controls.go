@@ -30,6 +30,10 @@ var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
 
 const defaultBowlHoverHeightMM = 150.0
 
+// defaultServingDepthMM is how far below the detected food surface the gripper
+// descends to scoop a serving when a bin does not specify a `serving-depth-mm`.
+const defaultServingDepthMM = 30.0
+
 func init() {
 	resource.RegisterService(genericservice.API, GrabberControls,
 		resource.Registration[resource.Resource, *GrabberControlsConfig]{
@@ -42,6 +46,10 @@ func init() {
 type GrabberControlsBinConfig struct {
 	Name   string `json:"name"`
 	ZoneID int    `json:"zone-id"`
+	// ServingDepthMM is how far below the detected food surface the gripper
+	// descends when grabbing a serving from this bin. Defaults to
+	// defaultServingDepthMM when zero/unset.
+	ServingDepthMM float64 `json:"serving-depth-mm,omitempty"`
 }
 
 type BowlDropPose struct {
@@ -140,6 +148,9 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		if bin.Name == "" {
 			return nil, nil, fmt.Errorf("%s.bins[%d]: 'name' field is required", path, i)
 		}
+		if bin.ServingDepthMM < 0 {
+			return nil, nil, fmt.Errorf("%s.bins[%d]: 'serving-depth-mm' must be non-negative, got %v", path, i, bin.ServingDepthMM)
+		}
 	}
 
 	return requiredDeps, []string{}, nil
@@ -176,8 +187,9 @@ type grabberControls struct {
 }
 
 type grabberBinSwitches struct {
-	name      string
-	hoverPose spatialmath.Pose
+	name           string
+	hoverPose      spatialmath.Pose
+	servingDepthMM float64
 }
 
 type grabPlanStep struct {
@@ -253,7 +265,14 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 	s.leftHome = leftHomeSwitch
 
 	for _, binCfg := range conf.Bins {
-		s.bins[binCfg.ZoneID] = &grabberBinSwitches{name: binCfg.Name}
+		servingDepth := binCfg.ServingDepthMM
+		if servingDepth == 0 {
+			servingDepth = defaultServingDepthMM
+		}
+		s.bins[binCfg.ZoneID] = &grabberBinSwitches{
+			name:           binCfg.Name,
+			servingDepthMM: servingDepth,
+		}
 	}
 
 	motionSvc, err := motion.FromProvider(deps, conf.MotionService)
@@ -388,7 +407,7 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentation.Zone, foodLevelMM float64) (spatialmath.Pose, error) {
+func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
 	zonePlane := zone.Plane
 	zoneCenterVec := r3.Vector{
 		X: zonePlane.Point[0],
@@ -409,8 +428,9 @@ func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentatio
 	// hardcoding for now but want to detect this at some point
 	closedGripperToArmBaseHeightMM := 330.0
 
-	// food grab position is 30mm beneath food height
-	grabBasePoint := foodHeightPosition.Add(zoneNormalVec.Mul(-30.0))
+	// food grab position is `servingDepthMM` beneath the detected food surface,
+	// measured along the bin's plane normal.
+	grabBasePoint := foodHeightPosition.Add(zoneNormalVec.Mul(-servingDepthMM))
 
 	idealArmBasePosition := grabBasePoint.Add(zoneNormalVec.Mul(closedGripperToArmBaseHeightMM))
 
