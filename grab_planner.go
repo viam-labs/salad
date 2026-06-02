@@ -52,7 +52,7 @@ type grabStepSpec struct {
 	preAction   GrabStepAction
 }
 
-func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, depthOffsetMM float64) (*GrabPlan, error) {
+func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64) (*GrabPlan, error) {
 
 	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
 	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
@@ -74,7 +74,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		OZ:    get("orientation", "z"),
 		Theta: get("orientation", "th"),
 	})
-	grabPose, err := s.computeGrabPose(ctx, zone, depthOffsetMM)
+	grabPose, err := s.computeGrabPose(ctx, zone, binFoodLevelMM, bin.servingDepthMM)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	}
 
 	specs = append(specs,
-		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose},
+		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose, constraints: s.grabLinearConstraints()},
 		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
 		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
 		grabStepSpec{name: "return_home", goal: homePose},
