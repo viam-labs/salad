@@ -50,6 +50,10 @@ type GrabberControlsBinConfig struct {
 	// descends when grabbing a serving from this bin. Defaults to
 	// defaultServingDepthMM when zero/unset.
 	ServingDepthMM float64 `json:"serving-depth-mm,omitempty"`
+	// HoverXOffsetMM and HoverYOffsetMM shift the bin hover XY position from
+	// the zone centroid (world frame, mm).
+	HoverXOffsetMM float64 `json:"hover-x-offset-mm,omitempty"`
+	HoverYOffsetMM float64 `json:"hover-y-offset-mm,omitempty"`
 }
 
 type BowlDropPose struct {
@@ -389,7 +393,11 @@ func (s *grabberControls) loadAssets() error {
 				return fmt.Errorf("bin %q: %w", binCfg.Name, err)
 			}
 			s.bins[binCfg.ZoneID].hoverPose = spatialmath.NewPose(
-				r3.Vector{X: cx, Y: cy, Z: s.zones.ZMean + s.cfg.BinHoverHeightMM},
+				r3.Vector{
+					X: cx + binCfg.HoverXOffsetMM,
+					Y: cy + binCfg.HoverYOffsetMM,
+					Z: s.zones.ZMean + s.cfg.BinHoverHeightMM,
+				},
 				s.cfg.BinHoverOrientation,
 			)
 		}
