@@ -42,6 +42,7 @@ type dressingPlan struct {
 	dressingName string
 	steps        []dressingStep
 	plannedAt    time.Time
+	buildID      string
 }
 
 func (s *dressingControls) planDressing(ctx context.Context, name, buildID string) (*dressingPlan, error) {
@@ -151,7 +152,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 
 	}
 
-	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
+	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now(), buildID: buildID}, nil
 }
 
 func (s *dressingControls) frameSystemWithPourJointDirection(

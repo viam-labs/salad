@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"go.viam.com/rdk/referenceframe"
+
+	"salad/lib/fileio"
 )
 
 func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
@@ -25,6 +27,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		}
 		for rev := range revolutions {
 			if err := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil); err != nil {
+				s.saveFailedExecutionJointPosition(plan.buildID)
 				return fmt.Errorf("step %q rev %d: %w", step.name, rev+1, err)
 			}
 		}
@@ -96,4 +99,20 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		}
 	}
 	return nil
+}
+
+func (s *dressingControls) saveFailedExecutionJointPosition(buildID string) {
+	if buildID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	inputs, err := s.arm.CurrentInputs(ctx)
+	if err != nil {
+		s.logger.Warnw("could not read arm inputs at execution failure", "err", err)
+		return
+	}
+	if err := fileio.SaveJsonToSync(inputs, "failed_execution_joint_position.json", buildID, time.Now()); err != nil {
+		s.logger.Warnw("could not save failed execution joint position", "err", err)
+	}
 }

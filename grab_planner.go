@@ -43,6 +43,7 @@ type GrabPlan struct {
 	ZoneID    int
 	Steps     []GrabStep
 	PlannedAt time.Time
+	BuildID   string
 }
 
 type grabStepSpec struct {
@@ -178,7 +179,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		}
 	}
 
-	return &GrabPlan{BinName: bin.name, ZoneID: zoneID, Steps: steps, PlannedAt: time.Now()}, nil
+	return &GrabPlan{BinName: bin.name, ZoneID: zoneID, Steps: steps, PlannedAt: time.Now(), BuildID: buildID}, nil
 }
 
 func (s *grabberControls) grabLinearConstraints() *motionplan.Constraints {
