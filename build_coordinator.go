@@ -20,8 +20,9 @@ import (
 
 	"salad/filter"
 	"salad/segmentation"
-	saladutils "salad/utils"
+	salad "salad/state_machine"
 	statemachine "salad/state_machine"
+	saladutils "salad/utils"
 )
 
 var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
@@ -366,13 +367,23 @@ func (s *buildCoordinator) Name() resource.Name {
 }
 
 func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, error) {
-	return s.getStatus(), nil
+	return s.sm.GetStateMachineStatus(), nil
 }
 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
-		return s.doBuildSalad(ctx, val, customerName)
+		outputMap, buildCtx, err := s.sm.StartBuildSalad(ctx, s.cancelCtx, val, customerName)
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Salad must be in idle or complete state", err),
+			}, nil
+		}
+		if outputMap != nil {
+			return outputMap, nil
+		}
+		return s.doBuildSalad(ctx, buildCtx, val, customerName)
 	}
 	if _, ok := cmd["setup_station"]; ok {
 		return s.doSetupStation()
@@ -394,7 +405,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 		}, nil
 	}
 	if _, ok := cmd["status"]; ok {
-		return s.getStatus(), nil
+		return s.sm.GetStateMachineStatus(), nil
 	}
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
@@ -403,15 +414,6 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 		return s.getSetupResult()
 	}
 	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
-}
-
-// TODO: remove these helper functions and directly call state machine functions
-func (s *buildCoordinator) updateStatus(status string, progress float64) {
-	s.sm.UpdateStateMachineStatus(status, progress)
-}
-
-func (s *buildCoordinator) getStatus() map[string]interface{} {
-	return s.sm.GetStateMachineStatus()
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
@@ -432,14 +434,8 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	return s.sm.DoStop()
 }
 
-func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
+func (s *buildCoordinator) doBuildSalad(ctx context.Context, buildCtx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
-
-	// TODO: Also move to caller - will be easier to ensure ever DoCommand verifies sate before proceeding.
-	outputMap, buildCtx := s.sm.StartBuildSalad(ctx, s.cancelCtx, value, customerName)
-	if outputMap != nil {
-		return outputMap, nil
-	}
 
 	if customerName != "" {
 		s.logger.Infof("New salad order received for %q: %v", customerName, value)
@@ -453,7 +449,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
-		s.updateStatus("complete", 100)
+		s.sm.UpdateStateMachineStatus(salad.Complete, 100)
 		result = map[string]interface{}{
 			"success":   true,
 			"message":   "Salad built and delivered successfully (simulated)",
@@ -467,7 +463,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
-		s.updateStatus("stopped", 0)
+		s.sm.UpdateStateMachineStatus(salad.Stopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
@@ -527,7 +523,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 
 	err := s.executeSetup(setupCtx)
 	if setupCtx.Err() != nil {
-		s.updateStatus("stopped", 0)
+		s.sm.UpdateStateMachineStatus(salad.Stopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
@@ -537,7 +533,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		return s.sm.SetupStationError(err), nil
 	}
 
-	s.updateStatus("idle", 0)
+	s.sm.UpdateStateMachineStatus(salad.Idle, 0)
 	s.logger.Infof("Station setup complete")
 	return map[string]interface{}{
 		"success": true,
@@ -841,7 +837,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		s.updateStatus(fmt.Sprintf("adding %s", target.name), completedServings/totalSteps*100)
+		s.sm.UpdateStateMachineStatus(salad.Adding, completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if target.category == "dressing" {
 			continue
@@ -880,7 +876,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// 	}
 	// }
 
-	s.updateStatus("delivering salad", completedServings/totalSteps*100)
+	s.sm.UpdateStateMachineStatus(salad.Delivering, completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
 	if s.bowlControls != nil {
@@ -901,14 +897,14 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// the grabber and bowl-controls arms have gone home.
 	for _, target := range targets {
 		if target.category == "dressing" {
-			s.updateStatus(fmt.Sprintf("adding %s", target.name), 100)
+			s.sm.UpdateStateMachineStatus(salad.Adding, 100)
 			if err := s.addDressing(ctx, target.name); err != nil {
 				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
 			}
 		}
 	}
 
-	s.updateStatus("complete", 100)
+	s.sm.UpdateStateMachineStatus(salad.Complete, 100)
 
 	// chefs kiss
 	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{

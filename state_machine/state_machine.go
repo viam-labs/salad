@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"context"
+	"go.viam.com/rdk/logging"
 )
 
 type Status string
@@ -21,33 +22,6 @@ const (
 	Complete   Status = "complete"
 )
 
-// TODO: instead of doing this, it might make more sense to export the 
-// Status enum and use it directly in updateStatus build coordinator as a parameter? 
-// (this would require changing func signatures)
-// I believe updateStatus is a private func so should be ok
-func stringToStatus (statusString string) (Status, error) {
-	switch statusString {
-	case "idle":
-		return Idle, nil
-	case "preparing":
-		return Preparing, nil
-	case "stopped":
-		return Stopped, nil
-	case "failed":
-		return Failed, nil
-	case "setting_up_station":
-		return SettingUp, nil
-	case "adding_ingredient":
-		return Adding, nil
-	case "delivering_salad":
-		return Delivering, nil
-	case "complete":
-		return Complete, nil
-	default:
-		return Idle, fmt.Errorf("Invalid status")
-	}
-}
-
 type StateMachine struct {
 	mu           sync.RWMutex
 	status       Status
@@ -56,6 +30,7 @@ type StateMachine struct {
 	errorMsg     string
 	opCancelFunc func()
 	opDone       chan struct{}
+	logger 		 logging.Logger
 }
 
 func NewStateMachine() (*StateMachine){
@@ -65,15 +40,10 @@ func NewStateMachine() (*StateMachine){
 	return sm
 }
 
-func (sm *StateMachine) UpdateStateMachineStatus(status string, progress float64) {
+func (sm *StateMachine) UpdateStateMachineStatus(status Status, progress float64) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	statusEnum, err := stringToStatus(status) 
-	sm.status = statusEnum
-	if err != nil {
-		// TODO return error instead? would require changing func signature
-		fmt.Print("Invalid status")
-	}
+	sm.status = status
 	sm.progress = progress
 }
 
@@ -101,8 +71,7 @@ func (sm *StateMachine) DoStop() (map[string]interface{}, error) {
 		}, nil
 	}
 
-	// TODO add logger for state machine
-	// s.logger.Infof("Stop requested, cancelling operation")
+	sm.logger.Infof("Stop requested, cancelling operation")
 	cancelFunc()
 	<-done
 
@@ -112,9 +81,13 @@ func (sm *StateMachine) DoStop() (map[string]interface{}, error) {
 	}, nil
 }
 
-func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.Context, value interface{}, customerName string) (map[string]interface{}, context.Context) {
+func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.Context, value interface{}, customerName string) (map[string]interface{}, context.Context, error) {
 	
-	// TODO: Verify we're transitioning from a valid state.
+	// Verify we're transitioning from a valid state.
+	if (!(sm.status == Idle || sm.status == Complete)) {
+		return nil, nil, fmt.Errorf("Salad must be in idle or complete state")
+		// TODO check if these two states are right
+	}
 	
 	sm.mu.Lock()
 	if sm.opCancelFunc != nil {
@@ -122,7 +95,7 @@ func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.C
 		return map[string]interface{}{
 			"success": false,
 			"message": "An operation is already in progress, use 'stop' to cancel it first",
-		}, nil
+		}, nil, nil
 	}
 	buildCtx, buildCancelFunc := context.WithCancel(cancelCtx)
 	sm.opCancelFunc = buildCancelFunc
@@ -133,7 +106,7 @@ func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.C
 	sm.errorMsg = ""
 	sm.mu.Unlock()
 	/////
-	return nil, buildCtx
+	return nil, buildCtx, nil
 }
 
 func (sm *StateMachine) EndBuildSalad() {
