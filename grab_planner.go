@@ -12,6 +12,7 @@ import (
 	"go.viam.com/rdk/robot/framesystem"
 	"go.viam.com/rdk/spatialmath"
 
+	"salad/lib/fileio"
 	"salad/segmentation"
 )
 
@@ -52,7 +53,7 @@ type grabStepSpec struct {
 	preAction   GrabStepAction
 }
 
-func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64) (*GrabPlan, error) {
+func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64, buildID string) (*GrabPlan, error) {
 
 	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
 	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
@@ -154,6 +155,11 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
 		planDur := time.Since(t)
 		s.logger.Infof("planned step %q in %.2fs", spec.name, planDur.Seconds())
+		s.fileSaver.SaveAsync(ctx, fileio.NewPlanRequestSaveFile(
+			req, buildID,
+			fmt.Sprintf("grab_%s_zone%d_%s_plan_request.json", bin.name, zoneID, spec.name),
+			t, planDur,
+		))
 		if err != nil {
 			return nil, fmt.Errorf("planning step %q: %w", spec.name, err)
 		}
