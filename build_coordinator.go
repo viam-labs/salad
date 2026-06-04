@@ -1096,8 +1096,13 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 
 		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, depth-offset %.1fmm)",
 			name, totalAdded, targetGrams, depthOffset)
+
+		zoneID := s.ingredients[name].ZoneID
+		if zoneID == nil {
+			return fmt.Errorf("ingredient %q has no zone-id", name)
+		}
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
-			"get_from_bin":    s.ingredients[name].ZoneID,
+			"get_from_bin":    *zoneID,
 			"depth-offset-mm": depthOffset,
 		})
 		if err != nil {
