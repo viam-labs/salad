@@ -52,8 +52,10 @@ type GrabberControlsBinConfig struct {
 	ServingDepthMM float64 `json:"serving-depth-mm,omitempty"`
 	// HoverXOffsetMM and HoverYOffsetMM shift the bin hover XY position from
 	// the zone centroid (world frame, mm).
-	HoverXOffsetMM float64 `json:"hover-x-offset-mm,omitempty"`
-	HoverYOffsetMM float64 `json:"hover-y-offset-mm,omitempty"`
+	HoverXOffsetMM  float64 `json:"hover-x-offset-mm,omitempty"`
+	HoverYOffsetMM  float64 `json:"hover-y-offset-mm,omitempty"`
+	GramsPerServing float64 `json:"grams-per-serving,omitempty"`
+	Category        string  `json:"category,omitempty"`
 }
 
 type BowlDropPose struct {
@@ -153,6 +155,12 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 		}
 		if bin.ServingDepthMM < 0 {
 			return nil, nil, fmt.Errorf("%s.bins[%d]: 'serving-depth-mm' must be non-negative, got %v", path, i, bin.ServingDepthMM)
+		}
+		if bin.GramsPerServing <= 0 {
+			return nil, nil, fmt.Errorf("%s.bins[%d]: 'grams-per-serving' must be positive, got %v", path, i, bin.GramsPerServing)
+		}
+		if bin.Category == "" {
+			return nil, nil, fmt.Errorf("%s.bins[%d]: 'category' field is required", path, i)
 		}
 	}
 
@@ -318,6 +326,19 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
+	}
+
+	if _, ok := cmd["get_ingredients"]; ok {
+		ingredients := make([]map[string]any, 0, len(s.cfg.Bins))
+		for _, bin := range s.cfg.Bins {
+			ingredients = append(ingredients, map[string]any{
+				"name":              bin.Name,
+				"grams_per_serving": bin.GramsPerServing,
+				"category":          bin.Category,
+				"zone_id":           bin.ZoneID,
+			})
+		}
+		return map[string]any{"ingredients": ingredients}, nil
 	}
 
 	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'reset' field")
