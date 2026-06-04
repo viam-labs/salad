@@ -65,6 +65,11 @@ linters:
     - wrapcheck
     - wsl
 linters-settings:
+  forbidigo:
+    # Override default forbid list (which bans fmt.Print*).
+    # Salad's CLI legitimately prints to stdout; no internal patterns to forbid yet.
+    forbid:
+      - p: ^salad_internal_never_match$
   errcheck:
     check-blank: true
   gci:
@@ -74,6 +79,7 @@ linters-settings:
       - prefix(salad)
   gofumpt:
     lang-version: "1.26"
+    module-path: salad
     extra-rules: true
   govet:
     enable-all: true

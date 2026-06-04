@@ -29,23 +29,23 @@ type CropBounds struct {
 	MinZ, MaxZ float64
 }
 
-func cropPointCloud(pc pointcloud.PointCloud, b CropBounds) (pointcloud.PointCloud, error) {
+func cropPointCloud(pc pointcloud.PointCloud, b CropBounds) pointcloud.PointCloud {
 	out := pointcloud.NewBasicPointCloud(pc.Size())
 	pc.Iterate(0, 0, func(p r3.Vector, d pointcloud.Data) bool {
 		if p.X >= b.MinX && p.X <= b.MaxX &&
 			p.Y >= b.MinY && p.Y <= b.MaxY &&
 			p.Z >= b.MinZ && p.Z <= b.MaxZ {
-			_ = out.Set(p, d)
+			_ = out.Set(p, d) //nolint:errcheck // Set on freshly-allocated BasicPointCloud cannot fail
 		}
 		return true
 	})
-	return out, nil
+	return out
 }
 
 func runCrop(flags CropFlags) error {
 	if flags.OutputPath == "" {
 		dir := filepath.Join("output", time.Now().Format("20060102-150405"))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", dir, err)
 		}
 		flags.OutputPath = filepath.Join(dir, "cropped.pcd")
@@ -67,10 +67,7 @@ func runCrop(flags CropFlags) error {
 		MinY: flags.MinY, MaxY: flags.MaxY,
 		MinZ: flags.MinZ, MaxZ: flags.MaxZ,
 	}
-	out, err := cropPointCloud(pc, b)
-	if err != nil {
-		return err
-	}
+	out := cropPointCloud(pc, b)
 	fmt.Printf("Kept %d / %d points after cropping (removed %d)\n", out.Size(), pc.Size(), pc.Size()-out.Size())
 
 	if err := saladutils.WritePCD(out, flags.OutputPath); err != nil {

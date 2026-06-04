@@ -423,7 +423,7 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
+func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
 	zonePlane := zone.Plane
 	zoneCenterVec := r3.Vector{
 		X: zonePlane.Point[0],
@@ -487,7 +487,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	if err != nil {
 		s.logger.Warnf("zone %d: bin-imaging-cam NextPointCloud failed after %.2fs: %v",
 			zone.ID, time.Since(start).Seconds(), err)
-		return 0, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %v", time.Since(start).Seconds(), err)
+		return 0, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %w", time.Since(start).Seconds(), err)
 	}
 
 	camName := s.binImagingCam.Name().ShortName()
@@ -495,7 +495,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	if err != nil {
 		s.logger.Warnf("zone %d: failed to transform bin-imaging-cam point cloud from %q to world frame: %v",
 			zone.ID, camName, err)
-		return 0, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %v", camName, err)
+		return 0, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %w", camName, err)
 	}
 
 	stats, _ := segmentation.ZonePlaneFitStats(pc, zone, s.logger)
@@ -504,7 +504,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY,
 			stats.PointsInsideX, stats.PointsInsideY)
 		return 0, fmt.Errorf("0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
-			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY, stats.PointsInsideX, stats.PointsInsideY)
+			stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY, stats.PointsInsideX, stats.PointsInsideY)
 	}
 	pct := 0.0
 	if stats.PointsTotal > 0 {

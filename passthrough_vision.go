@@ -76,7 +76,6 @@ func newSaladPassthroughToCamera(ctx context.Context, deps resource.Dependencies
 	}
 
 	return NewPassthroughToCamera(ctx, deps, rawConf.ResourceName(), conf, logger)
-
 }
 
 func NewPassthroughToCamera(ctx context.Context, deps resource.Dependencies, name resource.Name, conf *Config, logger logging.Logger) (vision.Service, error) {
