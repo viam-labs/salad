@@ -3,10 +3,13 @@ package salad
 import (
 	"fmt"
 	"sync"
+	"context"
 )
 
 type Status string
 
+// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
+// status shouldn't be strings - should be a constant enum type.
 const (
 	Idle       Status = "idle"
 	Preparing  Status = "preparing"
@@ -51,15 +54,13 @@ type StateMachine struct {
 	progress     float64
 	customerName string
 	errorMsg     string
-	simulate     bool
 	opCancelFunc func()
 	opDone       chan struct{}
 }
 
-func NewStateMachine(simulate bool) (*StateMachine){
+func NewStateMachine() (*StateMachine){
 	sm := &StateMachine {
 		status: Idle,
-		simulate: simulate,
 	}
 	return sm
 }
@@ -76,13 +77,115 @@ func (sm *StateMachine) UpdateStateMachineStatus(status string, progress float64
 	sm.progress = progress
 }
 
-func (sm *StateMachine) GetStateMachineStatus(customerName string, errorMsg string) map[string]interface{} {
+func (sm *StateMachine) GetStateMachineStatus() map[string]interface{} {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return map[string]interface{}{
 		"status":        sm.status,
 		"progress":      sm.progress,
-		"customer_name": customerName,
-		"error_msg":     errorMsg,
+		"customer_name": sm.customerName,
+		"error_msg":     sm.errorMsg,
+	}
+}
+
+func (sm *StateMachine) DoStop() (map[string]interface{}, error) {
+	sm.mu.RLock()
+	cancelFunc := sm.opCancelFunc
+	done := sm.opDone
+	sm.mu.RUnlock()
+
+	if cancelFunc == nil {
+		return map[string]interface{}{
+			"success": false,
+			"message": "No operation in progress",
+		}, nil
+	}
+
+	// TODO add logger for state machine
+	// s.logger.Infof("Stop requested, cancelling operation")
+	cancelFunc()
+	<-done
+
+	return map[string]interface{}{
+		"success": true,
+		"message": "Operation stopped",
+	}, nil
+}
+
+func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.Context, value interface{}, customerName string) (map[string]interface{}, context.Context) {
+	
+	// TODO: Verify we're transitioning from a valid state.
+	
+	sm.mu.Lock()
+	if sm.opCancelFunc != nil {
+		sm.mu.Unlock()
+		return map[string]interface{}{
+			"success": false,
+			"message": "An operation is already in progress, use 'stop' to cancel it first",
+		}, nil
+	}
+	buildCtx, buildCancelFunc := context.WithCancel(cancelCtx)
+	sm.opCancelFunc = buildCancelFunc
+	sm.opDone = make(chan struct{})
+	sm.status = "preparing"
+	sm.progress = 0
+	sm.customerName = customerName
+	sm.errorMsg = ""
+	sm.mu.Unlock()
+	/////
+	return nil, buildCtx
+}
+
+func (sm *StateMachine) EndBuildSalad() {
+	sm.mu.Lock()
+	sm.opCancelFunc = nil
+	sm.customerName = ""
+	close(sm.opDone)
+	sm.opDone = nil
+	sm.mu.Unlock()
+}
+
+func (sm *StateMachine) BuildSaladFailed(failMsg string) () {
+	sm.mu.Lock()
+	sm.status = "failed"
+	sm.errorMsg = failMsg
+	sm.mu.Unlock()
+}
+
+func (sm *StateMachine) OperationInProgress(cancelCtx context.Context) (map[string]interface{}, context.Context) {
+	sm.mu.Lock()
+	if sm.opCancelFunc != nil {
+		sm.mu.Unlock()
+		return map[string]interface{}{
+			"success": false,
+			"message": "An operation is already in progress, use 'stop' to cancel it first",
+		}, nil
+	}
+	setupCtx, setupCancelFunc := context.WithCancel(cancelCtx)
+	sm.opCancelFunc = setupCancelFunc
+	sm.opDone = make(chan struct{})
+	sm.status = "setting_up_station"
+	sm.progress = 0
+	sm.errorMsg = ""
+	sm.mu.Unlock()
+	return nil, setupCtx
+}
+
+func (sm *StateMachine) EndSetupStation() {
+	sm.mu.Lock()
+	sm.opCancelFunc = nil
+	close(sm.opDone)
+	sm.opDone = nil
+	sm.mu.Unlock()
+}
+
+func (sm *StateMachine) SetupStationError(err error) (map[string]interface{}) {
+	sm.mu.Lock()
+	sm.status = "failed"
+	sm.errorMsg = err.Error()
+	sm.mu.Unlock()
+	return map[string]interface{}{
+		"success": false,
+		"message": err.Error(),
 	}
 }

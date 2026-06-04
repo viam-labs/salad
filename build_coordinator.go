@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"go.viam.com/rdk/components/camera"
@@ -255,19 +254,8 @@ type buildCoordinator struct {
 	ingredientCategories map[string]string  // name -> category
 	ingredientZoneIDs    map[string]int     // name -> zone ID
 
-	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
-	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
-	// status shouldn't be strings - should be a constant enum type.
-	mu           sync.RWMutex
-	status       string
-	progress     float64
-	customerName string
-	errorMsg     string
-	simulate     bool
 	skipLilArm   bool
-	opCancelFunc func()
-	opDone       chan struct{}
-
+	simulate     bool
 	assetsDir string
 	sm statemachine.StateMachine
 }
@@ -295,7 +283,6 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		ingredients:          make(map[string]float64),
 		ingredientCategories: make(map[string]string),
 		ingredientZoneIDs:    make(map[string]int),
-		status:               "idle",
 		simulate:             conf.Simulate,
 		skipLilArm:           conf.SkipLilArm,
 		assetsDir:            "/home/viam/assets",
@@ -368,7 +355,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		s.ingredientZoneIDs[ing.Name] = *ing.ZoneID
 	}
 
-	s.sm = *statemachine.NewStateMachine(conf.Simulate)
+	s.sm = *statemachine.NewStateMachine()
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
 	return s, nil
@@ -418,13 +405,13 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
 }
 
-// TODO: possibly remove these helper functions and directly call state machine functions
+// TODO: remove these helper functions and directly call state machine functions
 func (s *buildCoordinator) updateStatus(status string, progress float64) {
 	s.sm.UpdateStateMachineStatus(status, progress)
 }
 
 func (s *buildCoordinator) getStatus() map[string]interface{} {
-	return s.sm.GetStateMachineStatus(s.customerName, s.errorMsg)
+	return s.sm.GetStateMachineStatus()
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
@@ -441,53 +428,18 @@ func (s *buildCoordinator) listIngredients() map[string]interface{} {
 	}
 }
 
-// TODO decide whether mutex should stay here or in state machine
 func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
-	s.mu.RLock()
-	cancelFunc := s.opCancelFunc
-	done := s.opDone
-	s.mu.RUnlock()
-
-	if cancelFunc == nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": "No operation in progress",
-		}, nil
-	}
-
-	s.logger.Infof("Stop requested, cancelling operation")
-	cancelFunc()
-	<-done
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "Operation stopped",
-	}, nil
+	return s.sm.DoStop()
 }
 
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
 
-	// TODO: Move inside state machine.
-	// Verify we're transitioning from a valid state.
-	// Also move to caller - will be easier to ensure ever DoCommand verifies sate before proceeding.
-	s.mu.Lock()
-	if s.opCancelFunc != nil {
-		s.mu.Unlock()
-		return map[string]interface{}{
-			"success": false,
-			"message": "An operation is already in progress, use 'stop' to cancel it first",
-		}, nil
+	// TODO: Also move to caller - will be easier to ensure ever DoCommand verifies sate before proceeding.
+	outputMap, buildCtx := s.sm.StartBuildSalad(ctx, s.cancelCtx, value, customerName)
+	if outputMap != nil {
+		return outputMap, nil
 	}
-	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
-	s.opCancelFunc = buildCancelFunc
-	s.opDone = make(chan struct{})
-	s.status = "preparing"
-	s.progress = 0
-	s.customerName = customerName
-	s.errorMsg = ""
-	s.mu.Unlock()
-	/////
 
 	if customerName != "" {
 		s.logger.Infof("New salad order received for %q: %v", customerName, value)
@@ -495,18 +447,8 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		s.logger.Infof("New salad order received: %v", value)
 	}
 
-	// TODO: Move to a state machine function.
-	defer func() {
-		s.mu.Lock()
-		s.opCancelFunc = nil
-		s.customerName = ""
-		close(s.opDone)
-		s.opDone = nil
-		s.mu.Unlock()
-	}()
-	////
+	defer s.sm.EndBuildSalad()
 
-	// TODO move simulate outside of state maching back to coordinator?
 	var result map[string]interface{}
 	var err error
 	if s.simulate {
@@ -545,11 +487,8 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 			}
 		}
 	}
-	if buildFailed {
-		s.mu.Lock()
-		s.status = "failed"
-		s.errorMsg = failMsg
-		s.mu.Unlock()
+	if buildFailed { 
+		s.sm.BuildSaladFailed(failMsg)
 		if result != nil {
 			return result, nil
 		}
@@ -577,31 +516,14 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("setup_station requires 'imaging-camera' to be configured")
 	}
 
-	s.mu.Lock()
-	if s.opCancelFunc != nil {
-		s.mu.Unlock()
-		return map[string]interface{}{
-			"success": false,
-			"message": "An operation is already in progress, use 'stop' to cancel it first",
-		}, nil
+	resultMap, setupCtx := s.sm.OperationInProgress(s.cancelCtx)
+	if resultMap != nil {
+		return resultMap, nil
 	}
-	setupCtx, setupCancelFunc := context.WithCancel(s.cancelCtx)
-	s.opCancelFunc = setupCancelFunc
-	s.opDone = make(chan struct{})
-	s.status = "setting_up_station"
-	s.progress = 0
-	s.errorMsg = ""
-	s.mu.Unlock()
 
 	s.logger.Infof("Starting station setup")
 
-	defer func() {
-		s.mu.Lock()
-		s.opCancelFunc = nil
-		close(s.opDone)
-		s.opDone = nil
-		s.mu.Unlock()
-	}()
+	defer s.sm.EndSetupStation()
 
 	err := s.executeSetup(setupCtx)
 	if setupCtx.Err() != nil {
@@ -612,14 +534,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		}, nil
 	}
 	if err != nil {
-		s.mu.Lock()
-		s.status = "failed"
-		s.errorMsg = err.Error()
-		s.mu.Unlock()
-		return map[string]interface{}{
-			"success": false,
-			"message": err.Error(),
-		}, nil
+		return s.sm.SetupStationError(err), nil
 	}
 
 	s.updateStatus("idle", 0)
@@ -1144,7 +1059,6 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 	return weight, nil
 }
 
-// TODO figure out if I need to incorporate this into state machine
 func (s *buildCoordinator) resetAll(ctx context.Context) error {
 	if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
 		return fmt.Errorf("failed to set left-home switch to position 2: %w", err)
