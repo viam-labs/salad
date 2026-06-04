@@ -53,6 +53,8 @@ type CropFlags struct {
 	VizURL     string
 }
 
+var renderPlanRequestFlags RenderPlanRequestFlags
+
 var (
 	// Persistent flags available to all subcommands. Commands that dial the
 	// machine (currently plane-fit, via --camera) read these through
@@ -102,6 +104,14 @@ var cropCmd = &cobra.Command{
 	Short: "Crop a PCD file to an axis-aligned bounding box",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCrop(cropFlags)
+	},
+}
+
+var renderPlanRequestCmd = &cobra.Command{
+	Use:   "render-plan-request",
+	Short: "Visualize a saved plan_request.json (world state, arm start, goal poses)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRenderPlanRequest(renderPlanRequestFlags)
 	},
 }
 
@@ -180,12 +190,17 @@ func init() {
 	planeFitCmd.MarkFlagsOneRequired("camera", "pcd")
 	_ = planeFitCmd.MarkFlagRequired("zones")
 
+	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.File, "file", "", "path to a saved plan_request.json (required)")
+	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
+	_ = renderPlanRequestCmd.MarkFlagRequired("file")
+
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
 	rootCmd.AddCommand(meshifyCmd)
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(segmentCmd)
 	rootCmd.AddCommand(planeFitCmd)
+	rootCmd.AddCommand(renderPlanRequestCmd)
 }
 
 func main() {
