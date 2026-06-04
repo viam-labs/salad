@@ -822,6 +822,9 @@ func (s *buildCoordinator) checkAssets() error {
 		availableZoneIDs[z.ID] = true
 	}
 	for _, ing := range s.ingredients {
+		if ing.ZoneID == nil {
+			continue
+		}
 		if !availableZoneIDs[*ing.ZoneID] {
 			return fmt.Errorf("ingredient %q has zone-id %d which is not in zones.json (zones: %v)", ing.Name, *ing.ZoneID, zones.Zones)
 		}
