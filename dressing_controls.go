@@ -17,6 +17,8 @@ import (
 	"go.viam.com/rdk/robot/framesystem"
 	genericservice "go.viam.com/rdk/services/generic"
 	"go.viam.com/rdk/spatialmath"
+
+	"salad/lib/fileio"
 )
 
 var DressingControls = resource.NewModel("ncs", "salad", "dressing-controls")
@@ -103,6 +105,8 @@ type dressingControls struct {
 
 	cachedPlansMu sync.Mutex
 	cachedPlans   map[string]*dressingPlan
+
+	fileSaver *fileio.FileSaver
 }
 
 func newDressingControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -151,6 +155,7 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 	}
 
 	s.cachedPlans = make(map[string]*dressingPlan)
+	s.fileSaver = fileio.NewFileSaver(logger, defaultPlanCaptureDir)
 
 	s.logger.Infof("Dressing controls initialized")
 	return s, nil
@@ -165,19 +170,20 @@ func (s *dressingControls) Status(ctx context.Context) (map[string]interface{}, 
 }
 
 func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+	buildID, _ := cmd["build_id"].(string)
 	if v, ok := cmd["pour_dressing"]; ok {
 		name, ok := v.(string)
 		if !ok || name == "" {
 			return nil, fmt.Errorf("pour_dressing requires a dressing name (string)")
 		}
-		return s.doPourDressing(ctx, name)
+		return s.doPourDressing(ctx, name, buildID)
 	}
 	if v, ok := cmd["pre_plan_dressing"]; ok {
 		name, ok := v.(string)
 		if !ok || name == "" {
 			return nil, fmt.Errorf("pre_plan_dressing requires a dressing name (string)")
 		}
-		return s.doPrePlanDressing(ctx, name)
+		return s.doPrePlanDressing(ctx, name, buildID)
 	}
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
@@ -222,9 +228,9 @@ func (s *dressingControls) loadWorldState() error {
 	return nil
 }
 
-func (s *dressingControls) doPrePlanDressing(ctx context.Context, name string) (map[string]interface{}, error) {
+func (s *dressingControls) doPrePlanDressing(ctx context.Context, name, buildID string) (map[string]interface{}, error) {
 	s.logger.Infof("Pre-planning dressing %q", name)
-	plan, err := s.planDressing(ctx, name)
+	plan, err := s.planDressing(ctx, name, buildID)
 	if err != nil {
 		return nil, fmt.Errorf("pre-planning dressing %q: %w", name, err)
 	}
@@ -235,7 +241,7 @@ func (s *dressingControls) doPrePlanDressing(ctx context.Context, name string) (
 	return map[string]interface{}{"success": true}, nil
 }
 
-func (s *dressingControls) doPourDressing(ctx context.Context, name string) (map[string]interface{}, error) {
+func (s *dressingControls) doPourDressing(ctx context.Context, name, buildID string) (map[string]interface{}, error) {
 	s.cachedPlansMu.Lock()
 	plan, cached := s.cachedPlans[name]
 	if cached {
@@ -248,7 +254,7 @@ func (s *dressingControls) doPourDressing(ctx context.Context, name string) (map
 	} else {
 		s.logger.Infof("Planning pour_dressing for %q", name)
 		var err error
-		plan, err = s.planDressing(ctx, name)
+		plan, err = s.planDressing(ctx, name, buildID)
 		if err != nil {
 			return nil, err
 		}
@@ -314,5 +320,8 @@ func (s *dressingControls) reset(ctx context.Context) (map[string]interface{}, e
 
 func (s *dressingControls) Close(context.Context) error {
 	s.cancelFunc()
+	if err := s.fileSaver.Close(); err != nil {
+		s.logger.Warnw("FileSaver close error", "err", err)
+	}
 	return nil
 }

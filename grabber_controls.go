@@ -2,10 +2,7 @@ package salad
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -23,8 +20,11 @@ import (
 	"go.viam.com/rdk/services/motion"
 	"go.viam.com/rdk/spatialmath"
 
+	"salad/lib/fileio"
 	"salad/segmentation"
 )
+
+const defaultPlanCaptureDir = "/root/.viam/capture"
 
 var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
 
@@ -84,7 +84,6 @@ type GrabberControlsConfig struct {
 	AssetsDir                         string                                `json:"assets-dir"`
 	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
 	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
-	SavePlans                         bool                                  `json:"save-plans,omitempty"`
 	GrabLineToleranceMM               float64                               `json:"grab-line-tolerance-mm,omitempty"`
 	GrabOrientationToleranceDegs      float64                               `json:"grab-orientation-tolerance-degs,omitempty"`
 	BinImagingCam                     string                                `json:"bin-imaging-cam"`
@@ -188,28 +187,14 @@ type grabberControls struct {
 	binMesh    *spatialmath.Mesh
 	worldState *referenceframe.WorldState
 	zones      *segmentation.ZonesResult
+
+	fileSaver *fileio.FileSaver
 }
 
 type grabberBinSwitches struct {
 	name           string
 	hoverPose      spatialmath.Pose
 	servingDepthMM float64
-}
-
-type grabPlanStep struct {
-	Step          string `json:"step"`
-	TrajectoryLen int    `json:"trajectory_len"`
-	PlanningDurMS int64  `json:"planning_dur_ms"`
-	ExecError     string `json:"exec_error,omitempty"`
-}
-
-type grabPlanRecord struct {
-	StartedAt string         `json:"started_at"`
-	BinName   string         `json:"bin_name"`
-	ZoneID    int            `json:"zone_id"`
-	Steps     []grabPlanStep `json:"steps"`
-	Success   bool           `json:"success"`
-	Error     string         `json:"error,omitempty"`
 }
 
 func newGrabberControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -311,6 +296,8 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 	} else {
 		s.assetsDir = "/home/viam/assets"
 	}
+
+	s.fileSaver = fileio.NewFileSaver(logger, defaultPlanCaptureDir)
 
 	s.logger.Infof("Grabber controls initialized with %d bins", len(s.bins))
 	return s, nil
@@ -517,21 +504,6 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	return stats.MeanSignedDistanceMM, nil
 }
 
-const grabPlansDir = "/root/.viam/capture"
-
-func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
-	if err := os.MkdirAll(grabPlansDir, 0o755); err != nil {
-		return fmt.Errorf("creating grab-plans dir: %w", err)
-	}
-	ts := time.Now().UTC().Format("20060102-150405.000")
-	fname := filepath.Join(grabPlansDir, fmt.Sprintf("grab-%s-zone%d.json", ts, plan.ZoneID))
-	data, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling plan: %w", err)
-	}
-	return os.WriteFile(fname, data, 0o644)
-}
-
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if err := s.loadAssets(); err != nil {
 		return nil, err
@@ -563,6 +535,8 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		}
 	}
 
+	buildID, _ := cmd["build_id"].(string)
+
 	bin, ok := s.bins[zoneID]
 	if !ok {
 		return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
@@ -579,7 +553,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 
 	s.logger.Infof("Planning get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
-	plan, err := s.planGrab(ctx, bin, zoneID, zone, binFoodLevelMM)
+	plan, err := s.planGrab(ctx, bin, zoneID, zone, binFoodLevelMM, buildID)
 	if err != nil {
 		return nil, err
 	}
@@ -609,5 +583,8 @@ func (s *grabberControls) reset(ctx context.Context) (map[string]interface{}, er
 
 func (s *grabberControls) Close(context.Context) error {
 	s.cancelFunc()
+	if err := s.fileSaver.Close(); err != nil {
+		s.logger.Warnw("FileSaver close error", "err", err)
+	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
 	sw "go.viam.com/rdk/components/switch"
@@ -266,6 +267,7 @@ type buildCoordinator struct {
 	skipLilArm   bool
 	opCancelFunc func()
 	opDone       chan struct{}
+	buildID      string
 
 	assetsDir string
 }
@@ -421,6 +423,12 @@ func (s *buildCoordinator) updateStatus(status string, progress float64) {
 	s.progress = progress
 }
 
+func (s *buildCoordinator) getBuildID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.buildID
+}
+
 func (s *buildCoordinator) getStatus() map[string]interface{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -490,7 +498,9 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	s.progress = 0
 	s.customerName = customerName
 	s.errorMsg = ""
+	s.buildID = fmt.Sprintf("%s_%s", time.Now().UTC().Format("20060102-150405"), uuid.NewString()[:8])
 	s.mu.Unlock()
+	s.logger.Infof("Build ID: %s", s.buildID)
 
 	if customerName != "" {
 		s.logger.Infof("New salad order received for %q: %v", customerName, value)
@@ -503,6 +513,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		s.mu.Lock()
 		s.opCancelFunc = nil
 		s.customerName = ""
+		s.buildID = ""
 		close(s.opDone)
 		s.opDone = nil
 		s.mu.Unlock()
@@ -914,9 +925,11 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 			continue
 		}
 		name := t.name
+		buildID := s.getBuildID()
 		go func() {
 			if _, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 				"pre_plan_dressing": name,
+				"build_id":          buildID,
 			}); err != nil {
 				s.logger.Warnf("Pre-planning dressing %q failed, will plan on demand: %v", name, err)
 			}
@@ -1045,6 +1058,7 @@ func isMotionPlanningFailure(err error) bool {
 func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
 	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 		"pour_dressing": name,
+		"build_id":      s.getBuildID(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to pour dressing %q: %w", name, err)
@@ -1073,6 +1087,7 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 			"get_from_bin":    s.ingredientZoneIDs[name],
 			"depth-offset-mm": depthOffset,
+			"build_id":        s.getBuildID(),
 		})
 		if err != nil {
 			if isMotionPlanningFailure(err) && depthOffset > 0 {
