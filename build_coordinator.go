@@ -462,8 +462,12 @@ func (s *buildCoordinator) listIngredients() map[string]interface{} {
 			"name":              ing.Name,
 			"grams_per_serving": ing.GramsPerServing,
 			"category":          ing.Category,
-			"zone_id":           ing.ZoneID,
 		})
+		if ing.ZoneID != nil {
+			ingredients = append(ingredients, map[string]interface{}{
+				"zone_id": *ing.ZoneID,
+			})
+		}
 	}
 	return map[string]interface{}{
 		"ingredients": ingredients,
