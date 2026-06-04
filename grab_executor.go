@@ -3,18 +3,15 @@ package salad
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"go.viam.com/rdk/motionplan"
 	"go.viam.com/rdk/referenceframe"
-	"go.viam.com/rdk/services/motion"
-	"go.viam.com/rdk/spatialmath"
 	"golang.org/x/sync/errgroup"
 )
 
-
 func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabStepAction) error {
 	switch action {
+	case GrabStepActionNone:
+		return nil
 	case GrabStepActionShake:
 		if s.shakeArmService != nil {
 			if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
@@ -79,19 +76,4 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) error
 		}
 	}
 	return nil
-}
-
-// moveArm is used by doHover, which still goes through the motion service.
-func (s *grabberControls) moveArm(ctx context.Context, dest spatialmath.Pose, constraints *motionplan.Constraints) error {
-	pt := dest.Point()
-	s.logger.Infof("moving arm to x=%.2f y=%.2f z=%.2f (linear=%v)", pt.X, pt.Y, pt.Z, constraints != nil)
-	start := time.Now()
-	_, err := s.motionService.Move(ctx, motion.MoveReq{
-		ComponentName: s.arm.Name().ShortName(),
-		Destination:   referenceframe.NewPoseInFrame(referenceframe.World, dest),
-		WorldState:    s.worldState,
-		Constraints:   constraints,
-	})
-	s.logger.Infof("motion planning took %.2fs", time.Since(start).Seconds())
-	return err
 }

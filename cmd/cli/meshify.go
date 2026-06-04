@@ -16,7 +16,7 @@ import (
 func runMeshify(flags MeshifyFlags) error {
 	if flags.OutputPath == "" {
 		dir := filepath.Join("output", time.Now().Format("20060102-150405"))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", dir, err)
 		}
 		flags.OutputPath = filepath.Join(dir, "mesh.ply")

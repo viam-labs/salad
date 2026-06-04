@@ -54,7 +54,6 @@ type grabStepSpec struct {
 }
 
 func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64, buildID string) (*GrabPlan, error) {
-
 	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
 	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
 	if err != nil {
@@ -75,7 +74,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		OZ:    get("orientation", "z"),
 		Theta: get("orientation", "th"),
 	})
-	grabPose, err := s.computeGrabPose(ctx, zone, binFoodLevelMM, bin.servingDepthMM)
+	grabPose, err := s.computeGrabPose(zone, binFoodLevelMM, bin.servingDepthMM)
 	if err != nil {
 		return nil, err
 	}

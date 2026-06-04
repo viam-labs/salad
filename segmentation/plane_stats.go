@@ -79,7 +79,7 @@ func ZonePlaneFitStats(pc pointcloud.PointCloud, zone *Zone, logger logging.Logg
 		if sd > stats.MaxSignedDistanceMM {
 			stats.MaxSignedDistanceMM = sd
 		}
-		_ = culled.Set(p, d)
+		_ = culled.Set(p, d) //nolint:errcheck // Set on freshly-allocated BasicPointCloud cannot fail
 		return true
 	})
 

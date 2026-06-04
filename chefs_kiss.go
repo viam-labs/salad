@@ -169,15 +169,6 @@ func (s *chefsKissControls) doChefsKiss(ctx context.Context) (map[string]interfa
 	}, nil
 }
 
-func (s *chefsKissControls) reset(ctx context.Context) (map[string]interface{}, error) {
-	if err := s.home.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set right-home switch to position 2")
-
-	return nil, nil
-}
-
 func (s *chefsKissControls) Close(context.Context) error {
 	s.cancelFunc()
 	return nil

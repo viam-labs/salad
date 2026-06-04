@@ -158,7 +158,7 @@ func loadPlaneFitPointCloud(ctx context.Context, logger logging.Logger, flags Pl
 
 	if flags.SavePCD != "" {
 		if dir := filepath.Dir(flags.SavePCD); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o750); err != nil {
 				return nil, "", fmt.Errorf("creating parent of --save-pcd %q: %w", flags.SavePCD, err)
 			}
 		}
@@ -188,7 +188,7 @@ func writePlaneFitOutputs(outputPath string, results []planeFitZoneResult, logge
 	if len(results) == 1 {
 		out := results[0]
 		if dir := filepath.Dir(outputPath); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, 0o750); err != nil {
 				return fmt.Errorf("creating parent dir of %q: %w", outputPath, err)
 			}
 		}
@@ -198,7 +198,7 @@ func writePlaneFitOutputs(outputPath string, results []planeFitZoneResult, logge
 		logger.Infof("Wrote %s (%d points)", outputPath, out.culled.Size())
 		return nil
 	}
-	if err := os.MkdirAll(outputPath, 0o755); err != nil {
+	if err := os.MkdirAll(outputPath, 0o750); err != nil {
 		return fmt.Errorf("creating output directory %q: %w", outputPath, err)
 	}
 	for _, r := range results {

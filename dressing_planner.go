@@ -61,16 +61,16 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 	grabMoveOptions := &arm.MoveOptions{MaxVelRads: grabSpeedDegsPerSec * math.Pi / 180}
 
 	specs := []dressingStepSpec{
-		{name: "approach_grab",        goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "grab",                 goal: opt.Grab.toPose(),                constraints: opt.Grab.Constraints,               postAction: GrabStepActionClose, moveOptions: grabMoveOptions},
-		{name: "approach_grab_up",     goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "prepare_dressing",     goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
-		{name: "pour",                 goal: s.cfg.PourDressing.toPose(),     constraints: s.cfg.PourDressing.Constraints,      postSqueeze: true},
-		{name: "post_pour",            goal: s.cfg.PostPourDressing.toPose(), constraints: s.cfg.PostPourDressing.Constraints},
-		{name: "prepare_return",       goal: s.cfg.PrepareDressing.toPose(),  constraints: s.cfg.PrepareDressing.Constraints},
-		{name: "approach_grab_return", goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
-		{name: "grab_return",          goal: opt.Grab.toPose(),               constraints: opt.Grab.Constraints,                postAction: GrabStepActionOpen,  moveOptions: grabMoveOptions},
-		{name: "approach_grab_final",  goal: opt.ApproachGrab.toPose(),       constraints: opt.ApproachGrab.Constraints},
+		{name: "approach_grab", goal: opt.ApproachGrab.toPose(), constraints: opt.ApproachGrab.Constraints},
+		{name: "grab", goal: opt.Grab.toPose(), constraints: opt.Grab.Constraints, postAction: GrabStepActionClose, moveOptions: grabMoveOptions},
+		{name: "approach_grab_up", goal: opt.ApproachGrab.toPose(), constraints: opt.ApproachGrab.Constraints},
+		{name: "prepare_dressing", goal: s.cfg.PrepareDressing.toPose(), constraints: s.cfg.PrepareDressing.Constraints},
+		{name: "pour", goal: s.cfg.PourDressing.toPose(), constraints: s.cfg.PourDressing.Constraints, postSqueeze: true},
+		{name: "post_pour", goal: s.cfg.PostPourDressing.toPose(), constraints: s.cfg.PostPourDressing.Constraints},
+		{name: "prepare_return", goal: s.cfg.PrepareDressing.toPose(), constraints: s.cfg.PrepareDressing.Constraints},
+		{name: "approach_grab_return", goal: opt.ApproachGrab.toPose(), constraints: opt.ApproachGrab.Constraints},
+		{name: "grab_return", goal: opt.Grab.toPose(), constraints: opt.Grab.Constraints, postAction: GrabStepActionOpen, moveOptions: grabMoveOptions},
+		{name: "approach_grab_final", goal: opt.ApproachGrab.toPose(), constraints: opt.ApproachGrab.Constraints},
 	}
 
 	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)

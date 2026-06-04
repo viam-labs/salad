@@ -31,6 +31,8 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		s.logger.Debugf("completed step %q", step.name)
 
 		switch step.postAction {
+		case GrabStepActionNone, GrabStepActionGoHome, GrabStepActionShake:
+			// dressing only handles open/close post-actions
 		case GrabStepActionOpen:
 			if err := s.gripper.Open(ctx, nil); err != nil {
 				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
