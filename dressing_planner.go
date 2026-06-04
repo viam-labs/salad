@@ -148,7 +148,6 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 			steps = append(steps, *circStep)
 			startState = newStartState
 		}
-
 	}
 
 	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
