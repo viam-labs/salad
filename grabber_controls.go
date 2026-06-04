@@ -2,10 +2,7 @@ package salad
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -87,7 +84,6 @@ type GrabberControlsConfig struct {
 	AssetsDir                         string                                `json:"assets-dir"`
 	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
 	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
-	SavePlans                         bool                                  `json:"save-plans,omitempty"`
 	GrabLineToleranceMM               float64                               `json:"grab-line-tolerance-mm,omitempty"`
 	GrabOrientationToleranceDegs      float64                               `json:"grab-orientation-tolerance-degs,omitempty"`
 	BinImagingCam                     string                                `json:"bin-imaging-cam"`
@@ -199,22 +195,6 @@ type grabberBinSwitches struct {
 	name           string
 	hoverPose      spatialmath.Pose
 	servingDepthMM float64
-}
-
-type grabPlanStep struct {
-	Step          string `json:"step"`
-	TrajectoryLen int    `json:"trajectory_len"`
-	PlanningDurMS int64  `json:"planning_dur_ms"`
-	ExecError     string `json:"exec_error,omitempty"`
-}
-
-type grabPlanRecord struct {
-	StartedAt string         `json:"started_at"`
-	BinName   string         `json:"bin_name"`
-	ZoneID    int            `json:"zone_id"`
-	Steps     []grabPlanStep `json:"steps"`
-	Success   bool           `json:"success"`
-	Error     string         `json:"error,omitempty"`
 }
 
 func newGrabberControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -522,21 +502,6 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
 	}
 	return stats.MeanSignedDistanceMM, nil
-}
-
-const grabPlansDir = "/root/.viam/capture"
-
-func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
-	if err := os.MkdirAll(grabPlansDir, 0o755); err != nil {
-		return fmt.Errorf("creating grab-plans dir: %w", err)
-	}
-	ts := time.Now().UTC().Format("20060102-150405.000")
-	fname := filepath.Join(grabPlansDir, fmt.Sprintf("grab-%s-zone%d.json", ts, plan.ZoneID))
-	data, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling plan: %w", err)
-	}
-	return os.WriteFile(fname, data, 0o644)
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {

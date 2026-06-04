@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+
 func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabStepAction) error {
 	switch action {
 	case GrabStepActionShake:
@@ -57,25 +58,7 @@ func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabS
 	return nil
 }
 
-func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retErr error) {
-	var record *grabPlanRecord
-	if s.cfg.SavePlans {
-		record = &grabPlanRecord{
-			StartedAt: plan.PlannedAt.UTC().Format(time.RFC3339Nano),
-			BinName:   plan.BinName,
-			ZoneID:    plan.ZoneID,
-		}
-		defer func() {
-			record.Success = retErr == nil
-			if retErr != nil {
-				record.Error = retErr.Error()
-			}
-			if saveErr := s.savePlan(record); saveErr != nil {
-				s.logger.Warnf("failed to save grab plan: %v", saveErr)
-			}
-		}()
-	}
-
+func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) error {
 	for _, step := range plan.Steps {
 		if err := s.executePrePostAction(ctx, step.PreAction); err != nil {
 			return fmt.Errorf("execute pre action: %w", err)
@@ -86,20 +69,8 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 			armInputs[i] = fsInputs[s.cfg.Arm]
 		}
 
-		execErr := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil)
-		if record != nil {
-			ps := grabPlanStep{
-				Step:          step.Name,
-				TrajectoryLen: len(step.Trajectory),
-				PlanningDurMS: step.PlanningTime.Milliseconds(),
-			}
-			if execErr != nil {
-				ps.ExecError = execErr.Error()
-			}
-			record.Steps = append(record.Steps, ps)
-		}
-		if execErr != nil {
-			return fmt.Errorf("step %q: %w", step.Name, execErr)
+		if err := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil); err != nil {
+			return fmt.Errorf("step %q: %w", step.Name, err)
 		}
 		s.logger.Debugf("completed step %q", step.Name)
 
