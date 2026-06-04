@@ -178,36 +178,6 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		optDeps = append(optDeps, cfg.ImagingCamera)
 	}
 
-	// for i, ing := range cfg.Ingredients {
-	// 	if ing.Name == "" {
-	// 		return nil, nil, resource.NewConfigValidationFieldRequiredError(
-	// 			fmt.Sprintf("%s.ingredients.%d", path, i), "name",
-	// 		)
-	// 	}
-	// 	if ing.GramsPerServing <= 0 {
-	// 		return nil, nil, fmt.Errorf(
-	// 			"ingredient %q at %s.ingredients.%d must have a positive grams-per-serving",
-	// 			ing.Name, path, i,
-	// 		)
-	// 	}
-	// 	if ing.Category == "" {
-	// 		return nil, nil, resource.NewConfigValidationFieldRequiredError(
-	// 			fmt.Sprintf("%s.ingredients.%d", path, i), "category",
-	// 		)
-	// 	}
-	// 	if _, ok := categoryOrder[ing.Category]; !ok {
-	// 		return nil, nil, fmt.Errorf(
-	// 			"ingredient %q at %s.ingredients.%d has unknown category %q",
-	// 			ing.Name, path, i, ing.Category,
-	// 		)
-	// 	}
-	// 	if ing.ZoneID == nil {
-	// 		return nil, nil, resource.NewConfigValidationFieldRequiredError(
-	// 			fmt.Sprintf("%s.ingredients.%d", path, i), "zone-id",
-	// 		)
-	// 	}
-	// }
-
 	if cfg.Filter != nil {
 		if err := cfg.Filter.Validate(path + ".filter"); err != nil {
 			return nil, nil, err
@@ -351,10 +321,10 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("failed to get right-home switch %q: %w", conf.RightHome, err)
 	}
 	s.rightHome = rightHomeSwitch
-	// get config for bowl controls to pull out ingredients
+	// get config for grabber controls to pull out ingredients
 	ingredientsResult, err := s.grabberControls.DoCommand(ctx, map[string]any{"get_ingredients": true})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ingredients from bowl controls: %w", err)
+		return nil, fmt.Errorf("failed to get ingredients from grabber controls: %w", err)
 	}
 
 	if ingredients, ok := ingredientsResult["ingredients"].([]map[string]any); ok {
@@ -362,6 +332,10 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 			zoneID, ok := ing["zone_id"].(int)
 			if !ok {
 				return nil, fmt.Errorf("zone_id is not an int: %v", ing["zone_id"])
+			}
+			_, ok = categoryOrder[ing["category"].(string)]
+			if !ok {
+				return nil, fmt.Errorf("unknown category: %v", ing["category"])
 			}
 			s.ingredients[ing["name"].(string)] = BuildCoordinatorIngredientConfig{
 				Name:            ing["name"].(string),
