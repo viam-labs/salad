@@ -23,7 +23,7 @@ func (stdoutLogger) Infof(format string, args ...any) {
 func runFilter(flags FilterFlags) error {
 	if flags.OutputPath == "" {
 		dir := filepath.Join("output", time.Now().Format("20060102-150405"))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("failed to create output directory %q: %w", dir, err)
 		}
 		flags.OutputPath = filepath.Join(dir, "filtered.pcd")
@@ -69,7 +69,7 @@ func vizFilterResult(input, kept pointcloud.PointCloud, vizURL string) error {
 	removed := pointcloud.NewBasicPointCloud(input.Size() - kept.Size())
 	input.Iterate(0, 0, func(p r3.Vector, d pointcloud.Data) bool {
 		if !keptKeys[p] {
-			_ = removed.Set(p, d)
+			_ = removed.Set(p, d) //nolint:errcheck // Set on freshly-allocated BasicPointCloud cannot fail
 		}
 		return true
 	})

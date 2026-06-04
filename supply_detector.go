@@ -178,10 +178,11 @@ func (s *supplyDetector) nonSteelRatio(img image.Image, bin SupplyBinConfig) (fl
 // Steel is high brightness (>150) and low saturation (r, g, b values close together).
 func isSteelColor(c color.Color) bool {
 	r, g, b, _ := c.RGBA()
-	// Convert from 16-bit to 8-bit
-	r8 := uint8(r >> 8)
-	g8 := uint8(g >> 8)
-	b8 := uint8(b >> 8)
+	// Convert from 16-bit to 8-bit (high byte). RGBA() returns 16-bit values in
+	// uint32, so r>>8 fits in uint8.
+	r8 := uint8((r >> 8) & 0xff) //nolint:gosec // r in [0,0xffff], high byte fits in uint8
+	g8 := uint8((g >> 8) & 0xff) //nolint:gosec // see above
+	b8 := uint8((b >> 8) & 0xff) //nolint:gosec // see above
 
 	brightness := (uint16(r8) + uint16(g8) + uint16(b8)) / 3
 

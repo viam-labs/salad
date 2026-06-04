@@ -30,13 +30,16 @@ var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
 // categoryOrder defines the build sequence for ingredient categories.
 // Ingredients are added to the bowl in this order.
 var categoryOrder = map[string]int{
-	"base":     0,
-	"protein":  1,
-	"topping":  2,
-	"dressing": 3,
+	"base":           0,
+	"protein":        1,
+	"topping":        2,
+	categoryDressing: 3,
 }
 
-const defaultMeshTargetTriangles = 5000
+const (
+	categoryDressing           = "dressing"
+	defaultMeshTargetTriangles = 5000
+)
 
 type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
@@ -359,7 +362,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 			s.ingredients[dressing["name"].(string)] = BuildCoordinatorIngredientConfig{
 				Name:            dressing["name"].(string),
 				GramsPerServing: 5,
-				Category:        "dressing",
+				Category:        categoryDressing,
 				ZoneID:          nil,
 			}
 		}
@@ -479,6 +482,7 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	}, nil
 }
 
+//nolint:unparam // ctx kept for DoCommand-style API symmetry; build runs under s.cancelCtx so it survives caller cancellation
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
 
@@ -651,7 +655,7 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 		return fmt.Errorf("failed to capture point cloud: %w", err)
 	}
 
-	if err := os.MkdirAll(s.cfg.CaptureDir, 0o755); err != nil {
+	if err := os.MkdirAll(s.cfg.CaptureDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create capture directory %q: %w", s.cfg.CaptureDir, err)
 	}
 
@@ -662,7 +666,7 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	stablePCDPath := s.assetsDir + "/merged.pcd"
 	stableFilteredPCDPath := s.assetsDir + "/filtered_merged.pcd"
 	stableZonesPath := s.assetsDir + "/zones.json"
-	if err := os.MkdirAll(s.assetsDir, 0o755); err != nil {
+	if err := os.MkdirAll(s.assetsDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create assets directory %q: %w", s.assetsDir, err)
 	}
 	if err := saladutils.WritePCD(pc, stablePCDPath); err != nil {
@@ -706,11 +710,11 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	s.logger.Infof("Wrote mesh %s", meshPath)
 
 	stableMeshPath := s.assetsDir + "/mesh.ply"
-	meshBytes, err := os.ReadFile(meshPath)
+	meshBytes, err := os.ReadFile(meshPath) //nolint:gosec // path built from config-controlled CaptureDir
 	if err != nil {
 		return fmt.Errorf("failed to read mesh for stable copy: %w", err)
 	}
-	if err := os.WriteFile(stableMeshPath, meshBytes, 0o644); err != nil {
+	if err := os.WriteFile(stableMeshPath, meshBytes, 0o600); err != nil {
 		return fmt.Errorf("failed to write stable mesh: %w", err)
 	}
 	s.logger.Infof("Wrote stable mesh to %s", stableMeshPath)
@@ -763,12 +767,12 @@ func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
 	pcdPath := s.assetsDir + "/merged.pcd"
 	zonesPath := s.assetsDir + "/zones.json"
 
-	pcdBytes, err := os.ReadFile(pcdPath)
+	pcdBytes, err := os.ReadFile(pcdPath) //nolint:gosec // path derived from our own assetsDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read PCD file %q: %w", pcdPath, err)
 	}
 
-	zonesBytes, err := os.ReadFile(zonesPath)
+	zonesBytes, err := os.ReadFile(zonesPath) //nolint:gosec // path derived from our own assetsDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read zones file %q: %w", zonesPath, err)
 	}
@@ -921,7 +925,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 
 	// kick off background pre-planning for each dressing while ingredients are grabbed
 	for _, t := range targets {
-		if t.category != "dressing" {
+		if t.category != categoryDressing {
 			continue
 		}
 		name := t.name
@@ -942,7 +946,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 		s.updateStatus(fmt.Sprintf("adding %s", target.name), completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
-		if target.category == "dressing" {
+		if target.category == categoryDressing {
 			continue
 		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
@@ -999,7 +1003,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// Dressing pours over the bowl at the delivery position, after both
 	// the grabber and bowl-controls arms have gone home.
 	for _, target := range targets {
-		if target.category == "dressing" {
+		if target.category == categoryDressing {
 			s.updateStatus(fmt.Sprintf("adding %s", target.name), 100)
 			if err := s.addDressing(ctx, target.name); err != nil {
 				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)

@@ -15,6 +15,8 @@ node_modules: package.json
 dist/index.html: node_modules src/*
 	npm run build
 
+build: $(MODULE_BINARY)
+
 $(MODULE_BINARY): Makefile go.mod *.go cmd/module/*.go dist/index.html
 	GOOS=$(VIAM_BUILD_OS) GOARCH=$(VIAM_BUILD_ARCH) $(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(MODULE_BINARY) cmd/module/main.go
 
@@ -62,10 +64,11 @@ module: test module.tar.gz
 all: test module.tar.gz
 
 setup:
+	bash ./first_run.sh
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
 
-.PHONY: lint lint-fix check-lint va-update va-upload
+.PHONY: build lint lint-fix check-lint va-update va-upload
 
 va-update: meta.json
 	viam module update --module=meta.json

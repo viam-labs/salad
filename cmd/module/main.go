@@ -1,13 +1,13 @@
 package main
 
 import (
-	"salad"
-
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/module"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
 	vision "go.viam.com/rdk/services/vision"
+
+	"salad"
 )
 
 func main() {

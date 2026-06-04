@@ -16,9 +16,7 @@ import (
 	"go.viam.com/rdk/vision/viscapture"
 )
 
-var (
-	FileVision = resource.NewModel("ncs", "salad", "file-vision")
-)
+var FileVision = resource.NewModel("ncs", "salad", "file-vision")
 
 func init() {
 	resource.RegisterService(vision.API, FileVision,
@@ -66,7 +64,6 @@ func newFileVision(ctx context.Context, deps resource.Dependencies, rawConf reso
 	}
 
 	return NewFileVision(ctx, deps, rawConf.ResourceName(), conf, logger)
-
 }
 
 func NewFileVision(ctx context.Context, deps resource.Dependencies, name resource.Name, conf *FileVisionConfig, logger logging.Logger) (vision.Service, error) {

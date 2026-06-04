@@ -68,7 +68,6 @@ func (m *maintenanceSensor) Status(ctx context.Context) (map[string]interface{},
 }
 
 func (m *maintenanceSensor) Readings(ctx context.Context, extra map[string]interface{}) (map[string]interface{}, error) {
-
 	resp, err := m.buildCoordinator.DoCommand(ctx, map[string]interface{}{"status": true})
 	if err != nil {
 		m.logger.CWarnw(
