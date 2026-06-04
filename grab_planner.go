@@ -52,7 +52,27 @@ type grabStepSpec struct {
 	preAction   GrabStepAction
 }
 
-func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64) (*GrabPlan, error) {
+func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64) (_ *GrabPlan, retErr error) {
+
+	var record *grabPlanRecord
+	if s.cfg.SavePlans {
+		record = &grabPlanRecord{
+			StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			BinName:   bin.name,
+			ZoneID:    zoneID,
+		}
+		defer func() {
+			record.Success = retErr == nil
+			if retErr != nil {
+				record.Error = retErr.Error()
+			}
+			if fname, saveErr := s.savePlan(record); saveErr != nil {
+				s.logger.Warnf("failed to save grab plan: %v", saveErr)
+			} else {
+				s.logger.Infof("saved grab plan: %s", fname)
+			}
+		}()
+	}
 
 	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
 	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
@@ -159,6 +179,13 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		}
 
 		traj := plan.Trajectory()
+		if record != nil {
+			record.Steps = append(record.Steps, grabPlanStep{
+				Step:          spec.name,
+				TrajectoryLen: len(traj),
+				PlanningDurMS: planDur.Milliseconds(),
+			})
+		}
 		steps = append(steps, GrabStep{
 			Name:         spec.name,
 			Trajectory:   traj,
