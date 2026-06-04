@@ -46,7 +46,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
 					"position": 20.0,
-					"speed":    2000.0,
+					"speed":    3000.0,
 					"torque":   0,
 				},
 			}); err != nil {
@@ -60,7 +60,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 				if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 					"grab_with_torque": map[string]interface{}{
 						"position": pos,
-						"speed":    2000.0,
+						"speed":    3000.0,
 						"torque":   100.0,
 					},
 				}); err != nil {
@@ -85,7 +85,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
 					"position": releasePos,
-					"speed":    2000.0,
+					"speed":    3000.0,
 					"torque":   0,
 				},
 			}); err != nil {
