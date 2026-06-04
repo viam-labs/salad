@@ -4,9 +4,13 @@ go 1.26.0
 
 require (
 	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
+	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/viam-labs/motion-tools v1.9.0
-	go.viam.com/rdk v0.127.1-0.20260520181737-0db644d874da
+	go.viam.com/rdk v0.128.0-rc0
+	go.viam.com/utils v0.6.1
+	golang.org/x/sync v0.19.0
+	gonum.org/v1/gonum v0.17.0
 )
 
 require (
@@ -90,7 +94,6 @@ require (
 	github.com/google/flatbuffers v2.0.6+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.3 // indirect
 	github.com/googleapis/gax-go/v2 v2.13.0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
@@ -196,7 +199,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.viam.com/api v0.1.552 // indirect
 	go.viam.com/test v1.2.4 // indirect
-	go.viam.com/utils v0.6.1 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
@@ -204,13 +206,11 @@ require (
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.10.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	gonum.org/v1/gonum v0.17.0 // indirect
 	gonum.org/v1/plot v0.15.2 // indirect
 	google.golang.org/api v0.196.0 // indirect
 	google.golang.org/genproto v0.0.0-20240903143218-8af14fe29dc1 // indirect
