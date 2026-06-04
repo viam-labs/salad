@@ -31,6 +31,8 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		s.logger.Debugf("completed step %q", step.name)
 
 		switch step.postAction {
+		// Open with grab_with_torque (not gripper.Open) because once we've grabbed with
+		// torque, we need to apply some torque to actively push the jaws open.
 		case GrabStepActionOpen:
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
