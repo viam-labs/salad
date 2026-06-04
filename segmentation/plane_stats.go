@@ -2,6 +2,7 @@ package segmentation
 
 import (
 	"math"
+	"sort"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/logging"
@@ -28,9 +29,13 @@ type PlaneFitStats struct {
 	PointsInsideY int
 	// MeanAbsDistanceMM is the mean |signed distance| over PointsInBounds.
 	MeanAbsDistanceMM float64
+	// MedianAbsDistanceMM is the median |signed distance| over PointsInBounds.
+	MedianAbsDistanceMM float64
 	// MeanSignedDistanceMM is the mean signed distance over PointsInBounds.
 	// A consistent sign indicates the cloud sits above or below the plane.
 	MeanSignedDistanceMM float64
+	// MedianSignedDistanceMM is the median signed distance over PointsInBounds.
+	MedianSignedDistanceMM float64
 	// MinSignedDistanceMM / MaxSignedDistanceMM bracket the signed distances
 	// of the in-bounds points. Both 0 when PointsInBounds == 0.
 	MinSignedDistanceMM float64
@@ -57,6 +62,8 @@ func ZonePlaneFitStats(pc pointcloud.PointCloud, zone *Zone, logger logging.Logg
 	culled := pointcloud.NewBasicPointCloud(0)
 
 	var sumAbs, sumSigned float64
+	absDistances := make([]float64, 0, pc.Size())
+	signedDistances := make([]float64, 0, pc.Size())
 	pc.Iterate(0, 0, func(p r3.Vector, d pointcloud.Data) bool {
 		insideX := p.X >= zone.MinX && p.X <= zone.MaxX
 		insideY := p.Y >= zone.MinY && p.Y <= zone.MaxY
@@ -72,7 +79,10 @@ func ZonePlaneFitStats(pc pointcloud.PointCloud, zone *Zone, logger logging.Logg
 		sd := zone.Plane.SignedDistance(p.X, p.Y, p.Z)
 		stats.PointsInBounds++
 		sumSigned += sd
-		sumAbs += math.Abs(sd)
+		abs := math.Abs(sd)
+		sumAbs += abs
+		absDistances = append(absDistances, abs)
+		signedDistances = append(signedDistances, sd)
 		if sd < stats.MinSignedDistanceMM {
 			stats.MinSignedDistanceMM = sd
 		}
@@ -85,7 +95,9 @@ func ZonePlaneFitStats(pc pointcloud.PointCloud, zone *Zone, logger logging.Logg
 
 	if stats.PointsInBounds > 0 {
 		stats.MeanAbsDistanceMM = sumAbs / float64(stats.PointsInBounds)
+		stats.MedianAbsDistanceMM = medianFloat64(absDistances)
 		stats.MeanSignedDistanceMM = sumSigned / float64(stats.PointsInBounds)
+		stats.MedianSignedDistanceMM = medianFloat64(signedDistances)
 	} else {
 		stats.MinSignedDistanceMM = 0
 		stats.MaxSignedDistanceMM = 0
@@ -101,4 +113,17 @@ func ZonePlaneFitStats(pc pointcloud.PointCloud, zone *Zone, logger logging.Logg
 		)
 	}
 	return stats, culled
+}
+
+func medianFloat64(v []float64) float64 {
+	n := len(v)
+	if n == 0 {
+		return 0
+	}
+	sort.Float64s(v)
+	mid := n / 2
+	if n%2 == 1 {
+		return v[mid]
+	}
+	return (v[mid-1] + v[mid]) / 2
 }

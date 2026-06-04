@@ -519,10 +519,10 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		zone.Plane.TiltDeg(),
 		time.Since(start).Seconds(),
 	)
-	if stats.MeanSignedDistanceMM < 0 {
+	if stats.MedianSignedDistanceMM < 0 {
 		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
 	}
-	return stats.MeanSignedDistanceMM, nil
+	return stats.MedianSignedDistanceMM, nil
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
