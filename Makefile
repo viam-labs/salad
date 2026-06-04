@@ -23,8 +23,26 @@ bin/salad-cli: go.mod cmd/cli/*.go segmentation/*.go meshifier/main.py meshifier
 
 cli: bin/salad-cli
 
-lint:
-	gofmt -s -w .
+# Yes this regex could be more specific but making it more specific in a way
+# that works the same across GNU and BSD grep isn't currently worth the effort.
+GOVERSION = $(shell grep '^go .\..' go.mod | head -n1 | cut -d' ' -f2)
+
+# Optional: specify files to lint (e.g., make lint LINT_FILES="file1.go file2.go")
+LINT_FILES ?=
+
+GOLANGCI_LINT_VERSION = v1.62.2
+
+lint-fix:
+	GOTOOLCHAIN=go$(GOVERSION) GOGC=50 go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run -v --fix --config=./etc/golangci.yaml $(LINT_FILES)
+
+lint: lint-fix
+	go fix ./...
+	go mod tidy
+
+# Reports lint issues without fixing them
+check-lint:
+	go mod tidy
+	GOTOOLCHAIN=go$(GOVERSION) GOGC=50 go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run -v --config=./etc/golangci.yaml $(LINT_FILES)
 
 update:
 	go get go.viam.com/rdk@latest
@@ -47,7 +65,7 @@ setup:
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
 
-.PHONY: va-update va-upload
+.PHONY: lint lint-fix check-lint va-update va-upload
 
 va-update: meta.json
 	viam module update --module=meta.json
