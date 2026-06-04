@@ -64,6 +64,7 @@ module: test module.tar.gz
 all: test module.tar.gz
 
 setup:
+	bash ./first_run.sh
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
 
