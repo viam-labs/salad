@@ -179,6 +179,15 @@ func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interfa
 		}
 		return s.doPrePlanDressing(ctx, name)
 	}
+	if _, ok := cmd["get_dressings"]; ok {
+		dressings := make([]map[string]any, 0, len(s.cfg.Dressings))
+		for name := range s.cfg.Dressings {
+			dressings = append(dressings, map[string]any{
+				"name": name,
+			})
+		}
+		return map[string]any{"dressings": dressings}, nil
+	}
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
 	}

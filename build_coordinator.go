@@ -370,6 +370,21 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("failed to get ingredients from grabber controls: %w", err)
 	}
 
+	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]any{"get_dressings": true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dressings from dressing controls: %w", err)
+	}
+	if dressings, ok := dressingsResult["dressings"].([]map[string]any); ok {
+		for _, dressing := range dressings {
+			s.ingredients[dressing["name"].(string)] = BuildCoordinatorIngredientConfig{
+				Name:            dressing["name"].(string),
+				GramsPerServing: 5,
+				Category:        "dressing",
+				ZoneID:          nil,
+			}
+		}
+	}
+
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
 	return s, nil
 }
