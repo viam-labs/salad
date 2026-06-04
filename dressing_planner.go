@@ -13,6 +13,8 @@ import (
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/robot/framesystem"
 	"go.viam.com/rdk/spatialmath"
+
+	"salad/lib/fileio"
 )
 
 type dressingStepSpec struct {
@@ -42,7 +44,7 @@ type dressingPlan struct {
 	plannedAt    time.Time
 }
 
-func (s *dressingControls) planDressing(ctx context.Context, name string) (*dressingPlan, error) {
+func (s *dressingControls) planDressing(ctx context.Context, name, buildID string) (*dressingPlan, error) {
 	opt, ok := s.cfg.Dressings[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown dressing %q", name)
@@ -106,6 +108,11 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 		plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
 		planDur := time.Since(t)
 		s.logger.Infof("planned step %q in %.2fs", spec.name, planDur.Seconds())
+		s.fileSaver.SaveAsync(ctx, fileio.NewPlanRequestSaveFile(
+			req, buildID,
+			fmt.Sprintf("dressing_%s_%s_plan_request.json", name, spec.name),
+			t, planDur,
+		))
 		if err != nil {
 			return nil, fmt.Errorf("planning step %q: %w", spec.name, err)
 		}
@@ -126,7 +133,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 		}
 
 		if spec.name == "pour" && s.cfg.CircularPour != nil {
-			circStep, newStartState, err := s.planCircularPour(ctx, fs, startState)
+			circStep, newStartState, err := s.planCircularPour(ctx, fs, startState, name, buildID)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +145,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name string) (*dres
 	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
 }
 
-func (s *dressingControls) planCircularPour(ctx context.Context, fs *referenceframe.FrameSystem, startState *armplanning.PlanState) (*dressingStep, *armplanning.PlanState, error) {
+func (s *dressingControls) planCircularPour(ctx context.Context, fs *referenceframe.FrameSystem, startState *armplanning.PlanState, name, buildID string) (*dressingStep, *armplanning.PlanState, error) {
 	cfg := s.cfg.CircularPour
 	pointsPerRev := cfg.PointsPerRev
 	if pointsPerRev == 0 {
@@ -172,6 +179,11 @@ func (s *dressingControls) planCircularPour(ctx context.Context, fs *referencefr
 	plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
 	planDur := time.Since(t)
 	s.logger.Infof("planned step %q in %.2fs", "circular_pour", planDur.Seconds())
+	s.fileSaver.SaveAsync(ctx, fileio.NewPlanRequestSaveFile(
+		req, buildID,
+		fmt.Sprintf("dressing_%s_circular_pour_plan_request.json", name),
+		t, planDur,
+	))
 	if err != nil {
 		return nil, nil, fmt.Errorf("planning step %q: %w", "circular_pour", err)
 	}
