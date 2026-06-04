@@ -90,6 +90,14 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 
 	steps := make([]dressingStep, 0, len(specs))
 	for _, spec := range specs {
+		planFS := fs
+		if spec.name == "pour" {
+			planFS, err = s.frameSystemWithPourJointDirection(ctx, startState)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		goalState := armplanning.NewPlanState(
 			referenceframe.FrameSystemPoses{
 				s.cfg.Arm: referenceframe.NewPoseInFrame(referenceframe.World, spec.goal),
@@ -97,7 +105,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 			nil,
 		)
 		req := &armplanning.PlanRequest{
-			FrameSystem: fs,
+			FrameSystem: planFS,
 			WorldState:  s.worldState,
 			StartState:  startState,
 			Goals:       []*armplanning.PlanState{goalState},
@@ -140,13 +148,77 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 			steps = append(steps, *circStep)
 			startState = newStartState
 		}
+
 	}
 
 	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
 }
 
-//nolint:whitespace // golangci-lint v1.62.2 whitespace linter false-positive on linux/amd64
-func (s *dressingControls) planCircularPour(ctx context.Context, fs *referenceframe.FrameSystem, startState *armplanning.PlanState, name, buildID string) (*dressingStep, *armplanning.PlanState, error) {
+func (s *dressingControls) frameSystemWithPourJointDirection(
+	ctx context.Context,
+	startState *armplanning.PlanState,
+) (*referenceframe.FrameSystem, error) {
+	callFS, err := framesystem.NewFromService(ctx, s.fsService, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building frame system for pour joint limits: %w", err)
+	}
+
+	f := callFS.Frame(s.cfg.Arm)
+	sm, ok := f.(*referenceframe.SimpleModel)
+	if !ok {
+		return nil, fmt.Errorf("cannot override pour joint limits for %q: expected *SimpleModel, got %T", s.cfg.Arm, f)
+	}
+	moveableNames := sm.MoveableFrameNames()
+	if len(moveableNames) == 0 {
+		return nil, fmt.Errorf("cannot override pour joint limits for %q: no moveable joints", s.cfg.Arm)
+	}
+
+	startConfig := startState.Configuration()
+	armInputs := startConfig[s.cfg.Arm]
+	if len(armInputs) == 0 {
+		currentInputs, err := s.arm.CurrentInputs(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("planning step %q: missing arm inputs for %q and failed to read current inputs: %w", "pour", s.cfg.Arm, err)
+		}
+		if len(currentInputs) == 0 {
+			return nil, fmt.Errorf("planning step %q: arm inputs empty for %q", "pour", s.cfg.Arm)
+		}
+		armInputs = currentInputs
+	}
+
+	dof := sm.DoF()
+	if len(armInputs) != len(dof) {
+		return nil, fmt.Errorf("planning step %q: arm input length %d does not match DoF %d for %q", "pour", len(armInputs), len(dof), s.cfg.Arm)
+	}
+	lastJointIdx := len(dof) - 1
+	lastJointName := moveableNames[lastJointIdx]
+
+	existing := dof[lastJointIdx]
+	// Anti-clockwise constraint: don't allow the wrist to move below where it is
+	// when transitioning from prepare to pour.
+	override := referenceframe.Limit{Min: armInputs[lastJointIdx], Max: existing.Max}
+	if override.Max <= override.Min {
+		return nil, fmt.Errorf("planning step %q: invalid limit override for joint %q (%v)", "pour", lastJointName, override)
+	}
+
+	newModel, err := referenceframe.NewModelWithLimitOverrides(sm, map[string]referenceframe.Limit{
+		lastJointName: override,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("planning step %q: overriding joint limits for %q: %w", "pour", lastJointName, err)
+	}
+	if err := callFS.ReplaceFrame(newModel); err != nil {
+		return nil, fmt.Errorf("planning step %q: replacing arm frame with joint limits: %w", "pour", err)
+	}
+	return callFS, nil
+}
+
+func (s *dressingControls) planCircularPour(
+	ctx context.Context,
+	fs *referenceframe.FrameSystem,
+	startState *armplanning.PlanState,
+	name, buildID string,
+) (*dressingStep, *armplanning.PlanState, error) {
 	cfg := s.cfg.CircularPour
 	pointsPerRev := cfg.PointsPerRev
 	if pointsPerRev == 0 {
@@ -201,6 +273,7 @@ func (s *dressingControls) planCircularPour(ctx context.Context, fs *referencefr
 		name:         "circular_pour",
 		trajectory:   traj,
 		planningTime: planDur,
+		moveOptions:  &arm.MoveOptions{MaxVelRads: 15 * math.Pi / 180},
 		revolutions:  revolutions,
 		postShake:    true,
 	}, newStartState, nil
