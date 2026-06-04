@@ -24,11 +24,19 @@
   function openCamera() { showCamera = true; }
   function closeCamera() { showCamera = false; }
 
+  async function refreshIngredients() {
+    try {
+      ingredients = await fetchIngredients();
+    } catch (err) {
+      console.error("Failed to refresh ingredients:", err);
+    }
+  }
+
   onMount(async () => {
     try {
       await initConnection();
       setThemeFromMachine(await fetchTheme());
-      ingredients = await fetchIngredients();
+      await refreshIngredients();
       screen = "ordering";
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -55,6 +63,9 @@
   $effect(() => {
     if (screen !== "ordering") return;
 
+    refreshIngredients();
+
+    let tick = 0;
     const interval = setInterval(async () => {
       try {
         const result = await getStatus();
@@ -63,6 +74,13 @@
           screen = "setup";
         }
       } catch {}
+
+      // Refresh ingredients periodically so config edits show up
+      // without requiring a page reload or module restart.
+      tick++;
+      if (tick % 5 === 0) {
+        refreshIngredients();
+      }
     }, 2000);
 
     return () => clearInterval(interval);
