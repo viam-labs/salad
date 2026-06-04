@@ -359,11 +359,15 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 
 	if ingredients, ok := ingredientsResult["ingredients"].([]map[string]any); ok {
 		for _, ing := range ingredients {
+			zoneID, ok := ing["zone_id"].(int)
+			if !ok {
+				return nil, fmt.Errorf("zone_id is not an int: %v", ing["zone_id"])
+			}
 			s.ingredients[ing["name"].(string)] = BuildCoordinatorIngredientConfig{
 				Name:            ing["name"].(string),
 				GramsPerServing: ing["grams_per_serving"].(float64),
 				Category:        ing["category"].(string),
-				ZoneID:          ing["zone_id"].(*int),
+				ZoneID:          &zoneID,
 			}
 		}
 	} else {
