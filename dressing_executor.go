@@ -32,27 +32,14 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 
 		switch step.postAction {
 		case GrabStepActionOpen:
-			time.Sleep(300 * time.Millisecond)
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
 					"position": 850.0,
 					"speed":    3000.0,
-					"torque":   50,
+					"torque":   0,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
-			}
-			deadline := time.Now().Add(3 * time.Second)
-			for time.Now().Before(deadline) {
-				resp, err := s.gripper.DoCommand(ctx, map[string]interface{}{"get": true})
-				if err != nil {
-					break
-				}
-				pos, ok := resp["pos"].(float64)
-				if ok && pos >= 800 {
-					break
-				}
-				time.Sleep(50 * time.Millisecond)
 			}
 			s.logger.Debugf("opened gripper after %q", step.name)
 		case GrabStepActionClose:
