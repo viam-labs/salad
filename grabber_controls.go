@@ -519,17 +519,17 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 
 const grabPlansDir = "/root/.viam/capture"
 
-func (s *grabberControls) savePlan(plan *grabPlanRecord) error {
+func (s *grabberControls) savePlan(plan *grabPlanRecord) (string, error) {
 	if err := os.MkdirAll(grabPlansDir, 0o755); err != nil {
-		return fmt.Errorf("creating grab-plans dir: %w", err)
+		return "", fmt.Errorf("creating grab-plans dir: %w", err)
 	}
 	ts := time.Now().UTC().Format("20060102-150405.000")
 	fname := filepath.Join(grabPlansDir, fmt.Sprintf("grab-%s-zone%d.json", ts, plan.ZoneID))
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshaling plan: %w", err)
+		return "", fmt.Errorf("marshaling plan: %w", err)
 	}
-	return os.WriteFile(fname, data, 0o644)
+	return fname, os.WriteFile(fname, data, 0o644)
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {

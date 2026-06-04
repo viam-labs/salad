@@ -70,8 +70,10 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) (retE
 			if retErr != nil {
 				record.Error = retErr.Error()
 			}
-			if saveErr := s.savePlan(record); saveErr != nil {
+			if fname, saveErr := s.savePlan(record); saveErr != nil {
 				s.logger.Warnf("failed to save grab plan: %v", saveErr)
+			} else {
+				s.logger.Infof("saved grab plan: %s", fname)
 			}
 		}()
 	}
