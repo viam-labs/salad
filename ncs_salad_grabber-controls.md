@@ -16,8 +16,7 @@ first command after startup, this model lazy-loads `mesh.ply` and
   `bin-hover-orientation`.
 - A grab pose per configured bin, centered on the bin's centroid at
   `Z_min + grab-height-mm - depth-offset-mm` with orientation
-  `bin-hover-orientation`. The bin is then re-entered with orientation
-  `grab-orientation` (a "tilt") so the gripper can scoop sideways.
+  `bin-hover-orientation`.
 
 The bowl drop-off is driven by an inline `dropping-pose` (position + orientation)
 configured directly on this service. A hover pose is computed at startup as
@@ -42,7 +41,6 @@ The following attribute template can be used to configure this model:
   "bin-hover-height-mm": <float>,
   "bin-hover-orientation": { "x": <float>, "y": <float>, "z": <float>, "th": <float> },
   "grab-height-mm": <float>,
-  "grab-orientation": { "x": <float>, "y": <float>, "z": <float>, "th": <float> },
   "shake-arm-service": <string>,
   "assets-dir": <string>,
   "x-offset-mm": <float>,
@@ -74,7 +72,6 @@ The following attributes are available for this model:
 | `bin-hover-height-mm` | float | Required | Hover height above the bin's mean Z (mm). Used for both pre-grab approach and post-grab return. Must be non-zero. |
 | `bin-hover-orientation` | orientation vector (degrees) | Required | Orientation used at the hover pose and for the straight descend/ascend through the bin. Must be specified. |
 | `grab-height-mm` | float | Required (implicit) | Offset (mm) added to the bin's min Z when computing the grab depth. Negative values descend below the bin floor. |
-| `grab-orientation` | orientation vector (degrees) | Required | Orientation used to "tilt" the gripper inside the bin before closing. Must be specified. |
 | `shake-arm-service` | string | Optional | Name of a generic service that accepts `{"shake_arm": true}`. Called after dropping the ingredient into the bowl. |
 | `assets-dir` | string | Optional | Directory containing `mesh.ply` and `zones.json`. Defaults to `/home/viam/assets`. |
 | `x-offset-mm` | float | Optional | Global X offset (mm) applied to every computed hover and grab pose. Useful for fine-tuning without re-running setup. Defaults to `0`. |
@@ -111,7 +108,6 @@ The following attributes are available for this model:
   "bin-hover-height-mm": 100,
   "bin-hover-orientation": { "x": 0, "y": 0, "z": -1, "th": 0 },
   "grab-height-mm": -30,
-  "grab-orientation": { "x": 0.5, "y": 0, "z": -1, "th": 0 },
   "enable-bin-clearance": true,
   "bin-clearance-x-offset-mm": -25,
   "bin-clearance-z-offset-mm": 20
@@ -130,16 +126,14 @@ Plans and executes a full grab cycle for a single bin:
 1. Move to hover pose above the bin.
 2. Open gripper.
 3. Linearly descend to the grab pose.
-4. Tilt to `grab-orientation`.
-5. Close gripper (`Grab`).
-6. Un-tilt back to the grab pose orientation.
-7. Linearly ascend back to hover pose.
-8. (If `enable-bin-clearance`) move to the clearance pose.
-9. Move arm to bowl hover pose (`dropping-pose` + `bowl-hover-height-mm`).
-10. Move arm to `dropping-pose`.
-11. Open gripper to release.
-12. Move arm back to bowl hover pose.
-13. (If `shake-arm-service` is configured) call `{"shake_arm": true}`.
+4. Close gripper (`Grab`).
+5. Linearly ascend back to hover pose.
+6. (If `enable-bin-clearance`) move to the clearance pose.
+7. Move arm to bowl hover pose (`dropping-pose` + `bowl-hover-height-mm`).
+8. Move arm to `dropping-pose`.
+9. Open gripper to release.
+10. Move arm back to bowl hover pose.
+11. (If `shake-arm-service` is configured) call `{"shake_arm": true}`.
 
 The required `get_from_bin` value is the integer zone ID to grab from
 (must be one of the `zone-id`s in `bins`). The optional `depth-offset-mm`

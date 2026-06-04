@@ -3,12 +3,20 @@ package salad
 import (
 	"context"
 	"fmt"
+	"sync"
 
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/gripper"
-	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/motionplan"
+	"go.viam.com/rdk/motionplan/armplanning"
+	"go.viam.com/rdk/pointcloud"
+	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/resource"
+	"go.viam.com/rdk/robot/framesystem"
 	genericservice "go.viam.com/rdk/services/generic"
+	"go.viam.com/rdk/spatialmath"
 )
 
 var DressingControls = resource.NewModel("ncs", "salad", "dressing-controls")
@@ -21,96 +29,80 @@ func init() {
 	)
 }
 
+// DressingPoseConfig holds the target pose and motion constraints for a single arm step.
+type DressingPoseConfig struct {
+	Point       r3.Vector                            `json:"point"`
+	Orientation spatialmath.OrientationVectorDegrees `json:"orientation"`
+	Constraints *motionplan.Constraints              `json:"constraints,omitempty"`
+}
+
+func (c DressingPoseConfig) toPose() spatialmath.Pose {
+	return spatialmath.NewPose(c.Point, &c.Orientation)
+}
+
 type DressingOptionConfig struct {
-	ApproachGrab string `json:"approach-grab"`
-	Grab         string `json:"grab"`
+	ApproachGrab DressingPoseConfig `json:"approach-grab"`
+	Grab         DressingPoseConfig `json:"grab"`
+}
+
+type CircularPourConfig struct {
+	RadiusMm     float64                 `json:"radius-mm"`
+	PointsPerRev int                     `json:"points-per-rev,omitempty"`
+	Revolutions  int                     `json:"revolutions,omitempty"`
+	Constraints  *motionplan.Constraints `json:"constraints,omitempty"`
 }
 
 type DressingControlsConfig struct {
-	Gripper          string                          `json:"gripper"`
-	PrepareDressing  string                          `json:"prepare-dressing"`
-	PourDressing     string                          `json:"pour-dressing"`
-	PourDressing2    string                          `json:"pour-dressing2"`
-	PostPourDressing string                          `json:"post-pour-dressing"`
-	Home             string                          `json:"home"`
-	ShakeArmService  *string                         `json:"shake-arm-service,omitempty"`
-	Dressings        map[string]DressingOptionConfig `json:"dressings"`
+	Arm                 string                          `json:"arm"`
+	Gripper             string                          `json:"gripper"`
+	AssetsDir           string                          `json:"assets-dir,omitempty"`
+	PrepareDressing     DressingPoseConfig              `json:"prepare-dressing"`
+	PourDressing        DressingPoseConfig              `json:"pour-dressing"`
+	CircularPour        *CircularPourConfig             `json:"circular-pour,omitempty"`
+	PostPourDressing    DressingPoseConfig              `json:"post-pour-dressing"`
+	Home                DressingPoseConfig              `json:"home"`
+	GrabSpeedDegsPerSec float64                         `json:"grab-speed-degs-per-sec,omitempty"`
+	ShakeArmService     *string                         `json:"shake-arm-service,omitempty"`
+	Dressings           map[string]DressingOptionConfig `json:"dressings"`
 }
 
 func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, error) {
+	if cfg.Arm == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "arm")
+	}
 	if cfg.Gripper == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "gripper")
 	}
-
-	if cfg.PrepareDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "prepare-dressing")
-	}
-
-	if cfg.PourDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "pour-dressing")
-	}
-
-	if cfg.PourDressing2 == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "pour-dressing2")
-	}
-	if cfg.PostPourDressing == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "post-pour-dressing")
-	}
-
-	if cfg.Home == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "home")
-	}
-
 	if len(cfg.Dressings) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dressings")
 	}
-
-	requiredDeps := []string{}
-
-	requiredDeps = append(requiredDeps, cfg.Gripper)
-	requiredDeps = append(requiredDeps, cfg.PrepareDressing, cfg.PourDressing, cfg.PourDressing2, cfg.Home, cfg.PostPourDressing)
-
-	for name, opt := range cfg.Dressings {
-		if opt.ApproachGrab == "" {
-			return nil, nil, resource.NewConfigValidationFieldRequiredError(path, fmt.Sprintf("dressings.%s.approach-grab", name))
-		}
-		if opt.Grab == "" {
-			return nil, nil, resource.NewConfigValidationFieldRequiredError(path, fmt.Sprintf("dressings.%s.grab", name))
-		}
-		requiredDeps = append(requiredDeps, opt.ApproachGrab, opt.Grab)
-	}
-
+	deps := []string{cfg.Arm, cfg.Gripper, framesystem.PublicServiceName.String()}
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
-		requiredDeps = append(requiredDeps, *cfg.ShakeArmService)
+		deps = append(deps, *cfg.ShakeArmService)
 	}
-
-	return requiredDeps, []string{}, nil
-}
-
-type dressingOption struct {
-	approachGrabSwitch sw.Switch
-	grabSwitch         sw.Switch
+	return deps, []string{}, nil
 }
 
 type dressingControls struct {
 	resource.AlwaysRebuild
 
-	name resource.Name
-
+	name   resource.Name
 	logger logging.Logger
 	cfg    *DressingControlsConfig
 
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	gripper          gripper.Gripper
-	prepareDressing  sw.Switch
-	dressingPour     sw.Switch
-	dressingPour2    sw.Switch
-	postPourDressing sw.Switch
-	home             sw.Switch
-	shakeArmService  genericservice.Service
-	dressings        map[string]dressingOption
+	arm             arm.Arm
+	gripper         gripper.Gripper
+	shakeArmService genericservice.Service
+	fsService       framesystem.Service
+
+	assetsMu   sync.Mutex
+	worldState *referenceframe.WorldState
+
+	cachedPlansMu sync.Mutex
+	cachedPlans   map[string]*dressingPlan
 }
 
 func newDressingControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -118,7 +110,6 @@ func newDressingControls(ctx context.Context, deps resource.Dependencies, rawCon
 	if err != nil {
 		return nil, err
 	}
-
 	return NewDressingControls(ctx, deps, rawConf.ResourceName(), conf, logger)
 }
 
@@ -133,41 +124,23 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 		cancelFunc: cancelFunc,
 	}
 
+	armComponent, err := arm.FromProvider(deps, conf.Arm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get arm '%s': %w", conf.Arm, err)
+	}
+	s.arm = armComponent
+
 	gripperComponent, err := gripper.FromProvider(deps, conf.Gripper)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get gripper '%s': %w", conf.Gripper, err)
 	}
 	s.gripper = gripperComponent
 
-	prepareDressingSwitch, err := sw.FromProvider(deps, conf.PrepareDressing)
+	fsSvc, err := framesystem.FromProvider(deps)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get prepare-dressing switch '%s': %w", conf.PrepareDressing, err)
+		return nil, fmt.Errorf("failed to get framesystem service: %w", err)
 	}
-	s.prepareDressing = prepareDressingSwitch
-
-	pourDressingSwitch, err := sw.FromProvider(deps, conf.PourDressing)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pour-dressing switch '%s': %w", conf.PourDressing, err)
-	}
-	s.dressingPour = pourDressingSwitch
-
-	pourDressing2Switch, err := sw.FromProvider(deps, conf.PourDressing2)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pour-dressing2 switch '%s': %w", conf.PourDressing2, err)
-	}
-	s.dressingPour2 = pourDressing2Switch
-
-	postPourDressingSwitch, err := sw.FromProvider(deps, conf.PostPourDressing)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get post-pour-dressing switch '%s': %w", conf.PostPourDressing, err)
-	}
-	s.postPourDressing = postPourDressingSwitch
-
-	homeSwitch, err := sw.FromProvider(deps, conf.Home)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home switch '%s': %w", conf.Home, err)
-	}
-	s.home = homeSwitch
+	s.fsService = fsSvc
 
 	if conf.ShakeArmService != nil && *conf.ShakeArmService != "" {
 		shakeArmService, err := genericservice.FromProvider(deps, *conf.ShakeArmService)
@@ -177,18 +150,7 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 		s.shakeArmService = shakeArmService
 	}
 
-	s.dressings = make(map[string]dressingOption, len(conf.Dressings))
-	for name, optCfg := range conf.Dressings {
-		approachGrabSwitch, err := sw.FromProvider(deps, optCfg.ApproachGrab)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get approach-grab switch '%s' for dressing %q: %w", optCfg.ApproachGrab, name, err)
-		}
-		grabSwitch, err := sw.FromProvider(deps, optCfg.Grab)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get grab switch '%s' for dressing %q: %w", optCfg.Grab, name, err)
-		}
-		s.dressings[name] = dressingOption{approachGrabSwitch: approachGrabSwitch, grabSwitch: grabSwitch}
-	}
+	s.cachedPlans = make(map[string]*dressingPlan)
 
 	s.logger.Infof("Dressing controls initialized")
 	return s, nil
@@ -196,6 +158,10 @@ func NewDressingControls(ctx context.Context, deps resource.Dependencies, name r
 
 func (s *dressingControls) Name() resource.Name {
 	return s.name
+}
+
+func (s *dressingControls) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
 }
 
 func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -206,142 +172,143 @@ func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interfa
 		}
 		return s.doPourDressing(ctx, name)
 	}
+	if v, ok := cmd["pre_plan_dressing"]; ok {
+		name, ok := v.(string)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("pre_plan_dressing requires a dressing name (string)")
+		}
+		return s.doPrePlanDressing(ctx, name)
+	}
 	if _, ok := cmd["reset"]; ok {
 		return s.reset(ctx)
 	}
-	return nil, fmt.Errorf("unknown command, expected 'pour_dressing' or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'pour_dressing', 'pre_plan_dressing', or 'reset' field")
+}
+
+func (s *dressingControls) loadWorldState() error {
+	s.assetsMu.Lock()
+	defer s.assetsMu.Unlock()
+
+	if s.worldState != nil {
+		return nil
+	}
+
+	assetsDir := s.cfg.AssetsDir
+	if assetsDir == "" {
+		assetsDir = "/home/viam/assets"
+	}
+
+	mesh, err := spatialmath.NewMeshFromPLYFile(assetsDir + "/mesh.ply")
+	if err != nil {
+		return fmt.Errorf("mesh not available at %s: %w", assetsDir+"/mesh.ply", err)
+	}
+
+	octree, err := pointcloud.NewFromMesh(mesh)
+	if err != nil {
+		return fmt.Errorf("failed to convert mesh to octree: %w", err)
+	}
+
+	ws, err := referenceframe.NewWorldState(
+		[]*referenceframe.GeometriesInFrame{
+			referenceframe.NewGeometriesInFrame(referenceframe.World, []spatialmath.Geometry{octree}),
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to build world state: %w", err)
+	}
+
+	s.worldState = ws
+	return nil
+}
+
+func (s *dressingControls) doPrePlanDressing(ctx context.Context, name string) (map[string]interface{}, error) {
+	s.logger.Infof("Pre-planning dressing %q", name)
+	plan, err := s.planDressing(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("pre-planning dressing %q: %w", name, err)
+	}
+	s.cachedPlansMu.Lock()
+	s.cachedPlans[name] = plan
+	s.cachedPlansMu.Unlock()
+	s.logger.Infof("Pre-planning dressing %q complete", name)
+	return map[string]interface{}{"success": true}, nil
 }
 
 func (s *dressingControls) doPourDressing(ctx context.Context, name string) (map[string]interface{}, error) {
-	opt, ok := s.dressings[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown dressing %q", name)
+	s.cachedPlansMu.Lock()
+	plan, cached := s.cachedPlans[name]
+	if cached {
+		delete(s.cachedPlans, name)
 	}
+	s.cachedPlansMu.Unlock()
 
-	s.logger.Infof("Executing pour_dressing for %q", name)
-
-	// open gripper
-	if err := s.gripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open gripper: %w", err)
-	}
-	s.logger.Debugf("Opened gripper")
-
-	if err := opt.approachGrabSwitch.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set approach-grab switch for dressing %q to position 2: %w", name, err)
-	}
-	s.logger.Debugf("Set approach-grab switch to position 2 for dressing %q", name)
-
-	if err := opt.grabSwitch.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set grab switch for dressing %q to position 2: %w", name, err)
-	}
-	s.logger.Debugf("Set grab switch to position 2 for dressing %q", name)
-
-	if _, err := s.gripper.Grab(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to grab dressing %q: %w", name, err)
-	}
-	s.logger.Debugf("Grabbed dressing %q", name)
-
-	if err := opt.approachGrabSwitch.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set approach-grab switch for dressing %q to position 2: %w", name, err)
-	}
-	s.logger.Debugf("Set approach-grab switch to position 2 for dressing %q", name)
-
-	if err := s.prepareDressing.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set prepare-dressing switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set prepare-dressing switch to position 2")
-
-	if err := s.dressingPour.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set pour-dressing switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set pour-dressing switch to position 2")
-
-	if s.shakeArmService != nil {
-		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
-			"shake_arm": true,
-		})
+	if cached {
+		s.logger.Infof("Using pre-planned trajectories for %q", name)
+	} else {
+		s.logger.Infof("Planning pour_dressing for %q", name)
+		var err error
+		plan, err = s.planDressing(ctx, name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to shake arm: %w", err)
+			return nil, err
 		}
 	}
 
-	if err := s.dressingPour2.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set pour-dressing switch to position 2: %w", err)
+	s.logger.Infof("Executing pour_dressing for %q (%d steps)", name, len(plan.steps))
+	if err := s.executeDressing(ctx, plan); err != nil {
+		return nil, err
 	}
-	s.logger.Debugf("Set pour-dressing switch to position 2")
-
-	if s.shakeArmService != nil {
-		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
-			"shake_arm": true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to shake arm: %w", err)
-		}
-	}
-
-	if err := s.dressingPour.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set pour-dressing switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set pour-dressing switch to position 2")
-
-	if s.shakeArmService != nil {
-		_, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{
-			"shake_arm": true,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to shake arm: %w", err)
-		}
-	}
-
-	if err := s.postPourDressing.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set post-pour-dressing switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set post-pour-dressing switch to position 2")
-
-	if err := s.prepareDressing.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set prepare-dressing switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set prepare-dressing switch to position 2")
-
-	if err := opt.approachGrabSwitch.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set approach-grab switch for dressing %q to position 2: %w", name, err)
-	}
-	s.logger.Debugf("Set approach-grab switch to position 2 for dressing %q", name)
-
-	if err := opt.grabSwitch.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set grab switch for dressing %q to position 2: %w", name, err)
-	}
-	s.logger.Debugf("Set grab switch to position 2 for dressing %q", name)
-
-	if err := s.gripper.Open(ctx, nil); err != nil {
-		return nil, fmt.Errorf("failed to open gripper: %w", err)
-	}
-	s.logger.Debugf("Opened gripper")
-
-	if err := opt.approachGrabSwitch.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set approach-grab switch for dressing %q to position 2: %w", name, err)
-	}
-	s.logger.Debugf("Set approach-grab switch to position 2 for dressing %q", name)
-
-	if err := s.home.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set home switch to position 2: %w", err)
-	}
-	s.logger.Debugf("Set home switch to position 2")
-
-	s.logger.Infof("Successfully completed pour_dressing")
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "Successfully poured dressing",
-	}, nil
+	s.logger.Infof("Successfully completed pour_dressing for %q", name)
+	return map[string]interface{}{"success": true, "message": "Successfully poured dressing"}, nil
 }
 
 func (s *dressingControls) reset(ctx context.Context) (map[string]interface{}, error) {
-	if err := s.home.SetPosition(ctx, 2, nil); err != nil {
-		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
+	if err := s.loadWorldState(); err != nil {
+		return nil, err
 	}
-	s.logger.Debugf("Set right-home switch to position 2")
 
+	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building frame system: %w", err)
+	}
+
+	armCurrentInputs, err := s.arm.CurrentInputs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting arm current inputs: %w", err)
+	}
+	startInputs := referenceframe.NewZeroInputs(fs)
+	if len(armCurrentInputs) > 0 {
+		startInputs[s.cfg.Arm] = armCurrentInputs
+	}
+
+	goalState := armplanning.NewPlanState(
+		referenceframe.FrameSystemPoses{
+			s.cfg.Arm: referenceframe.NewPoseInFrame(referenceframe.World, s.cfg.Home.toPose()),
+		},
+		nil,
+	)
+	req := &armplanning.PlanRequest{
+		FrameSystem: fs,
+		WorldState:  s.worldState,
+		StartState:  armplanning.NewPlanState(nil, startInputs),
+		Goals:       []*armplanning.PlanState{goalState},
+		Constraints: s.cfg.Home.Constraints,
+	}
+
+	plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
+	if err != nil {
+		return nil, fmt.Errorf("planning home: %w", err)
+	}
+
+	traj := plan.Trajectory()
+	armInputs := make([][]referenceframe.Input, len(traj))
+	for i, fsInputs := range traj {
+		armInputs[i] = fsInputs[s.cfg.Arm]
+	}
+
+	if err := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil); err != nil {
+		return nil, fmt.Errorf("moving to home: %w", err)
+	}
 	return nil, nil
 }
 

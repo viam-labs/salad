@@ -14,6 +14,7 @@ import (
 
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
+	sw "go.viam.com/rdk/components/switch"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
@@ -130,6 +131,8 @@ type BuildCoordinatorConfig struct {
 	CaptureDir          string                              `json:"capture-dir"`
 	Simulate            bool                                `json:"simulate"`
 	SkipLilArm          bool                                `json:"skip-lil-arm"`
+	LeftHome            string                              `json:"left-home"`
+	RightHome           string                              `json:"right-home"`
 	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
 	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
@@ -149,9 +152,6 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.GrabberControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "grabber-controls")
 	}
-	if cfg.BowlControls == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bowl-controls")
-	}
 	if cfg.ScaleSensor == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "scale-sensor")
 	}
@@ -161,16 +161,26 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.ChefsKissControls == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "chefs-kiss-controls")
 	}
+	if cfg.LeftHome == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "left-home")
+	}
+	if cfg.RightHome == "" {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
+	}
 	if len(cfg.Ingredients) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
 	}
 
-	deps := []string{cfg.GrabberControls, cfg.BowlControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls}
+	deps := []string{cfg.GrabberControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls, cfg.LeftHome, cfg.RightHome}
+	var optDeps []string
+	if cfg.BowlControls != "" {
+		optDeps = append(optDeps, cfg.BowlControls)
+	}
 	if cfg.TextToSpeech != "" {
-		deps = append(deps, cfg.TextToSpeech)
+		optDeps = append(optDeps, cfg.TextToSpeech)
 	}
 	if cfg.ImagingCamera != "" {
-		deps = append(deps, cfg.ImagingCamera)
+		optDeps = append(optDeps, cfg.ImagingCamera)
 	}
 
 	for i, ing := range cfg.Ingredients {
@@ -219,7 +229,7 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		return nil, nil, fmt.Errorf("%s.mesh-target-triangles must be >= 0, got %d", path, *cfg.MeshTargetTriangles)
 	}
 
-	return deps, nil, nil
+	return deps, optDeps, nil
 }
 
 type buildCoordinator struct {
@@ -239,6 +249,8 @@ type buildCoordinator struct {
 	dressingControls     resource.Resource
 	textToSpeech         resource.Resource
 	imagingCamera        camera.Camera
+	leftHome             sw.Switch
+	rightHome            sw.Switch
 	ingredients          map[string]float64 // name -> grams per serving
 	ingredientCategories map[string]string  // name -> category
 	ingredientZoneIDs    map[string]int     // name -> zone ID
@@ -295,11 +307,13 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.grabberControls = grabber
 
-	bowlControls, ok := deps[genericservice.Named(conf.BowlControls)]
-	if !ok {
-		return nil, fmt.Errorf("bowl controls service %q not found in dependencies", conf.BowlControls)
+	if conf.BowlControls != "" {
+		bowlControls, ok := deps[genericservice.Named(conf.BowlControls)]
+		if !ok {
+			return nil, fmt.Errorf("bowl controls service %q not found in dependencies", conf.BowlControls)
+		}
+		s.bowlControls = bowlControls
 	}
-	s.bowlControls = bowlControls
 
 	dressingControls, ok := deps[genericservice.Named(conf.DressingControls)]
 	if !ok {
@@ -336,6 +350,18 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.scaleSensor = scale
 
+	leftHomeSwitch, err := sw.FromProvider(deps, conf.LeftHome)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get left-home switch %q: %w", conf.LeftHome, err)
+	}
+	s.leftHome = leftHomeSwitch
+
+	rightHomeSwitch, err := sw.FromProvider(deps, conf.RightHome)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get right-home switch %q: %w", conf.RightHome, err)
+	}
+	s.rightHome = rightHomeSwitch
+
 	for _, ing := range conf.Ingredients {
 		s.ingredients[ing.Name] = ing.GramsPerServing
 		s.ingredientCategories[ing.Name] = ing.Category
@@ -350,6 +376,10 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 
 func (s *buildCoordinator) Name() resource.Name {
 	return s.name
+}
+
+func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, error) {
+	return s.getStatus(), nil
 }
 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -802,7 +832,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		return nil, fmt.Errorf("build_salad requires at least one ingredient")
 	}
 
-	var result map[string]interface{}
 	lilArmControls, _ := s.bowlControls.(*bowlControls)
 	lilArmEnabled := !s.skipLilArm && lilArmControls != nil && lilArmControls.lilArmGripper != nil
 	if s.skipLilArm {
@@ -810,7 +839,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	}
 
 	if lilArmEnabled {
-		result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
 			"target":    60,
 		})
@@ -822,15 +851,17 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}
 	}
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset":        true,
-		"skip_lil_arm": s.skipLilArm,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset bowl controls after preparing: %v", err),
-		}, nil
+	if s.bowlControls != nil {
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+			"reset":        true,
+			"skip_lil_arm": s.skipLilArm,
+		})
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Failed to reset bowl controls after preparing: %v", err),
+			}, nil
+		}
 	}
 
 	type ingredientTarget struct {
@@ -876,6 +907,21 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 
 	s.logger.Infof("Building salad with %d ingredients", len(targets))
 
+	// kick off background pre-planning for each dressing while ingredients are grabbed
+	for _, t := range targets {
+		if t.category != "dressing" {
+			continue
+		}
+		name := t.name
+		go func() {
+			if _, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
+				"pre_plan_dressing": name,
+			}); err != nil {
+				s.logger.Warnf("Pre-planning dressing %q failed, will plan on demand: %v", name, err)
+			}
+		}()
+	}
+
 	for _, target := range targets {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -895,7 +941,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		completedServings += target.servings
 	}
 
-	result, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
+	_, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
 	if err != nil {
@@ -920,33 +966,19 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// }
 
 	s.updateStatus("delivering salad", completedServings/totalSteps*100)
-	s.logger.Infof("All ingredients added, delivering bowl")
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"deliver_bowl": true,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %v", err),
-		}, nil
-	}
-	if success, ok := result["success"].(bool); ok && !success {
-		msg, _ := result["message"].(string)
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to deliver bowl: %s", msg),
-		}, nil
-	}
+	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
-	result, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset":        true,
-		"skip_lil_arm": s.skipLilArm,
-	})
-	if err != nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
-		}, nil
+	if s.bowlControls != nil {
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+			"reset":        true,
+			"skip_lil_arm": s.skipLilArm,
+		})
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Failed to reset bowl controls: %v", err),
+			}, nil
+		}
 	}
 
 	// if target contains dressing item:
@@ -1099,29 +1131,41 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 		return 0, fmt.Errorf("failed to read scale sensor: %w", err)
 	}
 
-	for _, v := range readings {
-		if val, err := toFloat64(v); err == nil {
-			return val, nil
-		}
+	v, ok := readings["weight"]
+	if !ok {
+		return 0, fmt.Errorf("scale readings missing 'weight' field: %+v", readings)
 	}
 
-	return 0, fmt.Errorf("no numeric reading found from scale sensor")
+	weight, err := toFloat64(v)
+	if err != nil {
+		return 0, fmt.Errorf("'weight' field is not numeric: %w", err)
+	}
+
+	return weight, nil
 }
 
 // TODO figure out if I need to incorporate this into state machine
 func (s *buildCoordinator) resetAll(ctx context.Context) error {
+	if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
+		return fmt.Errorf("failed to set left-home switch to position 2: %w", err)
+	}
+	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
+		return fmt.Errorf("failed to set right-home switch to position 2: %w", err)
+	}
 	_, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reset grabber controls: %w", err)
 	}
-	_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
-		"reset":        true,
-		"skip_lil_arm": s.skipLilArm,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to reset bowl controls: %w", err)
+	if s.bowlControls != nil {
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
+			"reset":        true,
+			"skip_lil_arm": s.skipLilArm,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to reset bowl controls: %w", err)
+		}
 	}
 	return nil
 }

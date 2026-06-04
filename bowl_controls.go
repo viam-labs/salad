@@ -71,17 +71,16 @@ func (cfg *BowlControlsConfig) Validate(path string) ([]string, []string, error)
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
 	}
 
-	if cfg.LittleArm == "" {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "little-arm")
-	}
-
 	requiredDeps := []string{
 		cfg.RightGripper,
 		cfg.RightAboveBowl, cfg.RightGrabBowl, cfg.RightAboveDelivery, cfg.RightBowlDelivery, cfg.RightHome,
-		cfg.LittleArm,
 	}
 
 	var optionalDeps []string
+
+	if cfg.LittleArm != "" {
+		optionalDeps = append(optionalDeps, cfg.LittleArm)
+	}
 
 	if cfg.XArmForceMover != "" {
 		optionalDeps = append(optionalDeps, cfg.XArmForceMover)
@@ -206,11 +205,13 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 	}
 	s.rightHome = rightHomeSwitch
 
-	littleArmComponent, err := arm.FromProvider(deps, conf.LittleArm)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get little-arm '%s': %w", conf.LittleArm, err)
+	if conf.LittleArm != "" {
+		littleArmComponent, err := arm.FromProvider(deps, conf.LittleArm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get little-arm '%s': %w", conf.LittleArm, err)
+		}
+		s.littleArm = littleArmComponent
 	}
-	s.littleArm = littleArmComponent
 
 	if conf.XArmForceMover != "" {
 		mover, err := genericservice.FromProvider(deps, conf.XArmForceMover)
@@ -265,6 +266,10 @@ func NewBowlControls(ctx context.Context, deps resource.Dependencies, name resou
 
 func (s *bowlControls) Name() resource.Name {
 	return s.name
+}
+
+func (s *bowlControls) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
 }
 
 func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -335,6 +340,9 @@ func (s *bowlControls) doForceMove(ctx context.Context, cmd map[string]interface
 }
 
 func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
+	if s.littleArm == nil {
+		return fmt.Errorf("little-arm is not configured")
+	}
 	pose, ok := s.lilArmPoses[name]
 	if !ok {
 		return fmt.Errorf("lil-arm pose '%s' not found in configuration", name)

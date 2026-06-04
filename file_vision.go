@@ -3,8 +3,8 @@ package salad
 import (
 	"context"
 	"fmt"
-	"image"
 
+	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/pointcloud"
 	"go.viam.com/rdk/resource"
@@ -92,13 +92,17 @@ func (s *fileVision) Name() resource.Name {
 	return s.name
 }
 
+func (s *fileVision) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
 // DetectionsFromCamera returns a list of detections from the next image from a specified camera using a configured detector.
 func (s *fileVision) DetectionsFromCamera(ctx context.Context, cameraName string, extra map[string]interface{}) ([]objdet.Detection, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // Detections returns a list of detections from a given image using a configured detector.
-func (s *fileVision) Detections(ctx context.Context, img image.Image, extra map[string]interface{}) ([]objdet.Detection, error) {
+func (s *fileVision) Detections(ctx context.Context, img *camera.NamedImage, extra map[string]interface{}) ([]objdet.Detection, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -110,7 +114,7 @@ func (s *fileVision) ClassificationsFromCamera(ctx context.Context, cameraName s
 }
 
 // Classifications returns a list of classifications from a given image using a configured classifier.
-func (s *fileVision) Classifications(ctx context.Context, img image.Image, n int, extra map[string]interface{}) (classification.Classifications, error) {
+func (s *fileVision) Classifications(ctx context.Context, img *camera.NamedImage, n int, extra map[string]interface{}) (classification.Classifications, error) {
 	var classificationsRetVal classification.Classifications
 
 	return classificationsRetVal, fmt.Errorf("not implemented")

@@ -115,6 +115,10 @@ func (s *chefsKissControls) Name() resource.Name {
 	return s.name
 }
 
+func (s *chefsKissControls) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
 func (s *chefsKissControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if _, ok := cmd["chefs_kiss"]; ok {
 		return s.doChefsKiss(ctx)
