@@ -145,6 +145,7 @@ func (s *dressingControls) planDressing(ctx context.Context, name, buildID strin
 	return &dressingPlan{dressingName: name, steps: steps, plannedAt: time.Now()}, nil
 }
 
+//nolint:whitespace // golangci-lint v1.62.2 whitespace linter false-positive on linux/amd64
 func (s *dressingControls) planCircularPour(ctx context.Context, fs *referenceframe.FrameSystem, startState *armplanning.PlanState, name, buildID string) (*dressingStep, *armplanning.PlanState, error) {
 	cfg := s.cfg.CircularPour
 	pointsPerRev := cfg.PointsPerRev
