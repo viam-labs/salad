@@ -31,6 +31,9 @@ jobs:
     - name: Setup
       run: make setup
 
+    - name: Pre-build dependencies (workaround for golangci-lint package loader)
+      run: go build ./...
+
     - name: Lint
       run: make check-lint
 
