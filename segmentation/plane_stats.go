@@ -36,7 +36,7 @@ func NewZoneHeightMap(zone *Zone) ZoneHeightMap {
 }
 
 // Populate computes per-cell median signed distances from accumulated samples.
-func (hm *ZoneHeightMap) Populate(cellDistances [ZoneHeightMapGridSize][ZoneHeightMapGridSize][]float64) {
+func (hm ZoneHeightMap) Populate(cellDistances [ZoneHeightMapGridSize][ZoneHeightMapGridSize][]float64) {
 	for r := 0; r < ZoneHeightMapGridSize; r++ {
 		for c := 0; c < ZoneHeightMapGridSize; c++ {
 			dists := cellDistances[r][c]
