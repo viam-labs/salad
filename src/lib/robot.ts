@@ -38,6 +38,13 @@ export async function initConnection(): Promise<void> {
   cameraStream = await streamClient.getStream("overhead-webcam");
 }
 
+export async function fetchTheme(): Promise<string> {
+  const result = (await coordinator.doCommand({
+    get_theme: true,
+  })) as unknown as { theme?: string };
+  return result.theme ?? "salad";
+}
+
 export async function fetchIngredients(): Promise<Ingredient[]> {
   const result = (await coordinator.doCommand({
     list_ingredients: true,

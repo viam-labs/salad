@@ -1,8 +1,4 @@
-import { getEmojiForTheme } from "./theme";
-
-export function getEmoji(name: string): string {
-  return getEmojiForTheme(name);
-}
+export { getEmoji } from "./theme.svelte";
 
 export const portionLimits: Record<string, number> = {
   base: 2,

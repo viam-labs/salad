@@ -1,6 +1,6 @@
 <script lang="ts">
   import { categoryOrder, portionLimits } from "../lib/constants";
-  import { getCopy } from "../lib/theme";
+  import { getCopy } from "../lib/theme.svelte";
   import type { Ingredient } from "../lib/types";
   import CategorySection from "./CategorySection.svelte";
 
@@ -11,7 +11,7 @@
 
   let { ingredients, onBuild }: Props = $props();
 
-  const text = getCopy();
+  let text = $derived(getCopy());
 
   let order: Record<string, number> = $state({});
   let customerName = $state("");
