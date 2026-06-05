@@ -13,6 +13,8 @@
   --bg-quinoa: #e8dcc6;
   --green-dark: #2d6a4f;
   --green-darker: #1b4332;
+  --accent-glow: rgba(45, 106, 79, 0.12);
+  --accent-shadow: rgba(45, 106, 79, 0.15);
   --white: #fff;
   --gray-light: #e0e0e0;
   --gray-text: #666;
@@ -20,6 +22,16 @@
     serif;
   --font-body: "DM Sans", system-ui, -apple-system, sans-serif;
   --tile-radius: 1.25rem;
+}
+
+[data-theme="icecream"] {
+  --bg-hummus: #fff8f0;
+  --bg-cucumber: #ffe4ef;
+  --bg-quinoa: #fdf0d5;
+  --green-dark: #e0789f;
+  --green-darker: #b84d78;
+  --accent-glow: rgba(224, 120, 159, 0.12);
+  --accent-shadow: rgba(224, 120, 159, 0.15);
 }
 
 html,
@@ -108,7 +120,7 @@ body {
 
 .name-input:focus {
   border-color: var(--green-dark);
-  box-shadow: 0 0 0 3px rgba(45, 106, 79, 0.12);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 /* ── Category Sections ───────────────────────────────── */
@@ -162,7 +174,7 @@ body {
 }
 
 .ingredient-tile.selected {
-  box-shadow: 0 0 0 2px var(--green-dark), 0 2px 8px rgba(45, 106, 79, 0.15);
+  box-shadow: 0 0 0 2px var(--green-dark), 0 2px 8px var(--accent-shadow);
 }
 
 .tile-emoji {
