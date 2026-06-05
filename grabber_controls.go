@@ -328,6 +328,10 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return s.reset(ctx)
 	}
 
+	if _, ok := cmd["bowl_hover"]; ok {
+		return s.doBowlHover(ctx)
+	}
+
 	if _, ok := cmd["get_ingredients"]; ok {
 		ingredients := make([]map[string]any, 0, len(s.cfg.Bins))
 		for _, bin := range s.cfg.Bins {
@@ -341,7 +345,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return map[string]any{"ingredients": ingredients}, nil
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'bowl_hover', 'reset', or 'get_ingredients' field")
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
