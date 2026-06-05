@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { categoryLabels, portionLimits } from "../lib/constants";
+  import { portionLimits } from "../lib/constants";
+  import { getCategoryLabel } from "../lib/theme";
   import type { Ingredient } from "../lib/types";
   import IngredientTile from "./IngredientTile.svelte";
 
@@ -13,7 +14,7 @@
   let { category, items, order, onUpdate }: Props = $props();
 
   let limit = $derived(portionLimits[category] ?? 1);
-  let label = $derived(categoryLabels[category] ?? category);
+  let label = $derived(getCategoryLabel(category));
   let categoryTotal = $derived(
     items.reduce((sum, ing) => sum + (order[ing.name] ?? 0), 0),
   );

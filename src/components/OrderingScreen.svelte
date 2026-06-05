@@ -1,5 +1,6 @@
 <script lang="ts">
   import { categoryOrder, portionLimits } from "../lib/constants";
+  import { getCopy } from "../lib/theme";
   import type { Ingredient } from "../lib/types";
   import CategorySection from "./CategorySection.svelte";
 
@@ -9,6 +10,8 @@
   }
 
   let { ingredients, onBuild }: Props = $props();
+
+  const text = getCopy();
 
   let order: Record<string, number> = $state({});
   let customerName = $state("");
@@ -50,7 +53,7 @@
 </script>
 
 <div class="ordering-screen">
-  <h1>Build Your Salad</h1>
+  <h1>{text.orderTitle}</h1>
   <div class="name-card">
     <label class="name-label" for="customer-name">What's your name?</label>
     <input
@@ -79,13 +82,13 @@
 <div class="cart-footer">
   <div class="cart-summary">
     {#if totalItems === 0}
-      Your salad is <strong>empty</strong>
+      {text.emptyCartLabel} <strong>empty</strong>
     {:else}
       <strong>{totalItems} item{totalItems > 1 ? "s" : ""}:</strong>
       {cartNames}
     {/if}
   </div>
   <button class="btn-build" disabled={totalItems === 0} onclick={handleBuild}>
-    Build My Salad
+    {text.buildButton}
   </button>
 </div>
