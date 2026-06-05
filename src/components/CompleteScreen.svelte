@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { getCopy } from "../lib/theme";
 
   interface Props {
     customerName: string;
@@ -7,6 +8,8 @@
   }
 
   let { customerName, onNewOrder }: Props = $props();
+
+  const text = getCopy();
 
   let secondsLeft = $state(10);
 
@@ -24,8 +27,8 @@
 </script>
 
 <div class="complete-screen">
-  <div class="complete-emoji">&#x1F957;</div>
-  <h1>{customerName ? `${customerName}'s Salad is Ready!` : "Your Salad is Ready!"}</h1>
+  <div class="complete-emoji">{text.completeEmoji}</div>
+  <h1>{text.completeTitle(customerName)}</h1>
   <div class="complete-countdown">Next order in {secondsLeft}s</div>
   <button class="btn-new-order" onclick={onNewOrder}>New Order</button>
 </div>
