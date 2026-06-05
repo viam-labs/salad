@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.viam.com/rdk/referenceframe"
 
@@ -43,10 +44,9 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			time.Sleep(300 * time.Millisecond)
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
-					"position":        850.0,
-					"speed":           3000.0,
-					"torque":          100,
-					"timeout_seconds": 2.0,
+					"position": 850.0,
+					"speed":    3000.0,
+					"torque":   100,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
@@ -67,10 +67,9 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		case GrabStepActionClose:
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
-					"position":        20.0,
-					"speed":           3000.0,
-					"torque":          0,
-					"timeout_seconds": 2.0,
+					"position": 20.0,
+					"speed":    3000.0,
+					"torque":   0,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: close gripper: %w", step.name, err)
@@ -124,10 +123,9 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			releasePos := curPos + 20
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
-					"position":        releasePos,
-					"speed":           3000.0,
-					"torque":          0,
-					"timeout_seconds": 2.0,
+					"position": releasePos,
+					"speed":    3000.0,
+					"torque":   0,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: release squeeze: %w", step.name, err)
