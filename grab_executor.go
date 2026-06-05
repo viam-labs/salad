@@ -3,9 +3,12 @@ package salad
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.viam.com/rdk/referenceframe"
 	"golang.org/x/sync/errgroup"
+
+	"salad/lib/fileio"
 )
 
 func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabStepAction) error {
@@ -67,6 +70,7 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) error
 		}
 
 		if err := s.arm.MoveThroughJointPositions(ctx, armInputs, nil, nil); err != nil {
+			s.saveFailedExecutionJointPosition(plan.BuildID)
 			return fmt.Errorf("step %q: %w", step.Name, err)
 		}
 		s.logger.Debugf("completed step %q", step.Name)
@@ -76,4 +80,20 @@ func (s *grabberControls) executeGrab(ctx context.Context, plan *GrabPlan) error
 		}
 	}
 	return nil
+}
+
+func (s *grabberControls) saveFailedExecutionJointPosition(buildID string) {
+	if buildID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	inputs, err := s.arm.CurrentInputs(ctx)
+	if err != nil {
+		s.logger.Warnw("could not read arm inputs at execution failure", "err", err)
+		return
+	}
+	if err := fileio.SaveJsonToSync(inputs, "failed_execution_joint_position.json", buildID, time.Now()); err != nil {
+		s.logger.Warnw("could not save failed execution joint position", "err", err)
+	}
 }
