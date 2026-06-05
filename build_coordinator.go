@@ -401,7 +401,8 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]any) (m
 				"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 			}, nil
 		}
-		return map[string]any{
+		s.sm.UpdateStateMachineStatus(statemachine.Idle, 0)
+		return map[string]interface{}{
 			"success": true,
 			"message": "Successfully reset all controls",
 		}, nil
@@ -1033,9 +1034,8 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			}
 		} else {
 			zeroChangeStreak = 0
+			totalAdded += change
 		}
-
-		totalAdded += change
 	}
 
 	s.logger.Infof("Ingredient %q complete: added %.1fg (target: %.1fg)", name, totalAdded, targetGrams)

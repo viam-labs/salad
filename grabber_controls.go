@@ -341,7 +341,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]any) (ma
 		return map[string]any{"ingredients": ingredients}, nil
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', or 'get_ingredients' field")
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
@@ -519,10 +519,13 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		zone.Plane.TiltDeg(),
 		time.Since(start).Seconds(),
 	)
-	if stats.MeanSignedDistanceMM < 0 {
-		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
+	planePoint := r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]}
+	heightAtPoint := stats.HeightMap.MedianSignedDistanceAt(planePoint)
+	if heightAtPoint == nil || *heightAtPoint < 0 {
+		s.logger.Errorf("distance to plane is wrong: %d mm, pointsInBucket: %d, pointsInBounds: %d, planePoint: %v", heightAtPoint, stats.HeightMap.PointCountAt(planePoint), stats.PointsInBounds, planePoint)
+		return 0, fmt.Errorf("distance to plane is wrong: %d mm", heightAtPoint)
 	}
-	return stats.MeanSignedDistanceMM, nil
+	return *heightAtPoint, nil
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]any) (map[string]any, error) {

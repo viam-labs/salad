@@ -113,7 +113,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	}
 
 	specs = append(specs,
-		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose, constraints: s.grabLinearConstraints()},
+		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose, constraints: s.clearanceLinearConstraints()},
 		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
 		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
 		grabStepSpec{name: "return_home", goal: homePose},
@@ -154,15 +154,17 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		t := time.Now()
 		plan, _, err := armplanning.PlanMotion(ctx, s.logger, req)
 		planDur := time.Since(t)
-		s.logger.Infof("planned step %q in %.2fs", spec.name, planDur.Seconds())
+
 		s.fileSaver.SaveAsync(ctx, fileio.NewPlanRequestSaveFile(
 			req, buildID,
 			fmt.Sprintf("grab_%s_zone%d_%s_plan_request.json", bin.name, zoneID, spec.name),
 			t, planDur,
 		))
 		if err != nil {
-			return nil, fmt.Errorf("planning step %q: %w", spec.name, err)
+			s.logger.Errorf("error planning step %q: %w", spec.name, err)
+			return nil, fmt.Errorf("error planning step %q: %w", spec.name, err)
 		}
+		s.logger.Infof("planned step %q in %.2fs", spec.name, planDur.Seconds())
 
 		traj := plan.Trajectory()
 		steps = append(steps, GrabStep{
