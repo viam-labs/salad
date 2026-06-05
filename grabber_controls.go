@@ -521,8 +521,9 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	)
 	planePoint := r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]}
 	heightAtPoint := stats.HeightMap.MedianSignedDistanceAt(planePoint)
-	if heightAtPoint == nil {
-		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
+	if heightAtPoint == nil || *heightAtPoint < 0 {
+		s.logger.Errorf("distance to plane is wrong: %d mm, pointsInBucket: %d, pointsInBounds: %d, planePoint: %v", heightAtPoint, stats.HeightMap.PointCountAt(planePoint), stats.PointsInBounds, planePoint)
+		return 0, fmt.Errorf("distance to plane is wrong: %d mm", heightAtPoint)
 	}
 	return *heightAtPoint, nil
 }

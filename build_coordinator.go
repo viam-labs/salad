@@ -399,6 +399,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 				"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 			}, nil
 		}
+		s.updateStatus("idle", 0)
 		return map[string]interface{}{
 			"success": true,
 			"message": "Successfully reset all controls",

@@ -36,7 +36,7 @@ func NewZoneHeightMap(zone *Zone) ZoneHeightMap {
 }
 
 // Populate computes per-cell median signed distances from accumulated samples.
-func (hm ZoneHeightMap) Populate(cellDistances [ZoneHeightMapGridSize][ZoneHeightMapGridSize][]float64) {
+func (hm *ZoneHeightMap) Populate(cellDistances [ZoneHeightMapGridSize][ZoneHeightMapGridSize][]float64) {
 	for r := 0; r < ZoneHeightMapGridSize; r++ {
 		for c := 0; c < ZoneHeightMapGridSize; c++ {
 			dists := cellDistances[r][c]
@@ -53,7 +53,7 @@ func (hm ZoneHeightMap) Populate(cellDistances [ZoneHeightMapGridSize][ZoneHeigh
 // CellXY maps world (x, y) to height-map indices [row][col]. Values outside the
 // map's stored XY bounds are clamped into the nearest edge cell (callers that
 // need an out-of-bounds check should test bounds before calling).
-func (hm ZoneHeightMap) CellXY(x, y float64) (row, col int) {
+func (hm *ZoneHeightMap) CellXY(x, y float64) (row, col int) {
 	spanX := hm.MaxX - hm.MinX
 	spanY := hm.MaxY - hm.MinY
 	if spanX <= 0 {
@@ -83,7 +83,7 @@ func (hm ZoneHeightMap) CellXY(x, y float64) (row, col int) {
 // height-map cell that contains the point's (X, Y) projection. Z is ignored.
 // Returns nil if the point lies outside the map's XY bounds or the cell has no
 // points. Points on the zone boundary are included.
-func (hm ZoneHeightMap) MedianSignedDistanceAt(p r3.Vector) *float64 {
+func (hm *ZoneHeightMap) MedianSignedDistanceAt(p r3.Vector) *float64 {
 	if p.X < hm.MinX || p.X > hm.MaxX || p.Y < hm.MinY || p.Y > hm.MaxY {
 		return nil
 	}
@@ -93,6 +93,11 @@ func (hm ZoneHeightMap) MedianSignedDistanceAt(p r3.Vector) *float64 {
 	}
 	v := hm.MedianSignedDistanceMM[row][col]
 	return &v
+}
+
+func (hm *ZoneHeightMap) PointCountAt(p r3.Vector) int {
+	row, col := hm.CellXY(p.X, p.Y)
+	return hm.PointCount[row][col]
 }
 
 // PlaneFitStats summarizes how well a point cloud aligns with a zone's
