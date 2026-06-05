@@ -3,7 +3,6 @@ package salad
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"go.viam.com/rdk/referenceframe"
 
@@ -42,9 +41,10 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			time.Sleep(300 * time.Millisecond)
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
-					"position": 850.0,
-					"speed":    3000.0,
-					"torque":   100,
+					"position":        850.0,
+					"speed":           3000.0,
+					"torque":          100,
+					"timeout_seconds": 2.0,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
@@ -65,9 +65,10 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		case GrabStepActionClose:
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
-					"position": 20.0,
-					"speed":    3000.0,
-					"torque":   0,
+					"position":        20.0,
+					"speed":           3000.0,
+					"torque":          0,
+					"timeout_seconds": 2.0,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: close gripper: %w", step.name, err)
@@ -79,15 +80,15 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			for _, pos := range []float64{10.0, 5.0, 2.0} {
 				if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 					"grab_with_torque": map[string]interface{}{
-						"position": pos,
-						"speed":    3000.0,
-						"torque":   100.0,
+						"position":        pos,
+						"speed":           3000.0,
+						"torque":          100.0,
+						"timeout_seconds": 2.0,
 					},
 				}); err != nil {
 					return fmt.Errorf("step %q: squeeze to %v: %w", step.name, pos, err)
 				}
 				s.logger.Debugf("squeezed to position %v after %q", pos, step.name)
-				time.Sleep(700 * time.Millisecond)
 			}
 			resp, err := s.gripper.DoCommand(ctx, map[string]interface{}{"get": true})
 			if err != nil {
@@ -104,9 +105,10 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			releasePos := curPos + 20
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
-					"position": releasePos,
-					"speed":    3000.0,
-					"torque":   0,
+					"position":        releasePos,
+					"speed":           3000.0,
+					"torque":          0,
+					"timeout_seconds": 2.0,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: release squeeze: %w", step.name, err)
