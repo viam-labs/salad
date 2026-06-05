@@ -20,7 +20,6 @@ import (
 
 	"salad/filter"
 	"salad/segmentation"
-	salad "salad/state_machine"
 	statemachine "salad/state_machine"
 	saladutils "salad/utils"
 )
@@ -449,7 +448,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, buildCtx context.Co
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
-		s.sm.UpdateStateMachineStatus(salad.Complete, 100)
+		s.sm.UpdateStateMachineStatus(statemachine.Complete, 100)
 		result = map[string]interface{}{
 			"success":   true,
 			"message":   "Salad built and delivered successfully (simulated)",
@@ -463,7 +462,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, buildCtx context.Co
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
-		s.sm.UpdateStateMachineStatus(salad.Stopped, 0)
+		s.sm.UpdateStateMachineStatus(statemachine.Stopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
@@ -523,7 +522,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 
 	err := s.executeSetup(setupCtx)
 	if setupCtx.Err() != nil {
-		s.sm.UpdateStateMachineStatus(salad.Stopped, 0)
+		s.sm.UpdateStateMachineStatus(statemachine.Stopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
@@ -533,7 +532,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		return s.sm.SetupStationError(err), nil
 	}
 
-	s.sm.UpdateStateMachineStatus(salad.Idle, 0)
+	s.sm.UpdateStateMachineStatus(statemachine.Idle, 0)
 	s.logger.Infof("Station setup complete")
 	return map[string]interface{}{
 		"success": true,
@@ -839,7 +838,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		s.sm.UpdateStateMachineStatus(salad.Adding, completedServings/totalSteps*100)
+		s.sm.UpdateStateMachineStatus(statemachine.Adding, completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if target.category == "dressing" {
 			continue
@@ -878,7 +877,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// 	}
 	// }
 
-	s.sm.UpdateStateMachineStatus(salad.Delivering, completedServings/totalSteps*100)
+	s.sm.UpdateStateMachineStatus(statemachine.Delivering, completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
 	if s.bowlControls != nil {
@@ -899,14 +898,14 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// the grabber and bowl-controls arms have gone home.
 	for _, target := range targets {
 		if target.category == "dressing" {
-			s.sm.UpdateStateMachineStatus(salad.Adding, 100)
+			s.sm.UpdateStateMachineStatus(statemachine.Adding, 100)
 			if err := s.addDressing(ctx, target.name); err != nil {
 				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
 			}
 		}
 	}
 
-	s.sm.UpdateStateMachineStatus(salad.Complete, 100)
+	s.sm.UpdateStateMachineStatus(statemachine.Complete, 100)
 
 	// chefs kiss
 	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
