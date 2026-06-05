@@ -10,9 +10,12 @@ import (
 	"salad/lib/fileio"
 )
 
-var defaultSqueezePositions = []float64{10.0, 5.0, 2.0}
-
 func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
+	opt, ok := s.cfg.Dressings[plan.dressingName]
+	if !ok {
+		return fmt.Errorf("unknown dressing %q", plan.dressingName)
+	}
+
 	if err := s.gripper.Open(ctx, nil); err != nil {
 		return fmt.Errorf("open gripper: %w", err)
 	}

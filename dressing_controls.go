@@ -43,8 +43,12 @@ func (c DressingPoseConfig) toPose() spatialmath.Pose {
 }
 
 type DressingOptionConfig struct {
-	ApproachGrab DressingPoseConfig `json:"approach-grab"`
-	Grab         DressingPoseConfig `json:"grab"`
+	ApproachGrab       DressingPoseConfig `json:"approach-grab"`
+	Grab               DressingPoseConfig `json:"grab"`
+	SqueezePositions   []float64          `json:"squeeze-positions,omitempty"`
+	SqueezeSpeed       float64            `json:"squeeze-speed,omitempty"`
+	SqueezeTorque      float64            `json:"squeeze-torque,omitempty"`
+	SqueezeTimeoutSecs float64            `json:"squeeze-timeout-seconds,omitempty"`
 }
 
 type CircularPourConfig struct {
@@ -61,10 +65,6 @@ type DressingControlsConfig struct {
 	PrepareDressing     DressingPoseConfig              `json:"prepare-dressing"`
 	PourDressing        DressingPoseConfig              `json:"pour-dressing"`
 	CircularPour        *CircularPourConfig             `json:"circular-pour,omitempty"`
-	SqueezePositions    []float64                       `json:"squeeze-positions,omitempty"`
-	SqueezeSpeed        float64                         `json:"squeeze-speed,omitempty"`
-	SqueezeTorque       float64                         `json:"squeeze-torque,omitempty"`
-	SqueezeTimeoutSecs  float64                         `json:"squeeze-timeout-seconds,omitempty"`
 	PostPourDressing    DressingPoseConfig              `json:"post-pour-dressing"`
 	Home                DressingPoseConfig              `json:"home"`
 	GrabSpeedDegsPerSec float64                         `json:"grab-speed-degs-per-sec,omitempty"`
@@ -82,19 +82,21 @@ func (cfg *DressingControlsConfig) Validate(path string) ([]string, []string, er
 	if len(cfg.Dressings) == 0 {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "dressings")
 	}
-	for i, pos := range cfg.SqueezePositions {
-		if pos < 0 {
-			return nil, nil, fmt.Errorf("%s.squeeze-positions[%d]: must be non-negative, got %v", path, i, pos)
+	for name, opt := range cfg.Dressings {
+		for i, pos := range opt.SqueezePositions {
+			if pos < 0 {
+				return nil, nil, fmt.Errorf("%s.dressings.%s.squeeze-positions[%d]: must be non-negative, got %v", path, name, i, pos)
+			}
 		}
-	}
-	if cfg.SqueezeSpeed < 0 {
-		return nil, nil, fmt.Errorf("%s.squeeze-speed: must be non-negative, got %v", path, cfg.SqueezeSpeed)
-	}
-	if cfg.SqueezeTorque < 0 {
-		return nil, nil, fmt.Errorf("%s.squeeze-torque: must be non-negative, got %v", path, cfg.SqueezeTorque)
-	}
-	if cfg.SqueezeTimeoutSecs < 0 {
-		return nil, nil, fmt.Errorf("%s.squeeze-timeout-seconds: must be non-negative, got %v", path, cfg.SqueezeTimeoutSecs)
+		if opt.SqueezeSpeed < 0 {
+			return nil, nil, fmt.Errorf("%s.dressings.%s.squeeze-speed: must be non-negative, got %v", path, name, opt.SqueezeSpeed)
+		}
+		if opt.SqueezeTorque < 0 {
+			return nil, nil, fmt.Errorf("%s.dressings.%s.squeeze-torque: must be non-negative, got %v", path, name, opt.SqueezeTorque)
+		}
+		if opt.SqueezeTimeoutSecs < 0 {
+			return nil, nil, fmt.Errorf("%s.dressings.%s.squeeze-timeout-seconds: must be non-negative, got %v", path, name, opt.SqueezeTimeoutSecs)
+		}
 	}
 	deps := []string{cfg.Arm, cfg.Gripper, framesystem.PublicServiceName.String()}
 	if cfg.ShakeArmService != nil && *cfg.ShakeArmService != "" {
