@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"context"
+	"time"
 	"go.viam.com/rdk/logging"
 )
 
@@ -31,6 +32,7 @@ type StateMachine struct {
 	opCancelFunc func()
 	opDone       chan struct{}
 	logger 		 logging.Logger
+	buildID      string
 }
 
 func NewStateMachine() (*StateMachine){
@@ -56,6 +58,12 @@ func (sm *StateMachine) GetStateMachineStatus() map[string]interface{} {
 		"customer_name": sm.customerName,
 		"error_msg":     sm.errorMsg,
 	}
+}
+
+func (sm *StateMachine) GetBuildID() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.buildID
 }
 
 func (sm *StateMachine) DoStop() (map[string]interface{}, error) {
@@ -104,7 +112,9 @@ func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.C
 	sm.progress = 0
 	sm.customerName = customerName
 	sm.errorMsg = ""
+	sm.buildID = fmt.Sprintf("%s_%s", time.Now().UTC().Format("20060102-150405"), uuid.NewString()[:8])
 	sm.mu.Unlock()
+	sm.logger.Infof("Build ID: %s", sm.buildID)
 	/////
 	return nil, buildCtx, nil
 }
@@ -113,6 +123,7 @@ func (sm *StateMachine) EndBuildSalad() {
 	sm.mu.Lock()
 	sm.opCancelFunc = nil
 	sm.customerName = ""
+	sm.buildID = ""
 	close(sm.opDone)
 	sm.opDone = nil
 	sm.mu.Unlock()

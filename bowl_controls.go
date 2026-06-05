@@ -564,7 +564,7 @@ func extractTarget(cmd map[string]interface{}, op string) (float64, error) {
 	}
 }
 
-func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string, joint interface{}, axis interface{}, target float64) (map[string]interface{}, error) {
+func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string, joint, axis interface{}, target float64) (map[string]interface{}, error) {
 	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
 	}

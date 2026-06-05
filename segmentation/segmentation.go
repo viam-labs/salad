@@ -198,12 +198,12 @@ type Options struct {
 
 func DefaultOptions() Options {
 	return Options{
-		CellSizeMM:         5.0,
-		DividerZPercentile: 0.80,
-		DividerGradientMM:  10.0,
-		DividerDilation:    0,
-		MinZoneAreaMM2:     5000.0,
-		MaxZoneAreaMM2:     100000.0,
+		CellSizeMM:          5.0,
+		DividerZPercentile:  0.80,
+		DividerGradientMM:   10.0,
+		DividerDilation:     0,
+		MinZoneAreaMM2:      5000.0,
+		MaxZoneAreaMM2:      100000.0,
 		FloorBandMM:         30.0,
 		FloorMaxTiltDeg:     25.0,
 		FloorMinPoints:      30,
@@ -237,11 +237,11 @@ func SegmentFridgeBins(meshPath string, opts Options) (*ZonesResult, SegmentStat
 }
 
 func SaveZones(result *ZonesResult, path string) error {
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // CLI/internal caller-controlled path
 	if err != nil {
 		return fmt.Errorf("creating %q: %w", path, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort close after successful write
 
 	bw := bufio.NewWriterSize(f, 1<<20)
 	enc := json.NewEncoder(bw)
@@ -253,11 +253,11 @@ func SaveZones(result *ZonesResult, path string) error {
 
 // LoadZones reads a [ZonesResult] from JSON written by [SaveZones].
 func LoadZones(path string) (*ZonesResult, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // CLI/internal caller-controlled path
 	if err != nil {
 		return nil, fmt.Errorf("opening %q: %w", path, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort close after successful read
 	dec := json.NewDecoder(f)
 	var z ZonesResult
 	if err := dec.Decode(&z); err != nil {
@@ -792,7 +792,7 @@ func ransacPlane(points []r3.Vector, opts Options) (Plane, bool) {
 	}
 	cosTilt := math.Cos(opts.FloorMaxTiltDeg * math.Pi / 180)
 
-	rng := rand.New(rand.NewPCG(1, 2))
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // deterministic seed for RANSAC; not security
 
 	var bestPlane Plane
 	bestInliers := -1

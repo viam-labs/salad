@@ -96,7 +96,7 @@ func Apply(pc pointcloud.PointCloud, opts Options, log Logger) (pointcloud.Point
 	out := pointcloud.NewBasicPointCloud(pc.Size())
 	pc.Iterate(0, 0, func(p r3.Vector, d pointcloud.Data) bool {
 		if keep[toKey(p)] {
-			_ = out.Set(p, d)
+			_ = out.Set(p, d) //nolint:errcheck // Set on freshly-allocated BasicPointCloud cannot fail
 		}
 		return true
 	})

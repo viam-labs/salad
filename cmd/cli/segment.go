@@ -14,16 +14,16 @@ import (
 )
 
 type SegmentFlags struct {
-	MeshPath           string
-	OutputDir          string
-	Viz                bool
-	VizURL             string
-	CellSizeMM         float64
-	DividerZPercentile float64
-	DividerGradientMM  float64
-	DividerDilation    int
-	MinZoneAreaMM2     float64
-	MaxZoneAreaMM2     float64
+	MeshPath            string
+	OutputDir           string
+	Viz                 bool
+	VizURL              string
+	CellSizeMM          float64
+	DividerZPercentile  float64
+	DividerGradientMM   float64
+	DividerDilation     int
+	MinZoneAreaMM2      float64
+	MaxZoneAreaMM2      float64
 	FloorBandMM         float64
 	FloorMaxTiltDeg     float64
 	FloorMinPoints      int
@@ -44,12 +44,12 @@ var segmentCmd = &cobra.Command{
 func runSegment(flags SegmentFlags) error {
 	logger := logging.NewLogger("segment")
 	opts := segmentation.Options{
-		CellSizeMM:         flags.CellSizeMM,
-		DividerZPercentile: flags.DividerZPercentile,
-		DividerGradientMM:  flags.DividerGradientMM,
-		DividerDilation:    flags.DividerDilation,
-		MinZoneAreaMM2:     flags.MinZoneAreaMM2,
-		MaxZoneAreaMM2:     flags.MaxZoneAreaMM2,
+		CellSizeMM:          flags.CellSizeMM,
+		DividerZPercentile:  flags.DividerZPercentile,
+		DividerGradientMM:   flags.DividerGradientMM,
+		DividerDilation:     flags.DividerDilation,
+		MinZoneAreaMM2:      flags.MinZoneAreaMM2,
+		MaxZoneAreaMM2:      flags.MaxZoneAreaMM2,
 		FloorBandMM:         flags.FloorBandMM,
 		FloorMaxTiltDeg:     flags.FloorMaxTiltDeg,
 		FloorMinPoints:      flags.FloorMinPoints,
@@ -95,7 +95,7 @@ func runSegment(flags SegmentFlags) error {
 	if outputDir == "" {
 		outputDir = filepath.Join("output", time.Now().Format("20060102-150405"))
 	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create output directory %q: %w", outputDir, err)
 	}
 
