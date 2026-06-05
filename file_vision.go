@@ -89,36 +89,36 @@ func (s *fileVision) Name() resource.Name {
 	return s.name
 }
 
-func (s *fileVision) Status(ctx context.Context) (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (s *fileVision) Status(ctx context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
 }
 
 // DetectionsFromCamera returns a list of detections from the next image from a specified camera using a configured detector.
-func (s *fileVision) DetectionsFromCamera(ctx context.Context, cameraName string, extra map[string]interface{}) ([]objdet.Detection, error) {
+func (s *fileVision) DetectionsFromCamera(ctx context.Context, cameraName string, extra map[string]any) ([]objdet.Detection, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // Detections returns a list of detections from a given image using a configured detector.
-func (s *fileVision) Detections(ctx context.Context, img *camera.NamedImage, extra map[string]interface{}) ([]objdet.Detection, error) {
+func (s *fileVision) Detections(ctx context.Context, img *camera.NamedImage, extra map[string]any) ([]objdet.Detection, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // ClassificationsFromCamera returns a list of classifications from the next image from a specified camera using a configured classifier.
-func (s *fileVision) ClassificationsFromCamera(ctx context.Context, cameraName string, n int, extra map[string]interface{}) (classification.Classifications, error) {
+func (s *fileVision) ClassificationsFromCamera(ctx context.Context, cameraName string, n int, extra map[string]any) (classification.Classifications, error) {
 	var classificationsRetVal classification.Classifications
 
 	return classificationsRetVal, fmt.Errorf("not implemented")
 }
 
 // Classifications returns a list of classifications from a given image using a configured classifier.
-func (s *fileVision) Classifications(ctx context.Context, img *camera.NamedImage, n int, extra map[string]interface{}) (classification.Classifications, error) {
+func (s *fileVision) Classifications(ctx context.Context, img *camera.NamedImage, n int, extra map[string]any) (classification.Classifications, error) {
 	var classificationsRetVal classification.Classifications
 
 	return classificationsRetVal, fmt.Errorf("not implemented")
 }
 
 // GetObjectPointClouds returns a list of 3D point cloud objects and metadata from the latest 3D camera image using a specified segmenter.
-func (s *fileVision) GetObjectPointClouds(ctx context.Context, cameraName string, extra map[string]interface{}) ([]*vis.Object, error) {
+func (s *fileVision) GetObjectPointClouds(ctx context.Context, cameraName string, extra map[string]any) ([]*vis.Object, error) {
 	pts := s.mesh.ToPoints(1)
 	pc := pointcloud.NewBasicPointCloud(len(pts))
 	for _, p := range pts {
@@ -135,19 +135,19 @@ func (s *fileVision) GetObjectPointClouds(ctx context.Context, cameraName string
 }
 
 // properties
-func (s *fileVision) GetProperties(ctx context.Context, extra map[string]interface{}) (*vision.Properties, error) {
+func (s *fileVision) GetProperties(ctx context.Context, extra map[string]any) (*vision.Properties, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // CaptureAllFromCamera returns the next image, detections, classifications, and objects all together, given a camera name. Used for
 // visualization.
-func (s *fileVision) CaptureAllFromCamera(ctx context.Context, cameraName string, captureOptions viscapture.CaptureOptions, extra map[string]interface{}) (viscapture.VisCapture, error) {
+func (s *fileVision) CaptureAllFromCamera(ctx context.Context, cameraName string, captureOptions viscapture.CaptureOptions, extra map[string]any) (viscapture.VisCapture, error) {
 	var visCaptureRetVal viscapture.VisCapture
 
 	return visCaptureRetVal, fmt.Errorf("not implemented")
 }
 
-func (s *fileVision) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *fileVision) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

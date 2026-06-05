@@ -17,7 +17,7 @@ func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabS
 		return nil
 	case GrabStepActionShake:
 		if s.shakeArmService != nil {
-			if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
+			if _, err := s.shakeArmService.DoCommand(ctx, map[string]any{"shake_arm": true}); err != nil {
 				return fmt.Errorf("shake arm: %w", err)
 			}
 			s.logger.Debugf("shook arm")
@@ -44,7 +44,7 @@ func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabS
 		})
 		// shake arm while closing the gripper to loosen food
 		g.Go(func() error {
-			if _, err := s.scoopShakeService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
+			if _, err := s.scoopShakeService.DoCommand(ctx, map[string]any{"shake_arm": true}); err != nil {
 				return fmt.Errorf("shake arm: %w", err)
 			}
 			return nil

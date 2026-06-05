@@ -55,13 +55,13 @@ type grabStepSpec struct {
 }
 
 func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64, buildID string) (*GrabPlan, error) {
-	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
+	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]any{"cfg": true})
 	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
 	if err != nil {
 		return nil, fmt.Errorf("getting left home cfg: %w", err)
 	}
 	get := func(field, key string) float64 {
-		m, _ := homePoseCfg[field].(map[string]interface{})
+		m, _ := homePoseCfg[field].(map[string]any)
 		f, _ := m[key].(float64)
 		return f
 	}

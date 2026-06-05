@@ -165,11 +165,11 @@ func (s *dressingControls) Name() resource.Name {
 	return s.name
 }
 
-func (s *dressingControls) Status(ctx context.Context) (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (s *dressingControls) Status(ctx context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
 }
 
-func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *dressingControls) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	buildID, _ := cmd["build_id"].(string)
 	if v, ok := cmd["pour_dressing"]; ok {
 		name, ok := v.(string)
@@ -237,7 +237,7 @@ func (s *dressingControls) loadWorldState() error {
 	return nil
 }
 
-func (s *dressingControls) doPrePlanDressing(ctx context.Context, name, buildID string) (map[string]interface{}, error) {
+func (s *dressingControls) doPrePlanDressing(ctx context.Context, name, buildID string) (map[string]any, error) {
 	s.logger.Infof("Pre-planning dressing %q", name)
 	plan, err := s.planDressing(ctx, name, buildID)
 	if err != nil {
@@ -247,10 +247,10 @@ func (s *dressingControls) doPrePlanDressing(ctx context.Context, name, buildID 
 	s.cachedPlans[name] = plan
 	s.cachedPlansMu.Unlock()
 	s.logger.Infof("Pre-planning dressing %q complete", name)
-	return map[string]interface{}{"success": true}, nil
+	return map[string]any{"success": true}, nil
 }
 
-func (s *dressingControls) doPourDressing(ctx context.Context, name, buildID string) (map[string]interface{}, error) {
+func (s *dressingControls) doPourDressing(ctx context.Context, name, buildID string) (map[string]any, error) {
 	s.cachedPlansMu.Lock()
 	plan, cached := s.cachedPlans[name]
 	if cached {
@@ -274,10 +274,10 @@ func (s *dressingControls) doPourDressing(ctx context.Context, name, buildID str
 		return nil, err
 	}
 	s.logger.Infof("Successfully completed pour_dressing for %q", name)
-	return map[string]interface{}{"success": true, "message": "Successfully poured dressing"}, nil
+	return map[string]any{"success": true, "message": "Successfully poured dressing"}, nil
 }
 
-func (s *dressingControls) reset(ctx context.Context) (map[string]interface{}, error) {
+func (s *dressingControls) reset(ctx context.Context) (map[string]any, error) {
 	if err := s.loadWorldState(); err != nil {
 		return nil, err
 	}

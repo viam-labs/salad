@@ -115,18 +115,18 @@ func (s *chefsKissControls) Name() resource.Name {
 	return s.name
 }
 
-func (s *chefsKissControls) Status(ctx context.Context) (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (s *chefsKissControls) Status(ctx context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
 }
 
-func (s *chefsKissControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *chefsKissControls) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	if _, ok := cmd["chefs_kiss"]; ok {
 		return s.doChefsKiss(ctx)
 	}
 	return nil, fmt.Errorf("unknown command, expected 'chefs_kiss' field")
 }
 
-func (s *chefsKissControls) doChefsKiss(ctx context.Context) (map[string]interface{}, error) {
+func (s *chefsKissControls) doChefsKiss(ctx context.Context) (map[string]any, error) {
 	s.logger.Infof("Executing chefs kiss")
 
 	if _, err := s.gripper.Grab(ctx, nil); err != nil {
@@ -148,7 +148,7 @@ func (s *chefsKissControls) doChefsKiss(ctx context.Context) (map[string]interfa
 	s.logger.Debugf("Opened gripper")
 
 	if s.armShakerService != nil {
-		_, err := s.armShakerService.DoCommand(ctx, map[string]interface{}{
+		_, err := s.armShakerService.DoCommand(ctx, map[string]any{
 			"shake_arm": true,
 		})
 		if err != nil {
@@ -163,7 +163,7 @@ func (s *chefsKissControls) doChefsKiss(ctx context.Context) (map[string]interfa
 
 	s.logger.Infof("Successfully completed chefs kiss")
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Successfully completed chefs kiss",
 	}, nil

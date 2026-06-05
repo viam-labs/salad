@@ -268,11 +268,11 @@ func (s *bowlControls) Name() resource.Name {
 	return s.name
 }
 
-func (s *bowlControls) Status(ctx context.Context) (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (s *bowlControls) Status(ctx context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
 }
 
-func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	if _, ok := cmd["deliver_bowl"]; ok {
 		return s.doDeliverBowl(ctx)
 	}
@@ -296,13 +296,13 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 		if err := s.moveDownTo(ctx, "bowl"); err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"success": true}, nil
+		return map[string]any{"success": true}, nil
 	}
 	if _, ok := cmd["move_down_to_lid"]; ok {
 		if err := s.moveDownTo(ctx, "lid"); err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"success": true}, nil
+		return map[string]any{"success": true}, nil
 	}
 	if _, ok := cmd["force_move"]; ok {
 		return s.doForceMove(ctx, cmd)
@@ -318,7 +318,7 @@ func (s *bowlControls) DoCommand(ctx context.Context, cmd map[string]interface{}
 
 // doForceMove forwards a call to the configured xarm-force-mover service.
 // Expected cmd fields: "joint" (number), "axis" (string), "target" (number).
-func (s *bowlControls) doForceMove(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *bowlControls) doForceMove(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	if s.xarmForceMover == nil {
 		return nil, fmt.Errorf("xarm-force-mover is not configured")
 	}
@@ -327,7 +327,7 @@ func (s *bowlControls) doForceMove(ctx context.Context, cmd map[string]interface
 			return nil, fmt.Errorf("force_move requires field %q", k)
 		}
 	}
-	args := map[string]interface{}{
+	args := map[string]any{
 		"joint":  cmd["joint"],
 		"axis":   cmd["axis"],
 		"target": cmd["target"],
@@ -370,7 +370,7 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 		}
 
 		// Check load
-		resp, err := s.littleArm.DoCommand(ctx, map[string]interface{}{"load": true})
+		resp, err := s.littleArm.DoCommand(ctx, map[string]any{"load": true})
 		if err != nil {
 			return fmt.Errorf("failed to send load command: %w", err)
 		}
@@ -378,7 +378,7 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 		if !ok {
 			return fmt.Errorf("load command response missing 'load' key")
 		}
-		load, ok := loadRaw.([]interface{})
+		load, ok := loadRaw.([]any)
 		if !ok {
 			return fmt.Errorf("load response is not an array")
 		}
@@ -401,7 +401,7 @@ func (s *bowlControls) moveDownTo(ctx context.Context, name string) error {
 	}
 }
 
-func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{}, error) {
+func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]any, error) {
 	s.logger.Infof("Executing prepare_bowl")
 
 	// open gripper
@@ -452,13 +452,13 @@ func (s *bowlControls) doPrepareBowl(ctx context.Context) (map[string]interface{
 
 	s.logger.Infof("Successfully completed prepare_bowl")
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Successfully prepared bowl",
 	}, nil
 }
 
-func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{}, error) {
+func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]any, error) {
 	s.logger.Infof("Executing deliver_bowl")
 
 	// open gripper
@@ -499,7 +499,7 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 	}
 	s.logger.Debugf("Set right-bowl-delivery switch to position 2")
 
-	if _, err := s.rightGripper.DoCommand(ctx, map[string]interface{}{"set": 400.0}); err != nil {
+	if _, err := s.rightGripper.DoCommand(ctx, map[string]any{"set": 400.0}); err != nil {
 		return nil, fmt.Errorf("failed to open right gripper: %w", err)
 	}
 
@@ -509,13 +509,13 @@ func (s *bowlControls) doDeliverBowl(ctx context.Context) (map[string]interface{
 
 	s.logger.Infof("Successfully completed deliver_bowl")
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Successfully delivered bowl",
 	}, nil
 }
 
-func (s *bowlControls) doGrabLid(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *bowlControls) doGrabLid(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	s.logger.Infof("Executing grab_lid")
 	if s.lilArmGripper == nil {
 		return nil, fmt.Errorf("lil-arm is not configured")
@@ -531,7 +531,7 @@ func (s *bowlControls) doGrabLid(ctx context.Context, cmd map[string]interface{}
 	return s.doLilArmGrab(ctx, pose, "lid", float64(1), "z", target)
 }
 
-func (s *bowlControls) doGrabBowl(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *bowlControls) doGrabBowl(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	s.logger.Infof("Executing grab_bowl")
 	if s.lilArmGripper == nil {
 		return nil, fmt.Errorf("lil-arm is not configured")
@@ -549,7 +549,7 @@ func (s *bowlControls) doGrabBowl(ctx context.Context, cmd map[string]interface{
 
 // extractTarget reads the "target" field from cmd, required for grab_lid/grab_bowl
 // when using the xarm-force-mover for the descent.
-func extractTarget(cmd map[string]interface{}, op string) (float64, error) {
+func extractTarget(cmd map[string]any, op string) (float64, error) {
 	raw, ok := cmd["target"]
 	if !ok {
 		return 0, fmt.Errorf("%s requires 'target' field (number, e.g. {%q: true, \"target\": 50})", op, op)
@@ -564,7 +564,7 @@ func extractTarget(cmd map[string]interface{}, op string) (float64, error) {
 	}
 }
 
-func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string, joint, axis interface{}, target float64) (map[string]interface{}, error) {
+func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitches, name string, joint, axis any, target float64) (map[string]any, error) {
 	if err := s.lilArmGripper.Open(ctx, nil); err != nil {
 		return nil, fmt.Errorf("failed to open lil-arm gripper: %w", err)
 	}
@@ -581,7 +581,7 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 	if s.xarmForceMover == nil {
 		return nil, fmt.Errorf("xarm-force-mover is not configured")
 	}
-	if _, err := s.xarmForceMover.DoCommand(ctx, map[string]interface{}{
+	if _, err := s.xarmForceMover.DoCommand(ctx, map[string]any{
 		"joint":  joint,
 		"axis":   axis,
 		"target": target,
@@ -622,13 +622,13 @@ func (s *bowlControls) doLilArmGrab(ctx context.Context, pose *lilArmPoseSwitche
 
 	s.logger.Infof("Successfully completed grab_%s", name)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Successfully grabbed %s", name),
 	}, nil
 }
 
-func (s *bowlControls) doUseTool(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *bowlControls) doUseTool(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	s.logger.Infof("Executing use_tool")
 	if s.lilArmGripper == nil {
 		return nil, fmt.Errorf("lil-arm is not configured")
@@ -700,7 +700,7 @@ func (s *bowlControls) doUseTool(ctx context.Context, cmd map[string]interface{}
 	}
 
 	s.logger.Infof("Successfully completed use_tool")
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Successfully used tool",
 	}, nil
@@ -710,7 +710,7 @@ func (s *bowlControls) doUseTool(ctx context.Context, cmd map[string]interface{}
 // a single joint and axis across all three force-driven descents. Expected cmd
 // fields: "joint" (number), "axis" (string), "targets" (array of 3 numbers in
 // the order [bowl, lid, tool]).
-func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	s.logger.Infof("Executing grab_and_use_tool")
 
 	joint, ok := cmd["joint"]
@@ -725,7 +725,7 @@ func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]inte
 	if !ok {
 		return nil, fmt.Errorf("grab_and_use_tool requires 'targets' field (array of 3 numbers: [bowl, lid, tool])")
 	}
-	targets, ok := targetsRaw.([]interface{})
+	targets, ok := targetsRaw.([]any)
 	if !ok {
 		return nil, fmt.Errorf("grab_and_use_tool 'targets' must be an array, got %T", targetsRaw)
 	}
@@ -765,7 +765,7 @@ func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]inte
 		return nil, fmt.Errorf("grab_lid failed: %w", err)
 	}
 
-	if _, err := s.doUseTool(ctx, map[string]interface{}{
+	if _, err := s.doUseTool(ctx, map[string]any{
 		"joint":  joint,
 		"axis":   axis,
 		"target": toolTarget,
@@ -774,13 +774,13 @@ func (s *bowlControls) doGrabAndUseTool(ctx context.Context, cmd map[string]inte
 	}
 
 	s.logger.Infof("Successfully completed grab_and_use_tool")
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Successfully grabbed bowl, grabbed lid, and used tool",
 	}, nil
 }
 
-func (s *bowlControls) reset(ctx context.Context, skipLilArm bool) (map[string]interface{}, error) {
+func (s *bowlControls) reset(ctx context.Context, skipLilArm bool) (map[string]any, error) {
 	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set right-home switch to position 2: %w", err)
 	}
@@ -800,7 +800,7 @@ func (s *bowlControls) reset(ctx context.Context, skipLilArm bool) (map[string]i
 	return nil, nil
 }
 
-func (s *bowlControls) doLilArmHome(ctx context.Context) (map[string]interface{}, error) {
+func (s *bowlControls) doLilArmHome(ctx context.Context) (map[string]any, error) {
 	if s.lilArmHome == nil {
 		return nil, fmt.Errorf("lil-arm-home is not configured")
 	}
@@ -808,7 +808,7 @@ func (s *bowlControls) doLilArmHome(ctx context.Context) (map[string]interface{}
 	if err := s.lilArmHome.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set lil-arm home switch to position 2: %w", err)
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Sent lil-arm home",
 	}, nil

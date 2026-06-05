@@ -64,7 +64,7 @@ func NewFileSaver(logger logging.Logger, baseDir string) *FileSaver {
 		cancel:     cancel,
 		g:          new(errgroup.Group),
 	}
-	for i := 0; i < numWorkers; i++ {
+	for range numWorkers {
 		s.g.Go(func() error {
 			for {
 				select {

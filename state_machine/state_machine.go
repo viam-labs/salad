@@ -1,10 +1,11 @@
 package salad
 
 import (
+	"context"
 	"fmt"
 	"sync"
-	"context"
 	"time"
+
 	"github.com/google/uuid"
 	"go.viam.com/rdk/logging"
 )
@@ -32,12 +33,12 @@ type StateMachine struct {
 	errorMsg     string
 	opCancelFunc func()
 	opDone       chan struct{}
-	logger 		 logging.Logger
+	logger       logging.Logger
 	buildID      string
 }
 
-func NewStateMachine() (*StateMachine){
-	sm := &StateMachine {
+func NewStateMachine() *StateMachine {
+	sm := &StateMachine{
 		status: Idle,
 	}
 	return sm
@@ -50,10 +51,10 @@ func (sm *StateMachine) UpdateStateMachineStatus(status Status, progress float64
 	sm.progress = progress
 }
 
-func (sm *StateMachine) GetStateMachineStatus() map[string]interface{} {
+func (sm *StateMachine) GetStateMachineStatus() map[string]any {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return map[string]interface{}{
+	return map[string]any{
 		"status":        sm.status,
 		"progress":      sm.progress,
 		"customer_name": sm.customerName,
@@ -67,14 +68,14 @@ func (sm *StateMachine) GetBuildID() string {
 	return sm.buildID
 }
 
-func (sm *StateMachine) DoStop() (map[string]interface{}, error) {
+func (sm *StateMachine) DoStop() (map[string]any, error) {
 	sm.mu.RLock()
 	cancelFunc := sm.opCancelFunc
 	done := sm.opDone
 	sm.mu.RUnlock()
 
 	if cancelFunc == nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"success": false,
 			"message": "No operation in progress",
 		}, nil
@@ -84,24 +85,23 @@ func (sm *StateMachine) DoStop() (map[string]interface{}, error) {
 	cancelFunc()
 	<-done
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"message": "Operation stopped",
 	}, nil
 }
 
-func (sm *StateMachine) StartBuildSalad(ctx context.Context, cancelCtx context.Context, value interface{}, customerName string) (map[string]interface{}, context.Context, error) {
-	
+func (sm *StateMachine) StartBuildSalad(ctx, cancelCtx context.Context, value any, customerName string) (map[string]any, context.Context, error) {
 	// Verify we're transitioning from a valid state.
-	if (!(sm.status == Idle || sm.status == Complete)) {
+	if !(sm.status == Idle || sm.status == Complete) {
 		return nil, nil, fmt.Errorf("Salad must be in idle or complete state")
 		// TODO check if these two states are right
 	}
-	
+
 	sm.mu.Lock()
 	if sm.opCancelFunc != nil {
 		sm.mu.Unlock()
-		return map[string]interface{}{
+		return map[string]any{
 			"success": false,
 			"message": "An operation is already in progress, use 'stop' to cancel it first",
 		}, nil, nil
@@ -130,18 +130,18 @@ func (sm *StateMachine) EndBuildSalad() {
 	sm.mu.Unlock()
 }
 
-func (sm *StateMachine) BuildSaladFailed(failMsg string) () {
+func (sm *StateMachine) BuildSaladFailed(failMsg string) {
 	sm.mu.Lock()
 	sm.status = "failed"
 	sm.errorMsg = failMsg
 	sm.mu.Unlock()
 }
 
-func (sm *StateMachine) OperationInProgress(cancelCtx context.Context) (map[string]interface{}, context.Context) {
+func (sm *StateMachine) OperationInProgress(cancelCtx context.Context) (map[string]any, context.Context) {
 	sm.mu.Lock()
 	if sm.opCancelFunc != nil {
 		sm.mu.Unlock()
-		return map[string]interface{}{
+		return map[string]any{
 			"success": false,
 			"message": "An operation is already in progress, use 'stop' to cancel it first",
 		}, nil
@@ -164,12 +164,12 @@ func (sm *StateMachine) EndSetupStation() {
 	sm.mu.Unlock()
 }
 
-func (sm *StateMachine) SetupStationError(err error) (map[string]interface{}) {
+func (sm *StateMachine) SetupStationError(err error) map[string]any {
 	sm.mu.Lock()
 	sm.status = "failed"
 	sm.errorMsg = err.Error()
 	sm.mu.Unlock()
-	return map[string]interface{}{
+	return map[string]any{
 		"success": false,
 		"message": err.Error(),
 	}

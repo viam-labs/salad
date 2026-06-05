@@ -315,11 +315,11 @@ func (s *grabberControls) Name() resource.Name {
 	return s.name
 }
 
-func (s *grabberControls) Status(ctx context.Context) (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (s *grabberControls) Status(ctx context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
 }
 
-func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	if _, ok := cmd["get_from_bin"]; ok {
 		return s.doGetFromBin(ctx, cmd)
 	}
@@ -525,7 +525,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	return stats.MeanSignedDistanceMM, nil
 }
 
-func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	if err := s.loadAssets(); err != nil {
 		return nil, err
 	}
@@ -585,7 +585,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}
 	s.logger.Infof("Successfully completed get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":         true,
 		"bin":             bin.name,
 		"depth-offset-mm": depthOffsetMM,
@@ -593,7 +593,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	}, nil
 }
 
-func (s *grabberControls) reset(ctx context.Context) (map[string]interface{}, error) {
+func (s *grabberControls) reset(ctx context.Context) (map[string]any, error) {
 	if err := s.leftHome.SetPosition(ctx, 2, nil); err != nil {
 		return nil, fmt.Errorf("failed to set left-home switch to position 2: %w", err)
 	}

@@ -101,36 +101,36 @@ func (s *saladPassthroughToCamera) Name() resource.Name {
 	return s.name
 }
 
-func (s *saladPassthroughToCamera) Status(ctx context.Context) (map[string]interface{}, error) {
-	return map[string]interface{}{}, nil
+func (s *saladPassthroughToCamera) Status(ctx context.Context) (map[string]any, error) {
+	return map[string]any{}, nil
 }
 
 // DetectionsFromCamera returns a list of detections from the next image from a specified camera using a configured detector.
-func (s *saladPassthroughToCamera) DetectionsFromCamera(ctx context.Context, cameraName string, extra map[string]interface{}) ([]objdet.Detection, error) {
+func (s *saladPassthroughToCamera) DetectionsFromCamera(ctx context.Context, cameraName string, extra map[string]any) ([]objdet.Detection, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // Detections returns a list of detections from a given image using a configured detector.
-func (s *saladPassthroughToCamera) Detections(ctx context.Context, img *camera.NamedImage, extra map[string]interface{}) ([]objdet.Detection, error) {
+func (s *saladPassthroughToCamera) Detections(ctx context.Context, img *camera.NamedImage, extra map[string]any) ([]objdet.Detection, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // ClassificationsFromCamera returns a list of classifications from the next image from a specified camera using a configured classifier.
-func (s *saladPassthroughToCamera) ClassificationsFromCamera(ctx context.Context, cameraName string, n int, extra map[string]interface{}) (classification.Classifications, error) {
+func (s *saladPassthroughToCamera) ClassificationsFromCamera(ctx context.Context, cameraName string, n int, extra map[string]any) (classification.Classifications, error) {
 	var classificationsRetVal classification.Classifications
 
 	return classificationsRetVal, fmt.Errorf("not implemented")
 }
 
 // Classifications returns a list of classifications from a given image using a configured classifier.
-func (s *saladPassthroughToCamera) Classifications(ctx context.Context, img *camera.NamedImage, n int, extra map[string]interface{}) (classification.Classifications, error) {
+func (s *saladPassthroughToCamera) Classifications(ctx context.Context, img *camera.NamedImage, n int, extra map[string]any) (classification.Classifications, error) {
 	var classificationsRetVal classification.Classifications
 
 	return classificationsRetVal, fmt.Errorf("not implemented")
 }
 
 // GetObjectPointClouds returns a list of 3D point cloud objects and metadata from the latest 3D camera image using a specified segmenter.
-func (s *saladPassthroughToCamera) GetObjectPointClouds(ctx context.Context, cameraName string, extra map[string]interface{}) ([]*vis.Object, error) {
+func (s *saladPassthroughToCamera) GetObjectPointClouds(ctx context.Context, cameraName string, extra map[string]any) ([]*vis.Object, error) {
 	pc, err := s.cam.NextPointCloud(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -141,19 +141,19 @@ func (s *saladPassthroughToCamera) GetObjectPointClouds(ctx context.Context, cam
 }
 
 // properties
-func (s *saladPassthroughToCamera) GetProperties(ctx context.Context, extra map[string]interface{}) (*vision.Properties, error) {
+func (s *saladPassthroughToCamera) GetProperties(ctx context.Context, extra map[string]any) (*vision.Properties, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
 // CaptureAllFromCamera returns the next image, detections, classifications, and objects all together, given a camera name. Used for
 // visualization.
-func (s *saladPassthroughToCamera) CaptureAllFromCamera(ctx context.Context, cameraName string, captureOptions viscapture.CaptureOptions, extra map[string]interface{}) (viscapture.VisCapture, error) {
+func (s *saladPassthroughToCamera) CaptureAllFromCamera(ctx context.Context, cameraName string, captureOptions viscapture.CaptureOptions, extra map[string]any) (viscapture.VisCapture, error) {
 	var visCaptureRetVal viscapture.VisCapture
 
 	return visCaptureRetVal, fmt.Errorf("not implemented")
 }
 
-func (s *saladPassthroughToCamera) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
+func (s *saladPassthroughToCamera) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

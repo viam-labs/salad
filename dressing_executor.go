@@ -21,10 +21,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			armInputs[i] = fsInputs[s.cfg.Arm]
 		}
 
-		revolutions := step.revolutions
-		if revolutions < 1 {
-			revolutions = 1
-		}
+		revolutions := max(step.revolutions, 1)
 		for rev := range revolutions {
 			if err := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil); err != nil {
 				s.saveFailedExecutionJointPosition(plan.buildID)
@@ -39,8 +36,8 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		// Open with grab_with_torque (not gripper.Open) because once we've grabbed with
 		// torque, we need to apply some torque to actively push the jaws open.
 		case GrabStepActionOpen:
-			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
-				"grab_with_torque": map[string]interface{}{
+			if _, err := s.gripper.DoCommand(ctx, map[string]any{
+				"grab_with_torque": map[string]any{
 					"position": 850.0,
 					"speed":    3000.0,
 					"torque":   100,
@@ -50,8 +47,8 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			}
 			s.logger.Debugf("opened gripper after %q", step.name)
 		case GrabStepActionClose:
-			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
-				"grab_with_torque": map[string]interface{}{
+			if _, err := s.gripper.DoCommand(ctx, map[string]any{
+				"grab_with_torque": map[string]any{
 					"position": 20.0,
 					"speed":    3000.0,
 					"torque":   0,
@@ -64,8 +61,8 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 
 		if step.postSqueeze {
 			for _, pos := range []float64{10.0, 5.0, 2.0} {
-				if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
-					"grab_with_torque": map[string]interface{}{
+				if _, err := s.gripper.DoCommand(ctx, map[string]any{
+					"grab_with_torque": map[string]any{
 						"position": pos,
 						"speed":    3000.0,
 						"torque":   100.0,
@@ -76,7 +73,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 				s.logger.Debugf("squeezed to position %v after %q", pos, step.name)
 				time.Sleep(700 * time.Millisecond)
 			}
-			resp, err := s.gripper.DoCommand(ctx, map[string]interface{}{"get": true})
+			resp, err := s.gripper.DoCommand(ctx, map[string]any{"get": true})
 			if err != nil {
 				return fmt.Errorf("step %q: get gripper position: %w", step.name, err)
 			}
@@ -89,8 +86,8 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 				return fmt.Errorf("step %q: gripper get \"pos\" not a number: %T", step.name, rawPos)
 			}
 			releasePos := curPos + 20
-			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
-				"grab_with_torque": map[string]interface{}{
+			if _, err := s.gripper.DoCommand(ctx, map[string]any{
+				"grab_with_torque": map[string]any{
 					"position": releasePos,
 					"speed":    3000.0,
 					"torque":   0,
@@ -102,7 +99,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		}
 
 		if step.postShake && s.shakeArmService != nil {
-			if _, err := s.shakeArmService.DoCommand(ctx, map[string]interface{}{"shake_arm": true}); err != nil {
+			if _, err := s.shakeArmService.DoCommand(ctx, map[string]any{"shake_arm": true}); err != nil {
 				return fmt.Errorf("step %q: shake arm: %w", step.name, err)
 			}
 			s.logger.Debugf("shook arm after %q", step.name)
