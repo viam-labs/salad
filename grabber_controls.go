@@ -341,7 +341,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return map[string]any{"ingredients": ingredients}, nil
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'bowl_hover', 'reset', or 'get_ingredients' field")
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', or 'get_ingredients' field")
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
