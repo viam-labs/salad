@@ -5,6 +5,7 @@ import (
 	"sync"
 	"context"
 	"time"
+	"github.com/google/uuid"
 	"go.viam.com/rdk/logging"
 )
 
