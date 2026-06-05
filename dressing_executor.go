@@ -9,6 +9,8 @@ import (
 	"salad/lib/fileio"
 )
 
+var defaultSqueezePositions = []float64{10.0, 5.0, 2.0}
+
 func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
 	if err := s.gripper.Open(ctx, nil); err != nil {
 		return fmt.Errorf("open gripper: %w", err)
@@ -77,13 +79,30 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		}
 
 		if step.postSqueeze {
-			for _, pos := range []float64{10.0, 5.0, 2.0} {
+			squeezePositions := s.cfg.SqueezePositions
+			if len(squeezePositions) == 0 {
+				squeezePositions = defaultSqueezePositions
+			}
+			squeezeSpeed := s.cfg.SqueezeSpeed
+			if squeezeSpeed == 0 {
+				squeezeSpeed = 3000.0
+			}
+			squeezeTorque := s.cfg.SqueezeTorque
+			if squeezeTorque == 0 {
+				squeezeTorque = 100.0
+			}
+			squeezeTimeout := s.cfg.SqueezeTimeoutSecs
+			if squeezeTimeout == 0 {
+				squeezeTimeout = 2.0
+			}
+
+			for _, pos := range squeezePositions {
 				if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 					"grab_with_torque": map[string]interface{}{
 						"position":        pos,
-						"speed":           3000.0,
-						"torque":          100.0,
-						"timeout_seconds": 2.0,
+						"speed":           squeezeSpeed,
+						"torque":          squeezeTorque,
+						"timeout_seconds": squeezeTimeout,
 					},
 				}); err != nil {
 					return fmt.Errorf("step %q: squeeze to %v: %w", step.name, pos, err)
