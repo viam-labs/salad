@@ -10,6 +10,8 @@ import (
 	"salad/lib/fileio"
 )
 
+var defaultSqueezePositions = []float64{10.0, 5.0, 2.0}
+
 func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
 	opt, ok := s.cfg.Dressings[plan.dressingName]
 	if !ok {
@@ -37,7 +39,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 				squeezeStarted = true
 				squeezeErrCh := make(chan error, 1)
 				go func() {
-					squeezeErrCh <- s.runPostSqueeze(ctx, step.name)
+					squeezeErrCh <- s.runPostSqueeze(ctx, step.name, opt)
 				}()
 
 				moveErr := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil)
@@ -101,7 +103,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		}
 
 		if step.postSqueeze && !squeezeDuringCircularMove {
-			if err := s.runPostSqueeze(ctx, step.name); err != nil {
+			if err := s.runPostSqueeze(ctx, step.name, opt); err != nil {
 				return err
 			}
 		}
@@ -116,20 +118,20 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 	return nil
 }
 
-func (s *dressingControls) runPostSqueeze(ctx context.Context, stepName string) error {
-	squeezePositions := s.cfg.SqueezePositions
+func (s *dressingControls) runPostSqueeze(ctx context.Context, stepName string, opt DressingOptionConfig) error {
+	squeezePositions := opt.SqueezePositions
 	if len(squeezePositions) == 0 {
 		squeezePositions = defaultSqueezePositions
 	}
-	squeezeSpeed := s.cfg.SqueezeSpeed
+	squeezeSpeed := opt.SqueezeSpeed
 	if squeezeSpeed == 0 {
 		squeezeSpeed = 3000.0
 	}
-	squeezeTorque := s.cfg.SqueezeTorque
+	squeezeTorque := opt.SqueezeTorque
 	if squeezeTorque == 0 {
 		squeezeTorque = 100.0
 	}
-	squeezeTimeout := s.cfg.SqueezeTimeoutSecs
+	squeezeTimeout := opt.SqueezeTimeoutSecs
 	if squeezeTimeout == 0 {
 		squeezeTimeout = 2.0
 	}
