@@ -30,9 +30,17 @@ var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
 
 const defaultBowlHoverHeightMM = 150.0
 
+// defaultClosedGripperToArmBaseHeightMM is the distance (mm) along the bin plane
+// normal from the closed gripper tip to the arm base when computing grab poses.
+const defaultClosedGripperToArmBaseHeightMM = 330.0
+
 // defaultServingDepthMM is how far below the detected food surface the gripper
 // descends to scoop a serving when a bin does not specify a `serving-depth-mm`.
 const defaultServingDepthMM = 30.0
+
+// defaultMinFoodLevelMM is the minimum detected food surface height (mm) along
+// the zone plane normal required before a grab is attempted.
+const defaultMinFoodLevelMM = 35.0
 
 func init() {
 	resource.RegisterService(genericservice.API, GrabberControls,
@@ -75,20 +83,28 @@ type GrabberControlsConfig struct {
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	GrabHeightMM                      float64                               `json:"grab-height-mm"`
-	DroppingPose                      *BowlDropPose                         `json:"dropping-pose"`
-	BowlHoverHeightMM                 float64                               `json:"bowl-hover-height-mm,omitempty"`
-	Arm                               string                                `json:"arm"`
-	Gripper                           string                                `json:"gripper"`
-	MotionService                     string                                `json:"motion-service"`
-	LeftHome                          string                                `json:"left-home"`
-	ShakeArmService                   *string                               `json:"shake-arm-service,omitempty"`
-	ScoopShakeService                 *string                               `json:"scoop-shake-service,omitempty"`
-	AssetsDir                         string                                `json:"assets-dir"`
-	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
-	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
-	GrabLineToleranceMM               float64                               `json:"grab-line-tolerance-mm,omitempty"`
-	GrabOrientationToleranceDegs      float64                               `json:"grab-orientation-tolerance-degs,omitempty"`
-	BinImagingCam                     string                                `json:"bin-imaging-cam"`
+	// ClosedGripperToArmBaseHeightMM is the distance (mm) along the bin plane
+	// normal from the closed gripper tip to the arm base when computing grab
+	// poses. Defaults to defaultClosedGripperToArmBaseHeightMM when zero/unset.
+	ClosedGripperToArmBaseHeightMM float64       `json:"closed-gripper-to-arm-base-height-mm,omitempty"`
+	DroppingPose                   *BowlDropPose `json:"dropping-pose"`
+	BowlHoverHeightMM              float64       `json:"bowl-hover-height-mm,omitempty"`
+	Arm                            string        `json:"arm"`
+	Gripper                        string        `json:"gripper"`
+	MotionService                  string        `json:"motion-service"`
+	LeftHome                       string        `json:"left-home"`
+	ShakeArmService                *string       `json:"shake-arm-service,omitempty"`
+	ScoopShakeService              *string       `json:"scoop-shake-service,omitempty"`
+	AssetsDir                      string        `json:"assets-dir"`
+	XOffsetMM                      float64       `json:"x-offset-mm,omitempty"`
+	YOffsetMM                      float64       `json:"y-offset-mm,omitempty"`
+	GrabLineToleranceMM            float64       `json:"grab-line-tolerance-mm,omitempty"`
+	GrabOrientationToleranceDegs   float64       `json:"grab-orientation-tolerance-degs,omitempty"`
+	// MinFoodLevelMM is the minimum detected food surface height (mm) along the
+	// zone plane normal required before a grab is attempted. Defaults to
+	// defaultMinFoodLevelMM when zero/unset.
+	MinFoodLevelMM float64 `json:"min-food-level-mm,omitempty"`
+	BinImagingCam  string  `json:"bin-imaging-cam"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
@@ -129,6 +145,10 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 
 	if cfg.BinImagingCam == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bin-imaging-cam")
+	}
+
+	if cfg.MinFoodLevelMM < 0 {
+		return nil, nil, fmt.Errorf("%s: 'min-food-level-mm' must be non-negative, got %v", path, cfg.MinFoodLevelMM)
 	}
 
 	if cfg.LeftHome == "" {
@@ -436,13 +456,19 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, 
 		Y: zonePlane.Normal[1],
 		Z: zonePlane.Normal[2],
 	}
-	if foodLevelMM < 35.0 {
-		return nil, fmt.Errorf("food level is too low: %.2f mm", foodLevelMM)
+	minFoodLevelMM := s.cfg.MinFoodLevelMM
+	if minFoodLevelMM == 0 {
+		minFoodLevelMM = defaultMinFoodLevelMM
+	}
+	if foodLevelMM < minFoodLevelMM {
+		return nil, fmt.Errorf("food level is too low: %.2f mm (minimum %.2f mm)", foodLevelMM, minFoodLevelMM)
 	}
 	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
 
-	// hardcoding for now but want to detect this at some point
-	closedGripperToArmBaseHeightMM := 330.0
+	closedGripperToArmBaseHeightMM := s.cfg.ClosedGripperToArmBaseHeightMM
+	if closedGripperToArmBaseHeightMM == 0 {
+		closedGripperToArmBaseHeightMM = defaultClosedGripperToArmBaseHeightMM
+	}
 
 	// food grab position is `servingDepthMM` beneath the detected food surface,
 	// measured along the bin's plane normal.

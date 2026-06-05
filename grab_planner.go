@@ -115,7 +115,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	specs = append(specs,
 		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose, constraints: s.clearanceLinearConstraints()},
 		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
-		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
+		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose, postAction: GrabStepActionShake},
 		grabStepSpec{name: "return_home", goal: homePose},
 	)
 

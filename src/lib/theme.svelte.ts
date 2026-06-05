@@ -7,23 +7,27 @@ import {
   parseThemeId,
 } from "./theme";
 
-export let currentTheme = $state<ThemeId>("salad");
+const themeState = $state<{ current: ThemeId }>({ current: "salad" });
+
+export function getCurrentTheme(): ThemeId {
+  return themeState.current;
+}
 
 export function setTheme(themeId: ThemeId): void {
-  currentTheme = themeId;
+  themeState.current = themeId;
   applyThemeToDOM(themeId);
 }
 
 export function getCopy() {
-  return copy[currentTheme];
+  return copy[themeState.current];
 }
 
 export function getCategoryLabel(category: string): string {
-  return getCategoryLabelForTheme(category, currentTheme);
+  return getCategoryLabelForTheme(category, themeState.current);
 }
 
 export function getEmoji(name: string): string {
-  return getEmojiForTheme(name, currentTheme);
+  return getEmojiForTheme(name, themeState.current);
 }
 
 export function setThemeFromMachine(value: string): void {
