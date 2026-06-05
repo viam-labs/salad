@@ -32,7 +32,7 @@ func ExecMeshifier(ctx context.Context, pcdPath, meshPath string, kdTreeKNN, ori
 		return fmt.Errorf("meshifier dependencies missing: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "python3", scriptPath,
+	cmd := exec.CommandContext(ctx, "python3", scriptPath, //nolint:gosec // bundled script + config-controlled paths
 		pcdPath,
 		meshPath,
 		strconv.Itoa(kdTreeKNN),
@@ -66,18 +66,18 @@ func ensureMeshifierDeps(scriptPath string) (string, error) {
 		return "", fmt.Errorf("meshifier requirements.txt not found at %q", requirementsPath)
 	}
 
-	if err := os.MkdirAll(depsDir, 0o755); err != nil {
+	if err := os.MkdirAll(depsDir, 0o750); err != nil {
 		return "", fmt.Errorf("failed to create meshifier deps dir: %w", err)
 	}
 
-	cmd := exec.Command("pip3", "install", "--target", depsDir, "-r", requirementsPath)
+	cmd := exec.Command("pip3", "install", "--target", depsDir, "-r", requirementsPath) //nolint:gosec // bundled requirements.txt under our control
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("failed to install meshifier Python dependencies: %w", err)
 	}
 
-	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+	if err := os.WriteFile(sentinel, nil, 0o600); err != nil {
 		return "", fmt.Errorf("failed to write meshifier deps sentinel: %w", err)
 	}
 

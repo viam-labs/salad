@@ -137,7 +137,7 @@ func init() {
 	filterCmd.Flags().IntVar(&filterFlags.MinComponentVoxels, "min-component-voxels", filterDefaults.MinComponentVoxels, "drop 26-connected voxel components smaller than this; 0 disables this pass")
 	filterCmd.Flags().BoolVar(&filterFlags.Viz, "viz", false, "display input, kept, and removed point clouds in the motion-tools visualizer")
 	filterCmd.Flags().StringVar(&filterFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
-	_ = filterCmd.MarkFlagRequired("input")
+	mustMarkFlagRequired(filterCmd, "input")
 
 	meshifyCmd.Flags().StringVar(&meshifyFlags.InputPath, "input", "", "input PCD file (required)")
 	meshifyCmd.Flags().StringVar(&meshifyFlags.OutputPath, "output", "", "output PLY file (default: output/<timestamp>/mesh.ply)")
@@ -147,7 +147,7 @@ func init() {
 	meshifyCmd.Flags().IntVar(&meshifyFlags.TargetTriangles, "target-triangles", 0, "decimate output to this many triangles via quadric error metrics; 0 disables")
 	meshifyCmd.Flags().BoolVar(&meshifyFlags.Viz, "viz", false, "display the output mesh in the motion-tools visualizer")
 	meshifyCmd.Flags().StringVar(&meshifyFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
-	_ = meshifyCmd.MarkFlagRequired("input")
+	mustMarkFlagRequired(meshifyCmd, "input")
 
 	cropCmd.Flags().StringVar(&cropFlags.InputPath, "input", "", "input PCD file (required)")
 	cropCmd.Flags().StringVar(&cropFlags.OutputPath, "output", "", "output PCD file (default: output/<timestamp>/cropped.pcd)")
@@ -159,7 +159,7 @@ func init() {
 	cropCmd.Flags().Float64Var(&cropFlags.MaxZ, "max-z", defaultCropMaxZ, "maximum Z to keep (mm)")
 	cropCmd.Flags().BoolVar(&cropFlags.Viz, "viz", false, "display the cropped point cloud in the motion-tools visualizer")
 	cropCmd.Flags().StringVar(&cropFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
-	_ = cropCmd.MarkFlagRequired("input")
+	mustMarkFlagRequired(cropCmd, "input")
 
 	defaults := segmentation.DefaultOptions()
 	segmentCmd.Flags().StringVar(&segmentFlags.MeshPath, "mesh", "mesh.ply", "path to the fridge PLY mesh file")
@@ -188,11 +188,11 @@ func init() {
 	planeFitCmd.Flags().StringVar(&planeFitFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	planeFitCmd.MarkFlagsMutuallyExclusive("camera", "pcd")
 	planeFitCmd.MarkFlagsOneRequired("camera", "pcd")
-	_ = planeFitCmd.MarkFlagRequired("zones")
+	mustMarkFlagRequired(planeFitCmd, "zones")
 
 	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.File, "file", "", "path to a saved plan_request.json (required)")
 	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
-	_ = renderPlanRequestCmd.MarkFlagRequired("file")
+	mustMarkFlagRequired(renderPlanRequestCmd, "file")
 
 	rootCmd.AddCommand(displayCmd)
 	rootCmd.AddCommand(filterCmd)
@@ -201,6 +201,12 @@ func init() {
 	rootCmd.AddCommand(segmentCmd)
 	rootCmd.AddCommand(planeFitCmd)
 	rootCmd.AddCommand(renderPlanRequestCmd)
+}
+
+func mustMarkFlagRequired(cmd *cobra.Command, name string) {
+	if err := cmd.MarkFlagRequired(name); err != nil {
+		panic(fmt.Sprintf("MarkFlagRequired(%q) on %q: %v", name, cmd.Use, err))
+	}
 }
 
 func main() {

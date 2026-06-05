@@ -341,7 +341,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return map[string]any{"ingredients": ingredients}, nil
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'reset' field")
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', or 'get_ingredients' field")
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
@@ -423,7 +423,7 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(ctx context.Context, zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
+func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
 	zonePlane := zone.Plane
 	zoneCenterVec := r3.Vector{
 		X: zonePlane.Point[0],
@@ -487,7 +487,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	if err != nil {
 		s.logger.Warnf("zone %d: bin-imaging-cam NextPointCloud failed after %.2fs: %v",
 			zone.ID, time.Since(start).Seconds(), err)
-		return 0, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %v", time.Since(start).Seconds(), err)
+		return 0, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %w", time.Since(start).Seconds(), err)
 	}
 
 	camName := s.binImagingCam.Name().ShortName()
@@ -495,7 +495,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	if err != nil {
 		s.logger.Warnf("zone %d: failed to transform bin-imaging-cam point cloud from %q to world frame: %v",
 			zone.ID, camName, err)
-		return 0, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %v", camName, err)
+		return 0, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %w", camName, err)
 	}
 
 	stats, _ := segmentation.ZonePlaneFitStats(pc, zone, s.logger)
@@ -504,7 +504,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY,
 			stats.PointsInsideX, stats.PointsInsideY)
 		return 0, fmt.Errorf("0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
-			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY, stats.PointsInsideX, stats.PointsInsideY)
+			stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY, stats.PointsInsideX, stats.PointsInsideY)
 	}
 	pct := 0.0
 	if stats.PointsTotal > 0 {
@@ -519,10 +519,13 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		zone.Plane.TiltDeg(),
 		time.Since(start).Seconds(),
 	)
-	if stats.MeanSignedDistanceMM < 0 {
-		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
+	planePoint := r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]}
+	heightAtPoint := stats.HeightMap.MedianSignedDistanceAt(planePoint)
+	if heightAtPoint == nil || *heightAtPoint < 0 {
+		s.logger.Errorf("distance to plane is wrong: %d mm, pointsInBucket: %d, pointsInBounds: %d, planePoint: %v", heightAtPoint, stats.HeightMap.PointCountAt(planePoint), stats.PointsInBounds, planePoint)
+		return 0, fmt.Errorf("distance to plane is wrong: %d mm", heightAtPoint)
 	}
-	return stats.MeanSignedDistanceMM, nil
+	return *heightAtPoint, nil
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {

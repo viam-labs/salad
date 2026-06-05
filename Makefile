@@ -15,6 +15,8 @@ node_modules: package.json
 dist/index.html: node_modules src/*
 	npm run build
 
+build: $(MODULE_BINARY)
+
 $(MODULE_BINARY): Makefile go.mod *.go cmd/module/*.go dist/index.html
 	GOOS=$(VIAM_BUILD_OS) GOARCH=$(VIAM_BUILD_ARCH) $(GO_BUILD_ENV) go build $(GO_BUILD_FLAGS) -o $(MODULE_BINARY) cmd/module/main.go
 
@@ -62,15 +64,23 @@ module: test module.tar.gz
 all: test module.tar.gz
 
 setup:
+	bash ./first_run.sh
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
 
-.PHONY: lint lint-fix check-lint va-update va-upload
+.PHONY: build lint lint-fix check-lint va-update va-upload
 
 va-update: meta.json
 	viam module update --module=meta.json
 
-VA_VERSION ?= 0.0.16
+# Viam Application bundle, per https://docs.viam.com/build-apps/hosting/deploy/.
+# Named viam-app.tar.gz to avoid colliding with the per-platform module.tar.gz.
+viam-app.tar.gz: meta.json dist/index.html
+	tar -czvf $@ meta.json dist/
 
-va-upload:
-	viam module upload --version=${VA_VERSION} --platform=any --public-namespace=ncs .
+va-upload: viam-app.tar.gz
+	@test -n "$(VERSION)" || (echo "VERSION required, e.g. make va-upload VERSION=0.0.108"; exit 1)
+	# --force: the CLI validates the module entrypoint (bin/salad) is in the
+	# archive, but the platform=any upload is the application bundle, not the
+	# module binary. Likely a Viam CLI bug for hybrid modules.
+	viam module upload --force --upload viam-app.tar.gz --platform any --version $(VERSION)
