@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getCopy } from "../lib/theme";
+  import { getCopy } from "../lib/theme.svelte";
 
   interface Props {
     customerName: string;
@@ -9,7 +9,7 @@
 
   let { customerName, onNewOrder }: Props = $props();
 
-  const text = getCopy();
+  let text = $derived(getCopy());
 
   let secondsLeft = $state(10);
 

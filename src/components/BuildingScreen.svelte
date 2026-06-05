@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { buildSalad, getStatus, stopBuild, getCameraStream } from "../lib/robot";
-  import { getCopy } from "../lib/theme";
+  import { getCopy } from "../lib/theme.svelte";
 
   interface Props {
     order: Record<string, number>;
@@ -13,7 +13,7 @@
 
   let { order, customerName, onComplete, onStopped, onFailed }: Props = $props();
 
-  const text = getCopy();
+  let text = $derived(getCopy());
 
   let status = $state("Starting\u2026");
   let progress = $state(0);

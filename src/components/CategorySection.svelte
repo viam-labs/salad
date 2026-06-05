@@ -1,6 +1,6 @@
 <script lang="ts">
   import { portionLimits } from "../lib/constants";
-  import { getCategoryLabel } from "../lib/theme";
+  import { getCategoryLabel } from "../lib/theme.svelte";
   import type { Ingredient } from "../lib/types";
   import IngredientTile from "./IngredientTile.svelte";
 

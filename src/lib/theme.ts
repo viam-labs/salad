@@ -2,15 +2,13 @@ export type ThemeId = "salad" | "icecream";
 
 const ICE_CREAM_ALIASES = new Set(["icecream", "ice-cream", "ice_cream"]);
 
-export function parseTheme(search = window.location.search): ThemeId {
-  const value = new URLSearchParams(search).get("theme")?.toLowerCase();
-  if (value && ICE_CREAM_ALIASES.has(value)) return "icecream";
+export function parseThemeId(value: string): ThemeId {
+  const normalized = value.trim().toLowerCase();
+  if (ICE_CREAM_ALIASES.has(normalized)) return "icecream";
   return "salad";
 }
 
-export const theme: ThemeId = parseTheme();
-
-export function applyTheme(themeId: ThemeId = theme): void {
+export function applyThemeToDOM(themeId: ThemeId): void {
   document.documentElement.dataset.theme = themeId;
 }
 
@@ -66,38 +64,38 @@ export const iceCreamEmojiMap: Record<string, string> = {
   "butter pecan": "\u{1F95C}",
   pistachio: "\u{1F95C}",
   "rocky road": "\u{1F36B}",
-  "coffee": "\u{2615}",
+  coffee: "\u{2615}",
   mocha: "\u{2615}",
-  "neapolitan": "\u{1F368}",
+  neapolitan: "\u{1F368}",
   "birthday cake": "\u{1F382}",
-  "banana": "\u{1F34C}",
-  "mango": "\u{1F96D}",
-  "raspberry": "\u{1F352}",
-  "blueberry": "\u{1FAD0}",
-  "cherry": "\u{1F352}",
-  "lemon": "\u{1F34B}",
-  "coconut": "\u{1F965}",
-  "maple": "\u{1F9C8}",
-  "honey": "\u{1F36F}",
+  banana: "\u{1F34C}",
+  mango: "\u{1F96D}",
+  raspberry: "\u{1F352}",
+  blueberry: "\u{1FAD0}",
+  cherry: "\u{1F352}",
+  lemon: "\u{1F34B}",
+  coconut: "\u{1F965}",
+  maple: "\u{1F9C8}",
+  honey: "\u{1F36F}",
   "peanut butter": "\u{1F95C}",
   "black raspberry": "\u{1F352}",
   "salted caramel": "\u{1F36D}",
-  "matcha": "\u{1F375}",
+  matcha: "\u{1F375}",
   "s'mores": "\u{1F525}",
   // mix-ins
-  "brownie": "\u{1F36B}",
+  brownie: "\u{1F36B}",
   "brownie bits": "\u{1F36B}",
-  "oreo": "\u{1F36A}",
-  "oreos": "\u{1F36A}",
+  oreo: "\u{1F36A}",
+  oreos: "\u{1F36A}",
   "chocolate chips": "\u{1F36B}",
   "peanut butter cups": "\u{1F36B}",
   "cookie pieces": "\u{1F36A}",
   "waffle cone pieces": "\u{1F9CA}",
-  "pretzel": "\u{1F968}",
+  pretzel: "\u{1F968}",
   "pretzel pieces": "\u{1F968}",
-  "marshmallow": "\u{1F36F}",
-  "marshmallows": "\u{1F36F}",
-  "candy": "\u{1F36C}",
+  marshmallow: "\u{1F36F}",
+  marshmallows: "\u{1F36F}",
+  candy: "\u{1F36C}",
   "gummy bears": "\u{1F36C}",
   "m&ms": "\u{1F36C}",
   "reese's pieces": "\u{1F36B}",
@@ -117,10 +115,10 @@ export const iceCreamEmojiMap: Record<string, string> = {
   "fresh strawberries": "\u{1F353}",
   "cookie crumbles": "\u{1F36A}",
   "coconut flakes": "\u{1F965}",
-  "granola": "\u{1F96F}",
+  granola: "\u{1F96F}",
   "waffle cone": "\u{1F9CA}",
   "sugar cone": "\u{1F9CA}",
-  "cone": "\u{1F9CA}",
+  cone: "\u{1F9CA}",
   // sauces
   "hot fudge": "\u{1F36B}",
   "chocolate sauce": "\u{1F36B}",
@@ -132,7 +130,7 @@ export const iceCreamEmojiMap: Record<string, string> = {
   "blueberry sauce": "\u{1FAD0}",
   "peanut butter sauce": "\u{1F95C}",
   "marshmallow sauce": "\u{1F36F}",
-  "butterscotch": "\u{1F36D}",
+  butterscotch: "\u{1F36D}",
   "maple syrup": "\u{1F9C8}",
   "honey drizzle": "\u{1F36F}",
   "caramel drizzle": "\u{1F36D}",
@@ -143,7 +141,7 @@ const fallbackEmoji: Record<ThemeId, string> = {
   icecream: "\u{1F366}",
 };
 
-export function getEmojiForTheme(name: string, themeId: ThemeId = theme): string {
+export function getEmojiForTheme(name: string, themeId: ThemeId): string {
   const map = themeId === "icecream" ? iceCreamEmojiMap : saladEmojiMap;
   const lower = name.toLowerCase();
   if (map[lower]) return map[lower];
@@ -168,7 +166,10 @@ export const categoryLabelsByTheme: Record<ThemeId, Record<string, string>> = {
   },
 };
 
-export function getCategoryLabel(category: string, themeId: ThemeId = theme): string {
+export function getCategoryLabelForTheme(
+  category: string,
+  themeId: ThemeId,
+): string {
   return categoryLabelsByTheme[themeId][category] ?? category;
 }
 
@@ -194,7 +195,3 @@ export const copy = {
       name ? `${name}'s Sundae is Ready!` : "Your Sundae is Ready!",
   },
 } as const;
-
-export function getCopy(themeId: ThemeId = theme) {
-  return copy[themeId];
-}
