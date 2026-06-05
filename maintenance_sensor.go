@@ -3,6 +3,8 @@ package salad
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/logging"
@@ -11,6 +13,7 @@ import (
 )
 
 var MaintenanceSensor = resource.NewModel("ncs", "salad", "maintenance-sensor")
+const errorToIdleTimeout = 60 * time.Second
 
 func init() {
 	resource.RegisterComponent(sensor.API, MaintenanceSensor,
@@ -39,6 +42,10 @@ type maintenanceSensor struct {
 	name             resource.Name
 	logger           logging.Logger
 	buildCoordinator resource.Resource
+
+	errorStateMu    sync.Mutex
+	errorSince      time.Time
+	ignoreStuckError bool
 }
 
 func newMaintenanceSensor(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (sensor.Sensor, error) {
@@ -78,6 +85,25 @@ func (m *maintenanceSensor) Readings(ctx context.Context, extra map[string]inter
 	}
 
 	status, _ := resp["status"].(string)
+	now := time.Now()
+	m.errorStateMu.Lock()
+	switch status {
+	case "error":
+		if m.ignoreStuckError {
+			status = "idle"
+		} else if m.errorSince.IsZero() {
+			m.errorSince = now
+		} else if now.Sub(m.errorSince) >= errorToIdleTimeout {
+			m.ignoreStuckError = true
+			status = "idle"
+			m.logger.CWarnf(ctx, "maintenance-sensor: build status stuck at error for > %s; treating as idle", errorToIdleTimeout)
+		}
+	default:
+		m.errorSince = time.Time{}
+		m.ignoreStuckError = false
+	}
+	m.errorStateMu.Unlock()
+
 	isBusy := status != "" && status != "idle" && status != "complete"
 
 	isSafe := !isBusy
