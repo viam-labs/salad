@@ -1143,7 +1143,6 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			zeroChangeStreak = 0
 			totalAdded += change
 		}
-
 	}
 
 	s.logger.Infof("Ingredient %q complete: added %.1fg (target: %.1fg)", name, totalAdded, targetGrams)
