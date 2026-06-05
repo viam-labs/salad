@@ -125,7 +125,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 				"grab_with_torque": map[string]interface{}{
 					"position": releasePos,
 					"speed":    3000.0,
-					"torque":   0,
+					"torque":   100,
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: release squeeze: %w", step.name, err)
