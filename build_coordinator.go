@@ -41,6 +41,41 @@ const (
 	defaultMeshTargetTriangles = 5000
 )
 
+// BuildCoordinatorStatus is the build coordinator's operational state.
+type BuildCoordinatorStatus string
+
+const (
+	BuildStatusIdle             BuildCoordinatorStatus = "idle"
+	BuildStatusPreparing        BuildCoordinatorStatus = "preparing"
+	BuildStatusSettingUpStation BuildCoordinatorStatus = "setting_up_station"
+	BuildStatusDeliveringSalad  BuildCoordinatorStatus = "delivering salad"
+	BuildStatusComplete         BuildCoordinatorStatus = "complete"
+	BuildStatusStopped          BuildCoordinatorStatus = "stopped"
+	BuildStatusFailed           BuildCoordinatorStatus = "failed"
+)
+
+const buildStatusAddingPrefix = "adding "
+
+// BuildStatusAddingIngredient reports progress while an ingredient is being added.
+func BuildStatusAddingIngredient(name string) BuildCoordinatorStatus {
+	return BuildCoordinatorStatus(buildStatusAddingPrefix + name)
+}
+
+// String returns the wire-format status value.
+func (s BuildCoordinatorStatus) String() string {
+	return string(s)
+}
+
+// IsMaintenanceSafe reports whether maintenance/reconfig is safe for this status.
+func (s BuildCoordinatorStatus) IsMaintenanceSafe() bool {
+	switch s {
+	case "", BuildStatusIdle, BuildStatusComplete, BuildStatusFailed, BuildStatusStopped:
+		return true
+	default:
+		return false
+	}
+}
+
 type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
@@ -224,9 +259,8 @@ type buildCoordinator struct {
 
 	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
 	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
-	// status shouldn't be strings - should be a constant enum type.
 	mu           sync.RWMutex
-	status       string
+	status       BuildCoordinatorStatus
 	progress     float64
 	customerName string
 	errorMsg     string
@@ -260,7 +294,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		cancelCtx:   cancelCtx,
 		cancelFunc:  cancelFunc,
 		ingredients: map[string]BuildCoordinatorIngredientConfig{},
-		status:      "idle",
+		status:      BuildStatusIdle,
 		simulate:    conf.Simulate,
 		skipLilArm:  conf.SkipLilArm,
 		assetsDir:   "/home/viam/assets",
@@ -399,7 +433,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 				"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 			}, nil
 		}
-		s.updateStatus("idle", 0)
+		s.updateStatus(BuildStatusIdle, 0)
 		return map[string]interface{}{
 			"success": true,
 			"message": "Successfully reset all controls",
@@ -417,7 +451,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
 }
 
-func (s *buildCoordinator) updateStatus(status string, progress float64) {
+func (s *buildCoordinator) updateStatus(status BuildCoordinatorStatus, progress float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.status = status
@@ -434,7 +468,7 @@ func (s *buildCoordinator) getStatus() map[string]interface{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return map[string]interface{}{
-		"status":        s.status,
+		"status":        s.status.String(),
 		"progress":      s.progress,
 		"customer_name": s.customerName,
 		"error_msg":     s.errorMsg,
@@ -501,7 +535,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
 	s.opCancelFunc = buildCancelFunc
 	s.opDone = make(chan struct{})
-	s.status = "preparing"
+	s.status = BuildStatusPreparing
 	s.progress = 0
 	s.customerName = customerName
 	s.errorMsg = ""
@@ -530,7 +564,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
-		s.updateStatus("complete", 100)
+		s.updateStatus(BuildStatusComplete, 100)
 		result = map[string]interface{}{
 			"success":   true,
 			"message":   "Salad built and delivered successfully (simulated)",
@@ -544,7 +578,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
-		s.updateStatus("stopped", 0)
+		s.updateStatus(BuildStatusStopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
@@ -566,7 +600,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	}
 	if buildFailed {
 		s.mu.Lock()
-		s.status = "failed"
+		s.status = BuildStatusFailed
 		s.errorMsg = failMsg
 		s.mu.Unlock()
 		if result != nil {
@@ -607,7 +641,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 	setupCtx, setupCancelFunc := context.WithCancel(s.cancelCtx)
 	s.opCancelFunc = setupCancelFunc
 	s.opDone = make(chan struct{})
-	s.status = "setting_up_station"
+	s.status = BuildStatusSettingUpStation
 	s.progress = 0
 	s.errorMsg = ""
 	s.mu.Unlock()
@@ -624,7 +658,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 
 	err := s.executeSetup(setupCtx)
 	if setupCtx.Err() != nil {
-		s.updateStatus("stopped", 0)
+		s.updateStatus(BuildStatusStopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
@@ -632,7 +666,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 	}
 	if err != nil {
 		s.mu.Lock()
-		s.status = "failed"
+		s.status = BuildStatusFailed
 		s.errorMsg = err.Error()
 		s.mu.Unlock()
 		return map[string]interface{}{
@@ -641,7 +675,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		}, nil
 	}
 
-	s.updateStatus("idle", 0)
+	s.updateStatus(BuildStatusIdle, 0)
 	s.logger.Infof("Station setup complete")
 	return map[string]interface{}{
 		"success": true,
@@ -945,7 +979,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		s.updateStatus(fmt.Sprintf("adding %s", target.name), completedServings/totalSteps*100)
+		s.updateStatus(BuildStatusAddingIngredient(target.name), completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if target.category == categoryDressing {
 			continue
@@ -984,7 +1018,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// 	}
 	// }
 
-	s.updateStatus("delivering salad", completedServings/totalSteps*100)
+	s.updateStatus(BuildStatusDeliveringSalad, completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
 	if s.bowlControls != nil {
@@ -1005,14 +1039,14 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// the grabber and bowl-controls arms have gone home.
 	for _, target := range targets {
 		if target.category == categoryDressing {
-			s.updateStatus(fmt.Sprintf("adding %s", target.name), 100)
+			s.updateStatus(BuildStatusAddingIngredient(target.name), 100)
 			if err := s.addDressing(ctx, target.name); err != nil {
 				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
 			}
 		}
 	}
 
-	s.updateStatus("complete", 100)
+	s.updateStatus(BuildStatusComplete, 100)
 
 	// chefs kiss
 	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
