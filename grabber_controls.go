@@ -197,6 +197,11 @@ type grabberControls struct {
 	worldState *referenceframe.WorldState
 	zones      *segmentation.ZonesResult
 
+	calibrationMu        sync.Mutex
+	gripperCalibrated    bool
+	closedGripperHeightMM float64
+	openGripperWidthMM   float64
+
 	fileSaver *fileio.FileSaver
 }
 
@@ -308,7 +313,15 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 
 	s.fileSaver = fileio.NewFileSaver(logger, defaultPlanCaptureDir)
 
-	s.logger.Infof("Grabber controls initialized with %d bins", len(s.bins))
+	calibration, err := s.runGripperCalibration(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("startup gripper calibration: %w", err)
+	}
+	s.setGripperCalibration(calibration)
+	s.logger.Infof(
+		"Grabber controls initialized with %d bins; closed gripper height = %.2f mm, open gripper width = %.2f mm",
+		len(s.bins), calibration.closedHeightMM, calibration.openWidthMM,
+	)
 	return s, nil
 }
 
@@ -350,28 +363,73 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 }
 
 func (s *grabberControls) calibrateClosedGripperHeight(ctx context.Context) (map[string]interface{}, error) {
+	calibration, err := s.runGripperCalibration(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	s.setGripperCalibration(calibration)
+	s.logger.Infof(
+		"calibration: closed gripper height = %.2f mm, open gripper width = %.2f mm",
+		calibration.closedHeightMM, calibration.openWidthMM,
+	)
+	return map[string]interface{}{
+		"closed_gripper_to_arm_base_height_mm": calibration.closedHeightMM,
+		"open_gripper_width_mm":                calibration.openWidthMM,
+	}, nil
+}
+
+type gripperCalibration struct {
+	closedHeightMM float64
+	openWidthMM    float64
+}
+
+func (s *grabberControls) runGripperCalibration(ctx context.Context) (gripperCalibration, error) {
+	closedHeightMM, err := s.measureClosedGripperHeight(ctx)
+	if err != nil {
+		return gripperCalibration{}, err
+	}
+	openWidthMM, err := s.measureOpenGripperWidth(ctx)
+	if err != nil {
+		return gripperCalibration{}, err
+	}
+	return gripperCalibration{
+		closedHeightMM: closedHeightMM,
+		openWidthMM:    openWidthMM,
+	}, nil
+}
+
+func (s *grabberControls) setGripperCalibration(calibration gripperCalibration) {
+	s.calibrationMu.Lock()
+	s.closedGripperHeightMM = calibration.closedHeightMM
+	s.openGripperWidthMM = calibration.openWidthMM
+	s.gripperCalibrated = true
+	s.calibrationMu.Unlock()
+}
+
+func (s *grabberControls) measureClosedGripperHeight(ctx context.Context) (float64, error) {
 	if _, err := s.gripper.Grab(ctx, nil); err != nil {
-		return nil, fmt.Errorf("close gripper: %w", err)
+		return 0, fmt.Errorf("close gripper: %w", err)
 	}
 
 	geoms, err := s.gripper.Geometries(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("read gripper geometries: %w", err)
+		return 0, fmt.Errorf("read gripper geometries: %w", err)
 	}
 	if len(geoms) == 0 {
-		return nil, fmt.Errorf("gripper returned no geometries")
+		return 0, fmt.Errorf("gripper returned no geometries")
 	}
 
 	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build frame system: %w", err)
+		return 0, fmt.Errorf("build frame system: %w", err)
 	}
 
 	startInputs := referenceframe.NewZeroInputs(fs)
 
 	armCurrentInputs, err := s.arm.CurrentInputs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("getting arm current inputs: %w", err)
+		return 0, fmt.Errorf("getting arm current inputs: %w", err)
 	}
 	if len(armCurrentInputs) > 0 {
 		startInputs[s.cfg.Arm] = armCurrentInputs
@@ -380,22 +438,39 @@ func (s *grabberControls) calibrateClosedGripperHeight(ctx context.Context) (map
 	gf := referenceframe.NewGeometriesInFrame(s.cfg.Gripper, geoms)
 	tf, err := fs.Transform(startInputs.ToLinearInputs(), gf, s.cfg.Arm)
 	if err != nil {
-		return nil, fmt.Errorf("transform gripper geometries to arm frame: %w", err)
+		return 0, fmt.Errorf("transform gripper geometries to arm frame: %w", err)
 	}
 	geomsInArm, ok := tf.(*referenceframe.GeometriesInFrame)
 	if !ok {
-		return nil, fmt.Errorf("expected GeometriesInFrame after transform, got %T", tf)
+		return 0, fmt.Errorf("expected GeometriesInFrame after transform, got %T", tf)
 	}
 
-	maxZ, err := maxGeometryZ(geomsInArm.Geometries())
+	return maxGeometryZ(geomsInArm.Geometries())
+}
+
+func (s *grabberControls) measureOpenGripperWidth(ctx context.Context) (float64, error) {
+	if err := s.gripper.Open(ctx, nil); err != nil {
+		return 0, fmt.Errorf("open gripper: %w", err)
+	}
+
+	geoms, err := s.gripper.Geometries(ctx, nil)
 	if err != nil {
-		return nil, err
+		return 0, fmt.Errorf("read gripper geometries: %w", err)
+	}
+	if len(geoms) == 0 {
+		return 0, fmt.Errorf("gripper returned no geometries")
 	}
 
-	s.logger.Infof("calibration: closed gripper max Z in %q frame = %.2f mm", s.cfg.Arm, maxZ)
-	return map[string]interface{}{
-		"closed_gripper_to_arm_base_height_mm": maxZ,
-	}, nil
+	return geometryXSpan(geoms)
+}
+
+func (s *grabberControls) calibratedClosedGripperHeight() (float64, error) {
+	s.calibrationMu.Lock()
+	defer s.calibrationMu.Unlock()
+	if !s.gripperCalibrated {
+		return 0, fmt.Errorf("gripper not calibrated, run calibrate command first")
+	}
+	return s.closedGripperHeightMM, nil
 }
 
 func maxGeometryZ(geoms []spatialmath.Geometry) (float64, error) {
@@ -411,6 +486,25 @@ func maxGeometryZ(geoms []spatialmath.Geometry) (float64, error) {
 		return 0, fmt.Errorf("geometries produced no points")
 	}
 	return maxZ, nil
+}
+
+func geometryXSpan(geoms []spatialmath.Geometry) (float64, error) {
+	minX := math.Inf(1)
+	maxX := math.Inf(-1)
+	for _, g := range geoms {
+		for _, pt := range g.ToPoints(1.0) {
+			if pt.X < minX {
+				minX = pt.X
+			}
+			if pt.X > maxX {
+				maxX = pt.X
+			}
+		}
+	}
+	if math.IsInf(maxX, -1) {
+		return 0, fmt.Errorf("geometries produced no points")
+	}
+	return math.Abs(maxX - minX), nil
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
@@ -510,14 +604,16 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, 
 	}
 	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
 
-	// hardcoding for now but want to detect this at some point
-	closedGripperToArmBaseHeightMM := 330.0
+	closedGripperHeightMM, err := s.calibratedClosedGripperHeight()
+	if err != nil {
+		return nil, err
+	}
 
 	// food grab position is `servingDepthMM` beneath the detected food surface,
 	// measured along the bin's plane normal.
 	grabBasePoint := foodHeightPosition.Add(zoneNormalVec.Mul(-servingDepthMM))
 
-	idealArmBasePosition := grabBasePoint.Add(zoneNormalVec.Mul(closedGripperToArmBaseHeightMM))
+	idealArmBasePosition := grabBasePoint.Add(zoneNormalVec.Mul(closedGripperHeightMM))
 
 	// compute orientation from gripper dynamically
 	// currentGripperPose, err := s.fsService.GetPose(ctx, s.gripper.Name().Name, referenceframe.World, nil, nil)
