@@ -10,7 +10,14 @@ import (
 	"salad/lib/fileio"
 )
 
+var defaultSqueezePositions = []float64{10.0, 5.0, 2.0}
+
 func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPlan) error {
+	opt, ok := s.cfg.Dressings[plan.dressingName]
+	if !ok {
+		return fmt.Errorf("unknown dressing %q", plan.dressingName)
+	}
+
 	if err := s.gripper.Open(ctx, nil); err != nil {
 		return fmt.Errorf("open gripper: %w", err)
 	}
@@ -25,7 +32,27 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		if revolutions < 1 {
 			revolutions = 1
 		}
+		squeezeDuringCircularMove := step.name == "circular_pour" && step.postSqueeze
+		squeezeStarted := false
 		for rev := range revolutions {
+			if squeezeDuringCircularMove && !squeezeStarted {
+				squeezeStarted = true
+				squeezeErrCh := make(chan error, 1)
+				go func() {
+					squeezeErrCh <- s.runPostSqueeze(ctx, step.name, opt)
+				}()
+
+				moveErr := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil)
+				squeezeErr := <-squeezeErrCh
+				if moveErr != nil {
+					return fmt.Errorf("step %q rev %d: %w", step.name, rev+1, moveErr)
+				}
+				if squeezeErr != nil {
+					return squeezeErr
+				}
+				continue
+			}
+
 			if err := s.arm.MoveThroughJointPositions(ctx, armInputs, step.moveOptions, nil); err != nil {
 				s.saveFailedExecutionJointPosition(plan.buildID)
 				return fmt.Errorf("step %q rev %d: %w", step.name, rev+1, err)
@@ -39,6 +66,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		// Open with grab_with_torque (not gripper.Open) because once we've grabbed with
 		// torque, we need to apply some torque to actively push the jaws open.
 		case GrabStepActionOpen:
+			time.Sleep(300 * time.Millisecond)
 			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
 				"grab_with_torque": map[string]interface{}{
 					"position": 850.0,
@@ -47,6 +75,18 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 				},
 			}); err != nil {
 				return fmt.Errorf("step %q: open gripper: %w", step.name, err)
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				resp, err := s.gripper.DoCommand(ctx, map[string]interface{}{"get": true})
+				if err != nil {
+					break
+				}
+				pos, ok := resp["pos"].(float64)
+				if ok && pos >= 800 {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
 			}
 			s.logger.Debugf("opened gripper after %q", step.name)
 		case GrabStepActionClose:
@@ -62,43 +102,10 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			s.logger.Debugf("closed gripper after %q", step.name)
 		}
 
-		if step.postSqueeze {
-			for _, pos := range []float64{10.0, 5.0, 2.0} {
-				if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
-					"grab_with_torque": map[string]interface{}{
-						"position": pos,
-						"speed":    3000.0,
-						"torque":   100.0,
-					},
-				}); err != nil {
-					return fmt.Errorf("step %q: squeeze to %v: %w", step.name, pos, err)
-				}
-				s.logger.Debugf("squeezed to position %v after %q", pos, step.name)
-				time.Sleep(700 * time.Millisecond)
+		if step.postSqueeze && !squeezeDuringCircularMove {
+			if err := s.runPostSqueeze(ctx, step.name, opt); err != nil {
+				return err
 			}
-			resp, err := s.gripper.DoCommand(ctx, map[string]interface{}{"get": true})
-			if err != nil {
-				return fmt.Errorf("step %q: get gripper position: %w", step.name, err)
-			}
-			rawPos, ok := resp["pos"]
-			if !ok {
-				return fmt.Errorf("step %q: gripper get response missing \"pos\": %v", step.name, resp)
-			}
-			curPos, ok := rawPos.(float64)
-			if !ok {
-				return fmt.Errorf("step %q: gripper get \"pos\" not a number: %T", step.name, rawPos)
-			}
-			releasePos := curPos + 20
-			if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
-				"grab_with_torque": map[string]interface{}{
-					"position": releasePos,
-					"speed":    3000.0,
-					"torque":   0,
-				},
-			}); err != nil {
-				return fmt.Errorf("step %q: release squeeze: %w", step.name, err)
-			}
-			s.logger.Debugf("released gripper from %v to %v after %q", curPos, releasePos, step.name)
 		}
 
 		if step.postShake && s.shakeArmService != nil {
@@ -108,6 +115,64 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 			s.logger.Debugf("shook arm after %q", step.name)
 		}
 	}
+	return nil
+}
+
+func (s *dressingControls) runPostSqueeze(ctx context.Context, stepName string, opt DressingOptionConfig) error {
+	squeezePositions := opt.SqueezePositions
+	if len(squeezePositions) == 0 {
+		squeezePositions = defaultSqueezePositions
+	}
+	squeezeSpeed := opt.SqueezeSpeed
+	if squeezeSpeed == 0 {
+		squeezeSpeed = 3000.0
+	}
+	squeezeTorque := opt.SqueezeTorque
+	if squeezeTorque == 0 {
+		squeezeTorque = 100.0
+	}
+	squeezeTimeout := opt.SqueezeTimeoutSecs
+	if squeezeTimeout == 0 {
+		squeezeTimeout = 2.0
+	}
+
+	for _, pos := range squeezePositions {
+		if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
+			"grab_with_torque": map[string]interface{}{
+				"position":        pos,
+				"speed":           squeezeSpeed,
+				"torque":          squeezeTorque,
+				"timeout_seconds": squeezeTimeout,
+			},
+		}); err != nil {
+			return fmt.Errorf("step %q: squeeze to %v: %w", stepName, pos, err)
+		}
+		s.logger.Debugf("squeezed to position %v after %q", pos, stepName)
+	}
+
+	resp, err := s.gripper.DoCommand(ctx, map[string]interface{}{"get": true})
+	if err != nil {
+		return fmt.Errorf("step %q: get gripper position: %w", stepName, err)
+	}
+	rawPos, ok := resp["pos"]
+	if !ok {
+		return fmt.Errorf("step %q: gripper get response missing \"pos\": %v", stepName, resp)
+	}
+	curPos, ok := rawPos.(float64)
+	if !ok {
+		return fmt.Errorf("step %q: gripper get \"pos\" not a number: %T", stepName, rawPos)
+	}
+	releasePos := curPos + 20
+	if _, err := s.gripper.DoCommand(ctx, map[string]interface{}{
+		"grab_with_torque": map[string]interface{}{
+			"position": releasePos,
+			"speed":    3000.0,
+			"torque":   100,
+		},
+	}); err != nil {
+		return fmt.Errorf("step %q: release squeeze: %w", stepName, err)
+	}
+	s.logger.Debugf("released gripper from %v to %v after %q", curPos, releasePos, stepName)
 	return nil
 }
 
