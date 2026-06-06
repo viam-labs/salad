@@ -190,6 +190,15 @@ func init() {
 	planeFitCmd.MarkFlagsOneRequired("camera", "pcd")
 	mustMarkFlagRequired(planeFitCmd, "zones")
 
+	heightMapCmd.Flags().StringVar(&heightMapFlags.CameraName, "camera", "", "camera component on the machine to call NextPointCloud on (mutually exclusive with --pcd)")
+	heightMapCmd.Flags().StringVar(&heightMapFlags.PCDPath, "pcd", "", "PCD file to evaluate instead of pulling from a live camera (mutually exclusive with --camera)")
+	heightMapCmd.Flags().StringVar(&heightMapFlags.SavePCD, "save-pcd", "", "if --camera is set, also save the captured cloud to this path")
+	heightMapCmd.Flags().StringVar(&heightMapFlags.ZonesPath, "zones", "", "zones.json with fitted bin-floor planes (required)")
+	heightMapCmd.Flags().IntVar(&heightMapFlags.ZoneID, "zone-id", -1, "restrict to a single zone ID; -1 = all zones")
+	heightMapCmd.MarkFlagsMutuallyExclusive("camera", "pcd")
+	heightMapCmd.MarkFlagsOneRequired("camera", "pcd")
+	mustMarkFlagRequired(heightMapCmd, "zones")
+
 	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.File, "file", "", "path to a saved plan_request.json (required)")
 	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	mustMarkFlagRequired(renderPlanRequestCmd, "file")
@@ -200,6 +209,7 @@ func init() {
 	rootCmd.AddCommand(cropCmd)
 	rootCmd.AddCommand(segmentCmd)
 	rootCmd.AddCommand(planeFitCmd)
+	rootCmd.AddCommand(heightMapCmd)
 	rootCmd.AddCommand(renderPlanRequestCmd)
 }
 

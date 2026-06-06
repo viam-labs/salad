@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -341,7 +342,75 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return map[string]any{"ingredients": ingredients}, nil
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', or 'get_ingredients' field")
+	if _, ok := cmd["calibrate"]; ok {
+		return s.calibrateClosedGripperHeight(ctx)
+	}
+
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', 'get_ingredients', or 'calibrate' field")
+}
+
+func (s *grabberControls) calibrateClosedGripperHeight(ctx context.Context) (map[string]interface{}, error) {
+	if _, err := s.gripper.Grab(ctx, nil); err != nil {
+		return nil, fmt.Errorf("close gripper: %w", err)
+	}
+
+	geoms, err := s.gripper.Geometries(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("read gripper geometries: %w", err)
+	}
+	if len(geoms) == 0 {
+		return nil, fmt.Errorf("gripper returned no geometries")
+	}
+
+	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build frame system: %w", err)
+	}
+
+	startInputs := referenceframe.NewZeroInputs(fs)
+
+	armCurrentInputs, err := s.arm.CurrentInputs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting arm current inputs: %w", err)
+	}
+	if len(armCurrentInputs) > 0 {
+		startInputs[s.cfg.Arm] = armCurrentInputs
+	}
+
+	gf := referenceframe.NewGeometriesInFrame(s.cfg.Gripper, geoms)
+	tf, err := fs.Transform(startInputs.ToLinearInputs(), gf, s.cfg.Arm)
+	if err != nil {
+		return nil, fmt.Errorf("transform gripper geometries to arm frame: %w", err)
+	}
+	geomsInArm, ok := tf.(*referenceframe.GeometriesInFrame)
+	if !ok {
+		return nil, fmt.Errorf("expected GeometriesInFrame after transform, got %T", tf)
+	}
+
+	maxZ, err := maxGeometryZ(geomsInArm.Geometries())
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Infof("calibration: closed gripper max Z in %q frame = %.2f mm", s.cfg.Arm, maxZ)
+	return map[string]interface{}{
+		"closed_gripper_to_arm_base_height_mm": maxZ,
+	}, nil
+}
+
+func maxGeometryZ(geoms []spatialmath.Geometry) (float64, error) {
+	maxZ := math.Inf(-1)
+	for _, g := range geoms {
+		for _, pt := range g.ToPoints(1.0) {
+			if pt.Z > maxZ {
+				maxZ = pt.Z
+			}
+		}
+	}
+	if math.IsInf(maxZ, -1) {
+		return 0, fmt.Errorf("geometries produced no points")
+	}
+	return maxZ, nil
 }
 
 func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
