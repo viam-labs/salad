@@ -265,15 +265,12 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 		fmt.Fprintf(os.Stdout, "Zone %d grab base arrow at (%.1f, %.1f, %.1f)\n", r.zone.ID, basePt.X, basePt.Y, basePt.Z)
 
 		hoverOffsets := calibration.binHoverOffsets[r.zone.ID]
-		hoverPose, err := salad.GrabHoverPose(
+		hoverPose, err := salad.BinHoverPose(
 			&r.zone,
 			zMean,
 			calibration.binHoverHeightMM,
 			hoverOffsets.xOffsetMM,
 			hoverOffsets.yOffsetMM,
-			foodLevelMM,
-			servingDepthMM,
-			calibration.closedGripperHeightMM,
 			calibration.orientation,
 		)
 		if err != nil {

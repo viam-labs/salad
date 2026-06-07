@@ -81,27 +81,6 @@ func BinHoverPose(
 	return spatialmath.NewPose(point, orientation), nil
 }
 
-// GrabHoverPose returns the hover pose used in grab planning: XY from the bin
-// hover pose, orientation from the grab pose.
-func GrabHoverPose(
-	zone *segmentation.Zone,
-	zMean, binHoverHeightMM, hoverXOffsetMM, hoverYOffsetMM float64,
-	foodLevelMM, servingDepthMM, closedGripperHeightMM float64,
-	orientation spatialmath.Orientation,
-) (spatialmath.Pose, error) {
-	hover, err := BinHoverPose(zone, zMean, binHoverHeightMM, hoverXOffsetMM, hoverYOffsetMM, orientation)
-	if err != nil {
-		return nil, err
-	}
-
-	grabPose, err := ComputeGrabPose(zone, foodLevelMM, servingDepthMM, closedGripperHeightMM, orientation)
-	if err != nil {
-		return nil, err
-	}
-
-	return spatialmath.NewPose(hover.Point(), grabPose.Orientation()), nil
-}
-
 func zonePlaneNormal(zone *segmentation.Zone) r3.Vector {
 	return r3.Vector{
 		X: zone.Plane.Normal[0],
