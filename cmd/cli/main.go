@@ -196,12 +196,22 @@ func init() {
 	heightMapCmd.Flags().StringVar(&heightMapFlags.ZonesPath, "zones", "", "zones.json with fitted bin-floor planes (required)")
 	heightMapCmd.Flags().IntVar(&heightMapFlags.ZoneID, "zone-id", -1, "restrict to a single zone ID; -1 = all zones")
 	heightMapCmd.Flags().Float64Var(&heightMapFlags.ServingDepthMM, "serving-depth-mm", 30, "depth below detected food surface for expected grab position (mm)")
-	heightMapCmd.Flags().StringVar(&heightMapFlags.GrabberControls, "grabber-controls", "", "grabber-controls service name; when set with --viz, also draws hover (blue) and arm grab (green) poses using cached calibration")
-	heightMapCmd.Flags().BoolVar(&heightMapFlags.Viz, "viz", false, "display source cloud, zone plane, grab-base arrow (red), and optionally hover (blue) and arm grab (green) poses in the motion-tools visualizer")
-	heightMapCmd.Flags().StringVar(&heightMapFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
 	heightMapCmd.MarkFlagsMutuallyExclusive("camera", "pcd")
 	heightMapCmd.MarkFlagsOneRequired("camera", "pcd")
 	mustMarkFlagRequired(heightMapCmd, "zones")
+
+	vizGrabPosesCmd.Flags().StringVar(&vizGrabPosesFlags.CameraName, "camera", "", "camera component on the machine to call NextPointCloud on (mutually exclusive with --pcd)")
+	vizGrabPosesCmd.Flags().StringVar(&vizGrabPosesFlags.PCDPath, "pcd", "", "PCD file to evaluate instead of pulling from a live camera (mutually exclusive with --camera)")
+	vizGrabPosesCmd.Flags().StringVar(&vizGrabPosesFlags.SavePCD, "save-pcd", "", "if --camera is set, also save the captured cloud to this path")
+	vizGrabPosesCmd.Flags().StringVar(&vizGrabPosesFlags.ZonesPath, "zones", "", "zones.json with fitted bin-floor planes (required)")
+	vizGrabPosesCmd.Flags().IntVar(&vizGrabPosesFlags.ZoneID, "zone-id", -1, "restrict to a single zone ID; -1 = all zones")
+	vizGrabPosesCmd.Flags().Float64Var(&vizGrabPosesFlags.ServingDepthMM, "serving-depth-mm", 30, "depth below detected food surface for expected grab position (mm)")
+	vizGrabPosesCmd.Flags().StringVar(&vizGrabPosesFlags.GrabberControls, "grabber-controls", "", "grabber-controls service name for hover and arm grab pose calibration (required)")
+	vizGrabPosesCmd.Flags().StringVar(&vizGrabPosesFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
+	vizGrabPosesCmd.MarkFlagsMutuallyExclusive("camera", "pcd")
+	vizGrabPosesCmd.MarkFlagsOneRequired("camera", "pcd")
+	mustMarkFlagRequired(vizGrabPosesCmd, "zones")
+	mustMarkFlagRequired(vizGrabPosesCmd, "grabber-controls")
 
 	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.File, "file", "", "path to a saved plan_request.json (required)")
 	renderPlanRequestCmd.Flags().StringVar(&renderPlanRequestFlags.VizURL, "viz-url", "http://localhost:3000", "motion-tools visualizer URL")
@@ -214,6 +224,7 @@ func init() {
 	rootCmd.AddCommand(segmentCmd)
 	rootCmd.AddCommand(planeFitCmd)
 	rootCmd.AddCommand(heightMapCmd)
+	rootCmd.AddCommand(vizGrabPosesCmd)
 	rootCmd.AddCommand(renderPlanRequestCmd)
 }
 
