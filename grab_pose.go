@@ -17,7 +17,7 @@ const DefaultServingDepthMM = 30.0
 // plane at the plane center, matching getBinFoodLevel's height-map lookup.
 func FoodLevelMMFromPlaneFitStats(zone *segmentation.Zone, stats segmentation.PlaneFitStats) (float64, error) {
 	planePoint := r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]}
-	heightAtPoint := stats.HeightMap.MedianSignedDistanceAt(planePoint)
+	heightAtPoint := stats.HeightMap.ApproximateHeightAround(planePoint, 3)
 	if heightAtPoint == nil || *heightAtPoint < 0 {
 		return 0, fmt.Errorf("distance to plane is wrong: %v mm", heightAtPoint)
 	}

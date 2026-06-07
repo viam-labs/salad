@@ -71,7 +71,6 @@ type GrabberControlsConfig struct {
 	BinClearanceZOffsetMM             float64                               `json:"bin-clearance-z-offset-mm,omitempty"`
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
-	GrabHeightMM                      float64                               `json:"grab-height-mm"`
 	DroppingPose                      *BowlDropPose                         `json:"dropping-pose"`
 	BowlHoverHeightMM                 float64                               `json:"bowl-hover-height-mm,omitempty"`
 	Arm                               string                                `json:"arm"`
@@ -81,8 +80,6 @@ type GrabberControlsConfig struct {
 	ShakeArmService                   *string                               `json:"shake-arm-service,omitempty"`
 	ScoopShakeService                 *string                               `json:"scoop-shake-service,omitempty"`
 	AssetsDir                         string                                `json:"assets-dir"`
-	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
-	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
 	GrabLineToleranceMM               float64                               `json:"grab-line-tolerance-mm,omitempty"`
 	GrabOrientationToleranceDegs      float64                               `json:"grab-orientation-tolerance-degs,omitempty"`
 	BinImagingCam                     string                                `json:"bin-imaging-cam"`
@@ -390,9 +387,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 			"oz":    orient.OZ,
 			"theta": orient.Theta,
 		},
-		"bins":        bins,
-		"x_offset_mm": s.cfg.XOffsetMM,
-		"y_offset_mm": s.cfg.YOffsetMM,
+		"bins": bins,
 	}, nil
 }
 
@@ -541,17 +536,6 @@ func geometryXSpan(geoms []spatialmath.Geometry) (float64, error) {
 	return math.Abs(maxX - minX), nil
 }
 
-func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
-	if s.cfg.XOffsetMM == 0 && s.cfg.YOffsetMM == 0 {
-		return pose
-	}
-	pt := pose.Point()
-	return spatialmath.NewPose(
-		r3.Vector{X: pt.X + s.cfg.XOffsetMM, Y: pt.Y + s.cfg.YOffsetMM, Z: pt.Z},
-		pose.Orientation(),
-	)
-}
-
 // loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
 // since it is a no-op once both are loaded.
 func (s *grabberControls) loadAssets() error {
@@ -629,7 +613,7 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, 
 	if err != nil {
 		return nil, err
 	}
-	return s.applyXYOffset(pose), nil
+	return pose, nil
 }
 
 // logBinImagingCamPlaneFit snapshots the bin-imaging camera point cloud, culls

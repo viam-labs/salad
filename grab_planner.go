@@ -80,15 +80,8 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		return nil, err
 	}
 
-	hoverWithOffset := s.applyXYOffset(bin.hoverPose)
 	// use the grab pose orientation so the orientations are consistent between the two
-	hover := spatialmath.NewPose(hoverWithOffset.Point(), grabPose.Orientation())
-	hoverPt := hover.Point()
-	hoverOrient := hover.Orientation().OrientationVectorDegrees()
-	s.logger.Infof("bin %q zone %d hover pose: x=%.2f y=%.2f z=%.2f orientation=(ox=%.3f oy=%.3f oz=%.3f th=%.2f) x-offset-mm=%.1f y-offset-mm=%.1f",
-		bin.name, zoneID, hoverPt.X, hoverPt.Y, hoverPt.Z,
-		hoverOrient.OX, hoverOrient.OY, hoverOrient.OZ, hoverOrient.Theta,
-		s.cfg.XOffsetMM, s.cfg.YOffsetMM)
+	hover := spatialmath.NewPose(bin.hoverPose.Point(), grabPose.Orientation())
 
 	grabPoseThatsJustHeightDiff := spatialmath.NewPose(r3.Vector{
 		X: hover.Point().X,
