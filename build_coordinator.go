@@ -71,6 +71,8 @@ func (s BuildCoordinatorStatus) IsMaintenanceSafe() bool {
 	switch s {
 	case "", BuildStatusIdle, BuildStatusComplete, BuildStatusFailed, BuildStatusStopped:
 		return true
+	case BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
+		return false
 	default:
 		return false
 	}

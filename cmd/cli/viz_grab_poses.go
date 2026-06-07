@@ -68,7 +68,7 @@ func runVizGrabPoses(flags VizGrabPosesFlags) error {
 	logger := logging.NewLogger("viz-grab-poses")
 
 	ctx := context.Background()
-	pc, _, zonesResult, results, err := loadHeightMapZoneResults(ctx, logger, HeightMapFlags{
+	pc, zonesResult, results, err := loadHeightMapZoneResults(ctx, logger, HeightMapFlags{
 		CameraName:     flags.CameraName,
 		PCDPath:        flags.PCDPath,
 		SavePCD:        flags.SavePCD,
@@ -178,8 +178,8 @@ func parseBinHoverOffsets(resp map[string]interface{}) (map[int]binHoverOffsets,
 		if err != nil {
 			return nil, fmt.Errorf("bins[%d]: %w", i, err)
 		}
-		hoverX, _ := floatFromDoCommand(bin, "hover_x_offset_mm")
-		hoverY, _ := floatFromDoCommand(bin, "hover_y_offset_mm")
+		hoverX := optionalFloatFromDoCommand(bin, "hover_x_offset_mm")
+		hoverY := optionalFloatFromDoCommand(bin, "hover_y_offset_mm")
 		offsets[zoneID] = binHoverOffsets{xOffsetMM: hoverX, yOffsetMM: hoverY}
 	}
 	return offsets, nil
@@ -200,6 +200,14 @@ func intFromDoCommand(resp map[string]interface{}, key string) (int, error) {
 	default:
 		return 0, fmt.Errorf("%q has unexpected type %T", key, v)
 	}
+}
+
+func optionalFloatFromDoCommand(resp map[string]interface{}, key string) float64 {
+	v, err := floatFromDoCommand(resp, key)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func floatFromDoCommand(resp map[string]interface{}, key string) (float64, error) {
@@ -267,7 +275,9 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 			return fmt.Errorf("drawing zone-%d-grab-base: %w", r.zone.ID, err)
 		}
 		basePt := grabBasePose.Point()
-		fmt.Fprintf(os.Stdout, "Zone %d grab base arrow at (%.1f, %.1f, %.1f)\n", r.zone.ID, basePt.X, basePt.Y, basePt.Z)
+		if _, err := fmt.Fprintf(os.Stdout, "Zone %d grab base arrow at (%.1f, %.1f, %.1f)\n", r.zone.ID, basePt.X, basePt.Y, basePt.Z); err != nil {
+			return err
+		}
 
 		hoverOffsets := calibration.binHoverOffsets[r.zone.ID]
 		hoverPose, err := salad.BinHoverPose(
@@ -285,8 +295,10 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 			return fmt.Errorf("drawing zone-%d-hover: %w", r.zone.ID, err)
 		}
 		hoverPt := hoverPose.Point()
-		fmt.Fprintf(os.Stdout, "Zone %d hover pose at (%.1f, %.1f, %.1f)\n",
-			r.zone.ID, hoverPt.X, hoverPt.Y, hoverPt.Z)
+		if _, err := fmt.Fprintf(os.Stdout, "Zone %d hover pose at (%.1f, %.1f, %.1f)\n",
+			r.zone.ID, hoverPt.X, hoverPt.Y, hoverPt.Z); err != nil {
+			return err
+		}
 
 		grabPose, err := salad.ComputeGrabPose(
 			&r.zone,
@@ -302,8 +314,10 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 			return fmt.Errorf("drawing zone-%d-grab: %w", r.zone.ID, err)
 		}
 		grabPt := grabPose.Point()
-		fmt.Fprintf(os.Stdout, "Zone %d grab pose (arm base) at (%.1f, %.1f, %.1f)  closed gripper height=%.1f mm\n",
-			r.zone.ID, grabPt.X, grabPt.Y, grabPt.Z, calibration.closedGripperHeightMM)
+		if _, err := fmt.Fprintf(os.Stdout, "Zone %d grab pose (arm base) at (%.1f, %.1f, %.1f)  closed gripper height=%.1f mm\n",
+			r.zone.ID, grabPt.X, grabPt.Y, grabPt.Z, calibration.closedGripperHeightMM); err != nil {
+			return err
+		}
 
 		time.Sleep(100 * time.Millisecond)
 	}
