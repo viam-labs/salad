@@ -349,14 +349,26 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 	}
 
 	if _, ok := cmd["calibrate"]; ok {
-		return s.calibrateClosedGripperHeight(ctx)
+		calibration, err := s.runGripperCalibration(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.setGripperCalibration(calibration)
+		return map[string]any{
+			"closed_gripper_to_arm_base_height_mm": calibration.closedHeightMM,
+			"open_gripper_width_mm":                calibration.openWidthMM,
+		}, nil
 	}
 
 	if _, ok := cmd["get_gripper_calibration"]; ok {
 		return s.getGripperCalibration()
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', 'get_ingredients', 'calibrate', or 'get_gripper_calibration' field")
+	if _, ok := cmd["get_bin_config"]; ok {
+		return s.getBinConfig(), nil
+	}
+
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', 'get_ingredients', 'calibrate', 'get_gripper_calibration', or 'get_bin_config' field")
 }
 
 func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error) {
@@ -368,6 +380,13 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 	if !calibrated {
 		return nil, fmt.Errorf("gripper not calibrated, run calibrate command first")
 	}
+	return map[string]interface{}{
+		"closed_gripper_to_arm_base_height_mm": closedHeightMM,
+		"open_gripper_width_mm":                openWidthMM,
+	}, nil
+}
+
+func (s *grabberControls) getBinConfig() map[string]interface{} {
 	orient := s.cfg.BinHoverOrientation
 	bins := make([]map[string]interface{}, 0, len(s.cfg.Bins))
 	for _, binCfg := range s.cfg.Bins {
@@ -378,9 +397,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 		})
 	}
 	return map[string]interface{}{
-		"closed_gripper_to_arm_base_height_mm": closedHeightMM,
-		"open_gripper_width_mm":                openWidthMM,
-		"bin_hover_height_mm":                  s.cfg.BinHoverHeightMM,
+		"bin_hover_height_mm": s.cfg.BinHoverHeightMM,
 		"bin_hover_orientation": map[string]float64{
 			"ox":    orient.OX,
 			"oy":    orient.OY,
@@ -388,24 +405,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 			"theta": orient.Theta,
 		},
 		"bins": bins,
-	}, nil
-}
-
-func (s *grabberControls) calibrateClosedGripperHeight(ctx context.Context) (map[string]interface{}, error) {
-	calibration, err := s.runGripperCalibration(ctx)
-	if err != nil {
-		return nil, err
 	}
-
-	s.setGripperCalibration(calibration)
-	s.logger.Infof(
-		"calibration: closed gripper height = %.2f mm, open gripper width = %.2f mm",
-		calibration.closedHeightMM, calibration.openWidthMM,
-	)
-	return map[string]interface{}{
-		"closed_gripper_to_arm_base_height_mm": calibration.closedHeightMM,
-		"open_gripper_width_mm":                calibration.openWidthMM,
-	}, nil
 }
 
 type gripperCalibration struct {

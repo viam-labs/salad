@@ -104,45 +104,50 @@ func fetchGripperCalibration(ctx context.Context, logger logging.Logger, service
 		return nil, fmt.Errorf("grabber controls service %q not found on machine: %w", serviceName, err)
 	}
 
-	resp, err := svc.DoCommand(ctx, map[string]interface{}{"get_gripper_calibration": true})
+	calResp, err := svc.DoCommand(ctx, map[string]interface{}{"get_gripper_calibration": true})
 	if err != nil {
 		return nil, fmt.Errorf("get_gripper_calibration on %q: %w", serviceName, err)
 	}
 
-	closedHeight, err := floatFromDoCommand(resp, "closed_gripper_to_arm_base_height_mm")
+	closedHeight, err := floatFromDoCommand(calResp, "closed_gripper_to_arm_base_height_mm")
 	if err != nil {
 		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
 	}
 
-	orientRaw, ok := resp["bin_hover_orientation"].(map[string]interface{})
+	binResp, err := svc.DoCommand(ctx, map[string]interface{}{"get_bin_config": true})
+	if err != nil {
+		return nil, fmt.Errorf("get_bin_config on %q: %w", serviceName, err)
+	}
+
+	orientRaw, ok := binResp["bin_hover_orientation"].(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: missing bin_hover_orientation", serviceName)
+		return nil, fmt.Errorf("parsing bin config from %q: missing bin_hover_orientation", serviceName)
 	}
 	ox, err := floatFromDoCommand(orientRaw, "ox")
 	if err != nil {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
+		return nil, fmt.Errorf("parsing bin config from %q: %w", serviceName, err)
 	}
 	oy, err := floatFromDoCommand(orientRaw, "oy")
 	if err != nil {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
+		return nil, fmt.Errorf("parsing bin config from %q: %w", serviceName, err)
 	}
 	oz, err := floatFromDoCommand(orientRaw, "oz")
 	if err != nil {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
+		return nil, fmt.Errorf("parsing bin config from %q: %w", serviceName, err)
 	}
 	theta, err := floatFromDoCommand(orientRaw, "theta")
 	if err != nil {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
+		return nil, fmt.Errorf("parsing bin config from %q: %w", serviceName, err)
 	}
 
-	binHoverHeight, err := floatFromDoCommand(resp, "bin_hover_height_mm")
+	binHoverHeight, err := floatFromDoCommand(binResp, "bin_hover_height_mm")
 	if err != nil {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
+		return nil, fmt.Errorf("parsing bin config from %q: %w", serviceName, err)
 	}
 
-	binHoverOffsets, err := parseBinHoverOffsets(resp)
+	binHoverOffsets, err := parseBinHoverOffsets(binResp)
 	if err != nil {
-		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
+		return nil, fmt.Errorf("parsing bin config from %q: %w", serviceName, err)
 	}
 
 	return &gripperCalibration{
