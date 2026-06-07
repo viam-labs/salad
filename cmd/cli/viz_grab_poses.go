@@ -37,8 +37,6 @@ type gripperCalibration struct {
 	closedGripperHeightMM float64
 	binHoverHeightMM      float64
 	orientation           *spatialmath.OrientationVectorDegrees
-	xOffsetMM             float64
-	yOffsetMM             float64
 	binHoverOffsets       map[int]binHoverOffsets
 }
 
@@ -137,9 +135,6 @@ func fetchGripperCalibration(ctx context.Context, logger logging.Logger, service
 		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
 	}
 
-	xOffset, _ := floatFromDoCommand(resp, "x_offset_mm")
-	yOffset, _ := floatFromDoCommand(resp, "y_offset_mm")
-
 	binHoverHeight, err := floatFromDoCommand(resp, "bin_hover_height_mm")
 	if err != nil {
 		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
@@ -159,8 +154,6 @@ func fetchGripperCalibration(ctx context.Context, logger logging.Logger, service
 			OZ:    oz,
 			Theta: theta,
 		},
-		xOffsetMM:       xOffset,
-		yOffsetMM:       yOffset,
 		binHoverOffsets: binHoverOffsets,
 	}, nil
 }
@@ -221,6 +214,16 @@ func floatFromDoCommand(resp map[string]interface{}, key string) (float64, error
 	}
 }
 
+func vizGrabBasePose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
+	point, err := salad.ComputeGrabBasePoint(zone, foodLevelMM, servingDepthMM)
+	if err != nil {
+		return nil, err
+	}
+	nx, ny, nz := zone.Plane.Normal[0], zone.Plane.Normal[1], zone.Plane.Normal[2]
+	orient := &spatialmath.OrientationVector{OX: -nx, OY: -ny, OZ: -nz}
+	return spatialmath.NewPose(point, orient), nil
+}
+
 func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightMapZoneResult, zMean, servingDepthMM float64, calibration *gripperCalibration) error {
 	vizClient.SetURL(vizURL)
 	if err := vizClient.RemoveAllSpatialObjects(); err != nil {
@@ -251,7 +254,7 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 		if err != nil {
 			return fmt.Errorf("zone %d food level: %w", r.zone.ID, err)
 		}
-		grabBasePose, err := salad.GrabBasePose(&r.zone, foodLevelMM, servingDepthMM)
+		grabBasePose, err := vizGrabBasePose(&r.zone, foodLevelMM, servingDepthMM)
 		if err != nil {
 			return fmt.Errorf("zone %d grab base pose: %w", r.zone.ID, err)
 		}
@@ -272,8 +275,6 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 			servingDepthMM,
 			calibration.closedGripperHeightMM,
 			calibration.orientation,
-			calibration.xOffsetMM,
-			calibration.yOffsetMM,
 		)
 		if err != nil {
 			return fmt.Errorf("zone %d hover pose: %w", r.zone.ID, err)
@@ -295,7 +296,6 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 		if err != nil {
 			return fmt.Errorf("zone %d grab pose: %w", r.zone.ID, err)
 		}
-		grabPose = salad.ApplyXYOffset(grabPose, calibration.xOffsetMM, calibration.yOffsetMM)
 		if err := vizClient.DrawPoses([]spatialmath.Pose{grabPose}, []string{"green"}, true); err != nil {
 			return fmt.Errorf("drawing zone-%d-grab: %w", r.zone.ID, err)
 		}

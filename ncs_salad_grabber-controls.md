@@ -43,8 +43,6 @@ The following attribute template can be used to configure this model:
   "grab-height-mm": <float>,
   "shake-arm-service": <string>,
   "assets-dir": <string>,
-  "x-offset-mm": <float>,
-  "y-offset-mm": <float>,
   "save-plans": <bool>,
   "grab-line-tolerance-mm": <float>,
   "grab-orientation-tolerance-degs": <float>,
@@ -74,8 +72,6 @@ The following attributes are available for this model:
 | `grab-height-mm` | float | Required (implicit) | Offset (mm) added to the bin's min Z when computing the grab depth. Negative values descend below the bin floor. |
 | `shake-arm-service` | string | Optional | Name of a generic service that accepts `{"shake_arm": true}`. Called after dropping the ingredient into the bowl. |
 | `assets-dir` | string | Optional | Directory containing `mesh.ply` and `zones.json`. Defaults to `/home/viam/assets`. |
-| `x-offset-mm` | float | Optional | Global X offset (mm) applied to every computed hover and grab pose. Useful for fine-tuning without re-running setup. Defaults to `0`. |
-| `y-offset-mm` | float | Optional | Global Y offset (mm) applied to every computed hover and grab pose. Defaults to `0`. |
 | `save-plans` | bool | Optional | When `true`, every `get_from_bin` call writes a JSON plan record (waypoints, linearity, error) to `/root/.viam/capture/grab-<ts>-zone<id>.json`. Defaults to `false`. |
 | `grab-line-tolerance-mm` | float | Optional | Linear-constraint tolerance (mm) on the straight descend and ascend through the bin. Defaults to `1.0`. |
 | `grab-orientation-tolerance-degs` | float | Optional | Orientation-constraint tolerance (degrees) on the descend/ascend. Defaults to `1.0`. |

@@ -13,6 +13,8 @@ import (
 // descends to scoop a serving when a bin does not specify a serving-depth-mm.
 const DefaultServingDepthMM = 30.0
 
+const MinimumFoodLevelMM = 25.0
+
 // FoodLevelMMFromPlaneFitStats returns the median signed distance to the zone
 // plane at the plane center, matching getBinFoodLevel's height-map lookup.
 func FoodLevelMMFromPlaneFitStats(zone *segmentation.Zone, stats segmentation.PlaneFitStats) (float64, error) {
@@ -28,29 +30,13 @@ func FoodLevelMMFromPlaneFitStats(zone *segmentation.Zone, stats segmentation.Pl
 // enter the food: servingDepthMM below the detected food surface along the
 // zone plane normal.
 func ComputeGrabBasePoint(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (r3.Vector, error) {
-	if foodLevelMM < 35.0 {
-		return r3.Vector{}, fmt.Errorf("food level is too low: %.2f mm", foodLevelMM)
+	if foodLevelMM < MinimumFoodLevelMM {
+		return r3.Vector{}, fmt.Errorf("food level is too low: %.2f mm (minimum %.2f mm)", foodLevelMM, MinimumFoodLevelMM)
 	}
 	zoneCenter := r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]}
 	normal := zonePlaneNormal(zone)
 	foodHeight := zoneCenter.Add(normal.Mul(foodLevelMM))
 	return foodHeight.Add(normal.Mul(-servingDepthMM)), nil
-}
-
-// GrabBasePose returns a pose at the expected grab point with orientation
-// aligned to the zone plane normal (arrow points into the food).
-func GrabBasePose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
-	point, err := ComputeGrabBasePoint(zone, foodLevelMM, servingDepthMM)
-	if err != nil {
-		return nil, err
-	}
-	normal := zonePlaneNormal(zone)
-	orient := &spatialmath.OrientationVector{
-		OX: -normal.X,
-		OY: -normal.Y,
-		OZ: -normal.Z,
-	}
-	return spatialmath.NewPose(point, orient), nil
 }
 
 // ComputeGrabPose returns the arm-base pose that places the closed gripper tip
@@ -72,18 +58,6 @@ func ComputeGrabPose(
 	}
 	idealArmBasePosition := grabBasePoint.Add(armAxisVec.Mul(-closedGripperHeightMM))
 	return spatialmath.NewPose(idealArmBasePosition, orientation), nil
-}
-
-// ApplyXYOffset shifts a pose in world-frame X/Y by the given calibration offsets.
-func ApplyXYOffset(pose spatialmath.Pose, xOffsetMM, yOffsetMM float64) spatialmath.Pose {
-	if xOffsetMM == 0 && yOffsetMM == 0 {
-		return pose
-	}
-	pt := pose.Point()
-	return spatialmath.NewPose(
-		r3.Vector{X: pt.X + xOffsetMM, Y: pt.Y + yOffsetMM, Z: pt.Z},
-		pose.Orientation(),
-	)
 }
 
 // BinHoverPose returns the configured hover pose for a bin zone: plane-point XY
@@ -108,27 +82,24 @@ func BinHoverPose(
 }
 
 // GrabHoverPose returns the hover pose used in grab planning: XY from the bin
-// hover pose (with calibration offsets), orientation from the grab pose.
+// hover pose, orientation from the grab pose.
 func GrabHoverPose(
 	zone *segmentation.Zone,
 	zMean, binHoverHeightMM, hoverXOffsetMM, hoverYOffsetMM float64,
 	foodLevelMM, servingDepthMM, closedGripperHeightMM float64,
 	orientation spatialmath.Orientation,
-	xOffsetMM, yOffsetMM float64,
 ) (spatialmath.Pose, error) {
 	hover, err := BinHoverPose(zone, zMean, binHoverHeightMM, hoverXOffsetMM, hoverYOffsetMM, orientation)
 	if err != nil {
 		return nil, err
 	}
-	hoverWithOffset := ApplyXYOffset(hover, xOffsetMM, yOffsetMM)
 
 	grabPose, err := ComputeGrabPose(zone, foodLevelMM, servingDepthMM, closedGripperHeightMM, orientation)
 	if err != nil {
 		return nil, err
 	}
-	grabPose = ApplyXYOffset(grabPose, xOffsetMM, yOffsetMM)
 
-	return spatialmath.NewPose(hoverWithOffset.Point(), grabPose.Orientation()), nil
+	return spatialmath.NewPose(hover.Point(), grabPose.Orientation()), nil
 }
 
 func zonePlaneNormal(zone *segmentation.Zone) r3.Vector {
