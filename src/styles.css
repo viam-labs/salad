@@ -34,6 +34,16 @@
   --accent-shadow: rgba(224, 120, 159, 0.15);
 }
 
+[data-theme="mediterranean"] {
+  --bg-hummus: #f5f0e4;
+  --bg-cucumber: #f0ddd0;
+  --bg-quinoa: #f0e8d0;
+  --green-dark: #c0553d;
+  --green-darker: #9a3f29;
+  --accent-glow: rgba(192, 85, 61, 0.12);
+  --accent-shadow: rgba(192, 85, 61, 0.15);
+}
+
 html,
 body {
   height: 100%;

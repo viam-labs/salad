@@ -41,6 +41,7 @@ const (
 	defaultMeshTargetTriangles = 5000
 	themeSalad                 = "salad"
 	themeIceCream              = "icecream"
+	themeMediterranean         = "mediterranean"
 )
 
 // BuildCoordinatorStatus is the build coordinator's operational state.
@@ -239,7 +240,7 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	}
 
 	if cfg.Theme != "" && normalizeTheme(cfg.Theme) == "" {
-		return nil, nil, fmt.Errorf("%s.theme must be 'salad' or 'icecream', got %q", path, cfg.Theme)
+		return nil, nil, fmt.Errorf("%s.theme must be 'salad', 'icecream', or 'mediterranean', got %q", path, cfg.Theme)
 	}
 
 	return deps, optDeps, nil
@@ -251,6 +252,8 @@ func normalizeTheme(theme string) string {
 		return themeSalad
 	case themeIceCream, "ice-cream", "ice_cream":
 		return themeIceCream
+	case themeMediterranean, "med", "mezze":
+		return themeMediterranean
 	case "":
 		return themeSalad
 	default:

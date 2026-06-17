@@ -1,10 +1,16 @@
-export type ThemeId = "salad" | "icecream";
+export type ThemeId = "salad" | "icecream" | "mediterranean";
 
 const ICE_CREAM_ALIASES = new Set(["icecream", "ice-cream", "ice_cream"]);
+const MEDITERRANEAN_ALIASES = new Set([
+  "mediterranean",
+  "med",
+  "mezze",
+]);
 
 export function parseThemeId(value: string): ThemeId {
   const normalized = value.trim().toLowerCase();
   if (ICE_CREAM_ALIASES.has(normalized)) return "icecream";
+  if (MEDITERRANEAN_ALIASES.has(normalized)) return "mediterranean";
   return "salad";
 }
 
@@ -49,6 +55,60 @@ export const saladEmojiMap: Record<string, string> = {
   "balsamic vinaigrette": "\u{1FAD7}",
   "lemon tahini": "\u{1F34B}",
   "sesame ginger": "\u{1FAD0}",
+};
+
+export const mediterraneanEmojiMap: Record<string, string> = {
+  // bases
+  pita: "\u{1F9C6}",
+  "pita bread": "\u{1F9C6}",
+  lavash: "\u{1F9C6}",
+  flatbread: "\u{1F9C6}",
+  couscous: "\u{1F35A}",
+  bulgur: "\u{1F33E}",
+  rice: "\u{1F35A}",
+  quinoa: "\u{1F33E}",
+  greens: "\u{1F96C}",
+  arugula: "\u{1F331}",
+  spinach: "\u{1F96C}",
+  romaine: "\u{1F96C}",
+  "mixed greens": "\u{1F96C}",
+  // proteins
+  falafel: "\u{1F9C6}",
+  chicken: "\u{1F357}",
+  lamb: "\u{1F969}",
+  shrimp: "\u{1F990}",
+  salmon: "\u{1F41F}",
+  chickpeas: "\u{1FAD8}",
+  halloumi: "\u{1F9C0}",
+  egg: "\u{1F95A}",
+  // toppings
+  tomato: "\u{1F345}",
+  cucumber: "\u{1F952}",
+  olive: "\u{1FAD2}",
+  olives: "\u{1FAD2}",
+  "kalamata olives": "\u{1FAD2}",
+  feta: "\u{1F9C0}",
+  "feta cheese": "\u{1F9C0}",
+  "red onion": "\u{1F9C5}",
+  onion: "\u{1F9C5}",
+  "roasted pepper": "\u{1FAD1}",
+  pepper: "\u{1FAD1}",
+  artichoke: "\u{1F331}",
+  hummus: "\u{1F963}",
+  tzatziki: "\u{1FAD5}",
+  "sun-dried tomato": "\u{1F345}",
+  capers: "\u{1FAD2}",
+  mint: "\u{1F33F}",
+  parsley: "\u{1F33F}",
+  // dressings
+  "lemon vinaigrette": "\u{1F34B}",
+  tahini: "\u{1F34B}",
+  "tahini dressing": "\u{1F34B}",
+  harissa: "\u{1F336}",
+  "tzatziki sauce": "\u{1FAD5}",
+  "olive oil": "\u{1FAD2}",
+  "lemon herb": "\u{1F34B}",
+  "garlic lemon": "\u{1F9C4}",
 };
 
 export const iceCreamEmojiMap: Record<string, string> = {
@@ -139,10 +199,16 @@ export const iceCreamEmojiMap: Record<string, string> = {
 const fallbackEmoji: Record<ThemeId, string> = {
   salad: "\u{1F957}",
   icecream: "\u{1F366}",
+  mediterranean: "\u{1F9C6}",
 };
 
 export function getEmojiForTheme(name: string, themeId: ThemeId): string {
-  const map = themeId === "icecream" ? iceCreamEmojiMap : saladEmojiMap;
+  const map =
+    themeId === "icecream"
+      ? iceCreamEmojiMap
+      : themeId === "mediterranean"
+        ? mediterraneanEmojiMap
+        : saladEmojiMap;
   const lower = name.toLowerCase();
   if (map[lower]) return map[lower];
   for (const [key, emoji] of Object.entries(map)) {
@@ -163,6 +229,12 @@ export const categoryLabelsByTheme: Record<ThemeId, Record<string, string>> = {
     protein: "Mix-ins",
     topping: "Toppings",
     dressing: "Sauces",
+  },
+  mediterranean: {
+    base: "Bases",
+    protein: "Proteins",
+    topping: "Toppings",
+    dressing: "Dressings",
   },
 };
 
@@ -193,5 +265,17 @@ export const copy = {
     completeEmoji: "\u{1F366}",
     completeTitle: (name: string) =>
       name ? `${name}'s Sundae is Ready!` : "Your Sundae is Ready!",
+  },
+  mediterranean: {
+    orderTitle: "Build Your Mezze Plate",
+    emptyCartLabel: "Your mezze plate is",
+    buildButton: "Build My Mezze Plate",
+    buildingTitle: (name: string) =>
+      name
+        ? `Building ${name}'s Mezze Plate\u2026`
+        : "Building Your Mezze Plate\u2026",
+    completeEmoji: "\u{1F9C6}",
+    completeTitle: (name: string) =>
+      name ? `${name}'s Mezze Plate is Ready!` : "Your Mezze Plate is Ready!",
   },
 } as const;
