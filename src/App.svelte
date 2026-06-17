@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { initConnection, fetchIngredients, getCameraStream, getStatus } from "./lib/robot";
+  import { initConnection, fetchTheme, fetchIngredients, getCameraStream, getStatus } from "./lib/robot";
+  import { setThemeFromMachine } from "./lib/theme.svelte";
   import type { Ingredient, AppScreen } from "./lib/types";
   import OrderingScreen from "./components/OrderingScreen.svelte";
   import BuildingScreen from "./components/BuildingScreen.svelte";
@@ -26,6 +27,7 @@
   onMount(async () => {
     try {
       await initConnection();
+      setThemeFromMachine(await fetchTheme());
       ingredients = await fetchIngredients();
       screen = "ordering";
     } catch (err) {

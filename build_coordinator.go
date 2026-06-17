@@ -39,6 +39,9 @@ var categoryOrder = map[string]int{
 const (
 	categoryDressing           = "dressing"
 	defaultMeshTargetTriangles = 5000
+	themeSalad                 = "salad"
+	themeIceCream              = "icecream"
+	themeMediterranean         = "mediterranean"
 )
 
 // BuildCoordinatorStatus is the build coordinator's operational state.
@@ -177,6 +180,7 @@ type BuildCoordinatorConfig struct {
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
 	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
 	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
+	Theme               string                              `json:"theme,omitempty"`
 }
 
 func init() {
@@ -235,7 +239,26 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		return nil, nil, fmt.Errorf("%s.mesh-target-triangles must be >= 0, got %d", path, *cfg.MeshTargetTriangles)
 	}
 
+	if cfg.Theme != "" && normalizeTheme(cfg.Theme) == "" {
+		return nil, nil, fmt.Errorf("%s.theme must be 'salad', 'icecream', or 'mediterranean', got %q", path, cfg.Theme)
+	}
+
 	return deps, optDeps, nil
+}
+
+func normalizeTheme(theme string) string {
+	switch strings.ToLower(strings.TrimSpace(theme)) {
+	case themeSalad:
+		return themeSalad
+	case themeIceCream, "ice-cream", "ice_cream":
+		return themeIceCream
+	case themeMediterranean, "med", "mezze":
+		return themeMediterranean
+	case "":
+		return themeSalad
+	default:
+		return ""
+	}
 }
 
 type buildCoordinator struct {
@@ -450,7 +473,14 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if _, ok := cmd["get_setup_result"]; ok {
 		return s.getSetupResult()
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
+	if _, ok := cmd["get_theme"]; ok {
+		return map[string]interface{}{"theme": s.getTheme()}, nil
+	}
+	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', 'get_setup_result', or 'get_theme' field")
+}
+
+func (s *buildCoordinator) getTheme() string {
+	return normalizeTheme(s.cfg.Theme)
 }
 
 func (s *buildCoordinator) updateStatus(status BuildCoordinatorStatus, progress float64) {
