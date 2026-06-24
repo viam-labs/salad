@@ -416,11 +416,11 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		s.ingredients[ing.Name] = ing
 	}
 
-	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{"get_dressings": true})
+	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]any{"get_dressings": true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dressings from dressing controls: %w", err)
 	}
-	if dressings, ok := dressingsResult["dressings"].([]map[string]interface{}); ok {
+	if dressings, ok := dressingsResult["dressings"].([]map[string]any); ok {
 		for _, dressing := range dressings {
 			s.ingredients[dressing["name"].(string)] = BuildCoordinatorIngredientConfig{
 				Name:            dressing["name"].(string),
@@ -518,7 +518,8 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	return s.sm.DoStop()
 }
 
-func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, customerName string) (map[string]interface{}, error) {
+//nolint:unparam // ctx kept for DoCommand-style API symmetry; build runs under s.cancelCtx so it survives caller cancellation
+func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
 
 	if customerName != "" {
@@ -687,7 +688,7 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	s.logger.Infof("Wrote mesh %s", meshPath)
 
 	stableMeshPath := s.assetsDir + "/mesh.ply"
-	meshBytes, err := os.ReadFile(filepath.Clean(meshPath))
+	meshBytes, err := os.ReadFile(meshPath) //nolint:gosec // path built from config-controlled CaptureDir
 	if err != nil {
 		return fmt.Errorf("failed to read mesh for stable copy: %w", err)
 	}
@@ -744,17 +745,17 @@ func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
 	pcdPath := s.assetsDir + "/merged.pcd"
 	zonesPath := s.assetsDir + "/zones.json"
 
-	pcdBytes, err := os.ReadFile(filepath.Clean(pcdPath))
+	pcdBytes, err := os.ReadFile(pcdPath) //nolint:gosec // path derived from our own assetsDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read PCD file %q: %w", pcdPath, err)
 	}
 
-	zonesBytes, err := os.ReadFile(filepath.Clean(zonesPath))
+	zonesBytes, err := os.ReadFile(zonesPath) //nolint:gosec // path derived from our own assetsDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read zones file %q: %w", zonesPath, err)
 	}
 
-	var zones any
+	var zones interface{}
 	if err := json.Unmarshal(zonesBytes, &zones); err != nil {
 		return nil, fmt.Errorf("failed to parse zones: %w", err)
 	}
@@ -798,7 +799,7 @@ func (s *buildCoordinator) checkAssets() error {
 	return nil
 }
 
-func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[string]interface{}, error) {
+func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) (map[string]interface{}, error) {
 	// check setup was run before executing salad build
 	if err := s.checkAssets(); err != nil {
 		return map[string]interface{}{
@@ -1171,7 +1172,7 @@ func (s *buildCoordinator) resetAll(ctx context.Context) error {
 	return nil
 }
 
-func toFloat64(v any) (float64, error) {
+func toFloat64(v interface{}) (float64, error) {
 	switch val := v.(type) {
 	case float64:
 		return val, nil
