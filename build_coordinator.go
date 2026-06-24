@@ -522,6 +522,8 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
 
+	buildCtx, _ := context.WithCancel(s.cancelCtx)
+
 	if customerName != "" {
 		s.logger.Infof("New salad order received for %q: %v", customerName, value)
 	} else {
