@@ -15,7 +15,9 @@ export async function initConnection(): Promise<void> {
   const machineCookieKey = window.location.pathname.split("/")[2];
   const cookie = Cookies.get(machineCookieKey);
   if (!cookie) {
-    throw new Error("No machine cookie found. Are you running inside the Viam app?");
+    throw new Error(
+      "No machine cookie found. Are you running inside the Viam app?",
+    );
   }
 
   const parsed = JSON.parse(cookie);
@@ -49,7 +51,10 @@ export async function fetchIngredients(): Promise<Ingredient[]> {
   const result = (await coordinator.doCommand({
     list_ingredients: true,
   })) as unknown as { ingredients: Ingredient[] };
-  return result.ingredients ?? [];
+  return (result.ingredients ?? []).filter(
+    (ing): ing is Ingredient =>
+      typeof ing?.name === "string" && ing.name.length > 0,
+  );
 }
 
 export async function buildSalad(

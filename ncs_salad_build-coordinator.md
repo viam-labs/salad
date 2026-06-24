@@ -41,7 +41,8 @@ The following attribute template can be used to configure this model:
       "name": <string>,
       "grams-per-serving": <float>,
       "category": "base" | "protein" | "topping" | "dressing",
-      "zone-id": <int>
+      "zone-id": <int>,
+      "serving-depth-mm": <float>
     }
   ],
   "text-to-speech": <string>,
@@ -99,7 +100,8 @@ Each entry in `ingredients` has the following fields:
 | `name` | string | Required | Ingredient name. Referenced from `build_salad` and from the `dressings` map in `dressing-controls`. |
 | `grams-per-serving` | float | Required | Must be positive. Target weight added per serving. |
 | `category` | string | Required | One of `"base"`, `"protein"`, `"topping"`, `"dressing"`. Drives build order. |
-| `zone-id` | int | Required | Numeric zone ID from `zones.json` (produced by `setup_station`). Identifies which segmented bin to grab from. |
+| `zone-id` | int | Required | Numeric zone ID from `zones.json` (produced by `setup_station`). Identifies which segmented bin to grab from. Passed to `grabber-controls` via `get_from_bin`. |
+| `serving-depth-mm` | float | Optional | How far below the detected food surface the gripper descends when grabbing a serving of this ingredient. Must be `>= 0`. Passed to `grabber-controls` via `get_from_bin`. Defaults to `30`. |
 
 `filter` fields (used by `setup_station`):
 

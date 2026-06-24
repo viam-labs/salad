@@ -54,7 +54,7 @@ type grabStepSpec struct {
 	preAction   GrabStepAction
 }
 
-func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches, zoneID int, zone *segmentation.Zone, binFoodLevelMM float64, buildID string) (*GrabPlan, error) {
+func (s *grabberControls) planGrab(ctx context.Context, zoneCfg *grabberZone, name string, zoneID int, zone *segmentation.Zone, binFoodLevelMM, servingDepthMM float64, buildID string) (*GrabPlan, error) {
 	homePoseCfg, err := s.leftHome.DoCommand(ctx, map[string]interface{}{"cfg": true})
 	s.logger.Infof("home pose cfg: %+v", homePoseCfg)
 	if err != nil {
@@ -75,13 +75,13 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		OZ:    get("orientation", "z"),
 		Theta: get("orientation", "th"),
 	})
-	grabPose, err := s.computeGrabPose(zone, binFoodLevelMM, bin.servingDepthMM)
+	grabPose, err := s.computeGrabPose(zone, binFoodLevelMM, servingDepthMM)
 	if err != nil {
 		return nil, err
 	}
 
 	// use the grab pose orientation so the orientations are consistent between the two
-	hover := spatialmath.NewPose(bin.hoverPose.Point(), grabPose.Orientation())
+	hover := spatialmath.NewPose(zoneCfg.hoverPose.Point(), grabPose.Orientation())
 
 	grabPoseThatsJustHeightDiff := spatialmath.NewPose(r3.Vector{
 		X: hover.Point().X,
@@ -153,7 +153,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 
 		s.fileSaver.SaveAsync(ctx, fileio.NewPlanRequestSaveFile(
 			req, buildID,
-			fmt.Sprintf("grab_%s_zone%d_%s_plan_request.json", bin.name, zoneID, spec.name),
+			fmt.Sprintf("grab_%s_zone%d_%s_plan_request.json", name, zoneID, spec.name),
 			t, planDur,
 		))
 		if err != nil {
@@ -176,7 +176,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		}
 	}
 
-	return &GrabPlan{BinName: bin.name, ZoneID: zoneID, Steps: steps, PlannedAt: time.Now(), BuildID: buildID}, nil
+	return &GrabPlan{BinName: name, ZoneID: zoneID, Steps: steps, PlannedAt: time.Now(), BuildID: buildID}, nil
 }
 
 func (s *grabberControls) grabLinearConstraints() *motionplan.Constraints {

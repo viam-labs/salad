@@ -114,9 +114,9 @@ func fetchGripperCalibration(ctx context.Context, logger logging.Logger, service
 		return nil, fmt.Errorf("parsing gripper calibration from %q: %w", serviceName, err)
 	}
 
-	binResp, err := svc.DoCommand(ctx, map[string]interface{}{"get_bin_config": true})
+	binResp, err := svc.DoCommand(ctx, map[string]interface{}{"get_zone_config": true})
 	if err != nil {
-		return nil, fmt.Errorf("get_bin_config on %q: %w", serviceName, err)
+		return nil, fmt.Errorf("get_zone_config on %q: %w", serviceName, err)
 	}
 
 	orientRaw, ok := binResp["bin_hover_orientation"].(map[string]interface{})
@@ -164,22 +164,22 @@ func fetchGripperCalibration(ctx context.Context, logger logging.Logger, service
 }
 
 func parseBinHoverOffsets(resp map[string]interface{}) (map[int]binHoverOffsets, error) {
-	rawBins, ok := resp["bins"].([]interface{})
+	rawZones, ok := resp["zones"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("missing bins")
+		return nil, fmt.Errorf("missing zones")
 	}
-	offsets := make(map[int]binHoverOffsets, len(rawBins))
-	for i, raw := range rawBins {
-		bin, ok := raw.(map[string]interface{})
+	offsets := make(map[int]binHoverOffsets, len(rawZones))
+	for i, raw := range rawZones {
+		zone, ok := raw.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("bins[%d] has unexpected type %T", i, raw)
+			return nil, fmt.Errorf("zones[%d] has unexpected type %T", i, raw)
 		}
-		zoneID, err := intFromDoCommand(bin, "zone_id")
+		zoneID, err := intFromDoCommand(zone, "zone_id")
 		if err != nil {
-			return nil, fmt.Errorf("bins[%d]: %w", i, err)
+			return nil, fmt.Errorf("zones[%d]: %w", i, err)
 		}
-		hoverX := optionalFloatFromDoCommand(bin, "hover_x_offset_mm")
-		hoverY := optionalFloatFromDoCommand(bin, "hover_y_offset_mm")
+		hoverX := optionalFloatFromDoCommand(zone, "hover_x_offset_mm")
+		hoverY := optionalFloatFromDoCommand(zone, "hover_y_offset_mm")
 		offsets[zoneID] = binHoverOffsets{xOffsetMM: hoverX, yOffsetMM: hoverY}
 	}
 	return offsets, nil
