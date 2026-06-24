@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/golang/geo/r3"
 	"github.com/spf13/cobra"
 	vizClient "github.com/viam-labs/motion-tools/client/client"
 	"go.viam.com/rdk/logging"
@@ -227,14 +228,11 @@ func floatFromDoCommand(resp map[string]interface{}, key string) (float64, error
 	}
 }
 
-func vizGrabBasePose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
-	point, err := salad.ComputeGrabBasePoint(zone, foodLevelMM, servingDepthMM)
-	if err != nil {
-		return nil, err
-	}
+func vizGrabBasePose(zone *segmentation.Zone, foodPoint r3.Vector, servingDepthMM float64) spatialmath.Pose {
+	point := salad.ComputeGrabBasePoint(zone, foodPoint, servingDepthMM)
 	nx, ny, nz := zone.Plane.Normal[0], zone.Plane.Normal[1], zone.Plane.Normal[2]
 	orient := &spatialmath.OrientationVector{OX: -nx, OY: -ny, OZ: -nz}
-	return spatialmath.NewPose(point, orient), nil
+	return spatialmath.NewPose(point, orient)
 }
 
 func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightMapZoneResult, zMean, servingDepthMM float64, calibration *gripperCalibration) error {
@@ -263,14 +261,11 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 			return fmt.Errorf("drawing zone %d plane: %w", r.zone.ID, err)
 		}
 
-		foodLevelMM, err := salad.FoodLevelMMFromPlaneFitStats(&r.zone, r.stats)
+		food, err := salad.FoodPointFromPlaneFitStats(&r.zone, r.stats)
 		if err != nil {
-			return fmt.Errorf("zone %d food level: %w", r.zone.ID, err)
+			return fmt.Errorf("zone %d food point: %w", r.zone.ID, err)
 		}
-		grabBasePose, err := vizGrabBasePose(&r.zone, foodLevelMM, servingDepthMM)
-		if err != nil {
-			return fmt.Errorf("zone %d grab base pose: %w", r.zone.ID, err)
-		}
+		grabBasePose := vizGrabBasePose(&r.zone, food.Point, servingDepthMM)
 		if err := vizClient.DrawPoses([]spatialmath.Pose{grabBasePose}, []string{"red"}, true); err != nil {
 			return fmt.Errorf("drawing zone-%d-grab-base: %w", r.zone.ID, err)
 		}
@@ -300,16 +295,13 @@ func vizGrabPoses(vizURL string, source pointcloud.PointCloud, results []heightM
 			return err
 		}
 
-		grabPose, err := salad.ComputeGrabPose(
+		grabPose := salad.ComputeGrabPose(
 			&r.zone,
-			foodLevelMM,
+			food.Point,
 			servingDepthMM,
 			calibration.closedGripperHeightMM,
 			calibration.orientation,
 		)
-		if err != nil {
-			return fmt.Errorf("zone %d grab pose: %w", r.zone.ID, err)
-		}
 		if err := vizClient.DrawPoses([]spatialmath.Pose{grabPose}, []string{"green"}, true); err != nil {
 			return fmt.Errorf("drawing zone-%d-grab: %w", r.zone.ID, err)
 		}

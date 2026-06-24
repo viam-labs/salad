@@ -196,6 +196,8 @@ func init() {
 	heightMapCmd.Flags().StringVar(&heightMapFlags.ZonesPath, "zones", "", "zones.json with fitted bin-floor planes (required)")
 	heightMapCmd.Flags().IntVar(&heightMapFlags.ZoneID, "zone-id", -1, "restrict to a single zone ID; -1 = all zones")
 	heightMapCmd.Flags().Float64Var(&heightMapFlags.ServingDepthMM, "serving-depth-mm", 30, "depth below detected food surface for expected grab position (mm)")
+	heightMapCmd.Flags().Float64Var(&heightMapFlags.GripperWidthMM, "gripper-width-mm", 0, "open gripper X width (mm) from get_gripper_calibration open_gripper_width_mm; cells whose centered gripper XY bbox would exit the zone are zeroed out (0 disables)")
+	heightMapCmd.Flags().Float64Var(&heightMapFlags.GripperDepthMM, "gripper-depth-mm", 0, "open gripper Y depth (mm) from get_gripper_calibration open_gripper_depth_mm; cells whose centered gripper XY bbox would exit the zone are zeroed out (0 disables)")
 	heightMapCmd.MarkFlagsMutuallyExclusive("camera", "pcd")
 	heightMapCmd.MarkFlagsOneRequired("camera", "pcd")
 	mustMarkFlagRequired(heightMapCmd, "zones")

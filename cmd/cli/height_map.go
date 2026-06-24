@@ -22,6 +22,8 @@ type HeightMapFlags struct {
 	ZonesPath      string
 	ZoneID         int
 	ServingDepthMM float64
+	GripperWidthMM float64
+	GripperDepthMM float64
 }
 
 var heightMapFlags HeightMapFlags
@@ -107,6 +109,9 @@ func loadHeightMapZoneResults(ctx context.Context, logger logging.Logger, flags 
 	results := make([]heightMapZoneResult, 0, len(targets))
 	for i := range targets {
 		stats, culled := segmentation.ZonePlaneFitStats(pc, &targets[i], nil)
+		if flags.GripperWidthMM > 0 || flags.GripperDepthMM > 0 {
+			stats.HeightMap.MaskGripperOverflow(flags.GripperWidthMM, flags.GripperDepthMM)
+		}
 		results = append(results, heightMapZoneResult{zone: targets[i], culled: culled, stats: stats})
 	}
 	return pc, zonesResult, results, nil
@@ -119,19 +124,34 @@ func printHeightMapGrid(w io.Writer, zone segmentation.Zone, stats segmentation.
 	hm := stats.HeightMap
 	n := segmentation.ZoneHeightMapGridSize
 
-	centroidRow, centroidCol := hm.CellXY(zone.Plane.Point[0], zone.Plane.Point[1])
-	centroidDisplayRow := n - 1 - centroidCol
-	centroidDisplayCol := n - 1 - centroidRow
+	// Highlight the cell with the highest median signed distance (skipping
+	// empty/masked NaN cells). row∝Y, col∝X internally.
+	maxRow, maxCol := -1, -1
+	maxVal := math.Inf(-1)
+	for r := 0; r < n; r++ {
+		for c := 0; c < n; c++ {
+			v := hm.MedianSignedDistanceMM[r][c]
+			if math.IsNaN(v) {
+				continue
+			}
+			if v > maxVal {
+				maxVal = v
+				maxRow, maxCol = r, c
+			}
+		}
+	}
+	hasMax := maxRow >= 0
+	maxDisplayRow := n - 1 - maxCol
+	maxDisplayCol := n - 1 - maxRow
 
 	if _, err := fmt.Fprintf(w, "Zone %d height map — median signed distance to bin-floor plane (mm)\n", zone.ID); err != nil {
 		return err
 	}
-	if foodLevelMM, err := salad.FoodLevelMMFromPlaneFitStats(&zone, stats); err == nil {
-		if grabBase, err := salad.ComputeGrabBasePoint(&zone, foodLevelMM, servingDepthMM); err == nil {
-			if _, err := fmt.Fprintf(w, "  expected grab base: (%.1f, %.1f, %.1f)  food level=%.1f mm  serving depth=%.1f mm\n",
-				grabBase.X, grabBase.Y, grabBase.Z, foodLevelMM, servingDepthMM); err != nil {
-				return err
-			}
+	if food, err := salad.FoodPointFromPlaneFitStats(&zone, stats); err == nil {
+		grabBase := salad.ComputeGrabBasePoint(&zone, food.Point, servingDepthMM)
+		if _, err := fmt.Fprintf(w, "  highest food point: (%.1f, %.1f, %.1f)  expected grab base: (%.1f, %.1f, %.1f)  food level=%.1f mm  serving depth=%.1f mm\n",
+			food.Point.X, food.Point.Y, food.Point.Z, grabBase.X, grabBase.Y, grabBase.Z, food.LevelMM, servingDepthMM); err != nil {
+			return err
 		}
 	}
 	if _, err := fmt.Fprintf(w, "  vertical ↑ X  (%.1f at top → %.1f at bottom)\n", hm.MaxX, hm.MinX); err != nil {
@@ -140,9 +160,15 @@ func printHeightMapGrid(w io.Writer, zone segmentation.Zone, stats segmentation.
 	if _, err := fmt.Fprintf(w, "  horizontal → −Y  (left: Y=%.1f, right: Y=%.1f)\n", hm.MaxY, hm.MinY); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "  plane center (%.1f, %.1f) → highlighted cell at row %d, col %d (0-based, top-left origin)\n",
-		zone.Plane.Point[0], zone.Plane.Point[1], centroidDisplayRow, centroidDisplayCol); err != nil {
-		return err
+	if hasMax {
+		if _, err := fmt.Fprintf(w, "  highest median distance %.1f mm → highlighted cell at row %d, col %d (0-based, top-left origin)\n",
+			maxVal, maxDisplayRow, maxDisplayCol); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintf(w, "  no populated cells to highlight\n"); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintf(w, "  %d / %d points in zone bounds\n\n", stats.PointsInBounds, stats.PointsTotal); err != nil {
 		return err
@@ -153,7 +179,7 @@ func printHeightMapGrid(w io.Writer, zone segmentation.Zone, stats segmentation.
 			internalRow := n - 1 - displayCol
 			internalCol := n - 1 - displayRow
 			v := hm.MedianSignedDistanceMM[internalRow][internalCol]
-			highlight := displayRow == centroidDisplayRow && displayCol == centroidDisplayCol
+			highlight := hasMax && displayRow == maxDisplayRow && displayCol == maxDisplayCol
 			if _, err := fmt.Fprint(w, formatHeightMapCell(v, highlight)); err != nil {
 				return err
 			}
