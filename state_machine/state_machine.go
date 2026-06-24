@@ -95,9 +95,9 @@ func (sm *StateMachine) StartBuildSalad(ctx, buildCtx context.Context, buildCanc
 	// Verify we're transitioning from a valid state.
 	if !(sm.status == Idle || sm.status == Complete) {
 		return map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("Salad must be in idle or complete state"),
-			}
+			"success": false,
+			"message": "Salad must be in idle or complete state",
+		}
 		// TODO check if these two states are right
 	}
 
