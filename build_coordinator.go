@@ -29,7 +29,7 @@ var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
 // categoryOrder defines the build sequence for ingredient categories.
 // Ingredients are added to the bowl in this order.
 var categoryOrder = map[string]int{
-	"base":    		  0,
+	"base":           0,
 	"protein":        1,
 	"topping":        2,
 	categoryDressing: 3,
