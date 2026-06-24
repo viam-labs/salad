@@ -19,6 +19,6 @@
   <div class="stepper">
     <button disabled={count <= 0} onclick={() => onUpdate(count - 1)}>&minus;</button>
     <span class="stepper-count">{count}</span>
-    <button disabled={count >= 1} onclick={() => onUpdate(count + 1)}>+</button>
+    <button disabled={count >= 2} onclick={() => onUpdate(count + 1)}>+</button>
   </div>
 </div>
