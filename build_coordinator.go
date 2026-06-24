@@ -29,9 +29,9 @@ var BuildCoordinator = resource.NewModel("ncs", "salad", "build-coordinator")
 // categoryOrder defines the build sequence for ingredient categories.
 // Ingredients are added to the bowl in this order.
 var categoryOrder = map[string]int{
-	"base":     0,
-	"protein":  1,
-	"topping":  2,
+	"base":    		  0,
+	"protein":        1,
+	"topping":        2,
 	categoryDressing: 3,
 }
 
@@ -445,17 +445,7 @@ func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
-		outputMap, buildCtx, err := s.sm.StartBuildSalad(ctx, s.cancelCtx, val, customerName)
-		if err != nil {
-			return map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("%v", err),
-			}, nil
-		}
-		if outputMap != nil {
-			return outputMap, nil
-		}
-		return s.doBuildSalad(buildCtx, val, customerName)
+		return s.doBuildSalad(ctx, val, customerName)
 	}
 	if _, ok := cmd["setup_station"]; ok {
 		return s.doSetupStation()
@@ -599,9 +589,11 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("setup_station requires 'imaging-camera' to be configured")
 	}
 
-	resultMap, setupCtx := s.sm.OperationInProgress(s.cancelCtx)
-	if resultMap != nil {
-		return resultMap, nil
+	setupCtx, cancelFunc := context.WithCancel(s.cancelCtx)
+	err_output := s.sm.StartSetupStation(cancelFunc)
+
+	if err_output != nil {
+		return err_output, nil
 	}
 
 	s.logger.Infof("Starting station setup")

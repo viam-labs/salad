@@ -54,7 +54,7 @@ func (sm *StateMachine) UpdateStateMachineStatus(status Status, progress float64
 func (sm *StateMachine) GetStateMachineStatus() map[string]any {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return map[string]any{
+	return map[string]interface{}{
 		"status":        sm.status,
 		"progress":      sm.progress,
 		"customer_name": sm.customerName,
@@ -75,7 +75,7 @@ func (sm *StateMachine) DoStop() (map[string]any, error) {
 	sm.mu.RUnlock()
 
 	if cancelFunc == nil {
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": "No operation in progress",
 		}, nil
@@ -85,7 +85,7 @@ func (sm *StateMachine) DoStop() (map[string]any, error) {
 	cancelFunc()
 	<-done
 
-	return map[string]any{
+	return map[string]interface{}{
 		"success": true,
 		"message": "Operation stopped",
 	}, nil
@@ -101,7 +101,7 @@ func (sm *StateMachine) StartBuildSalad(ctx, cancelCtx context.Context, value an
 	sm.mu.Lock()
 	if sm.opCancelFunc != nil {
 		sm.mu.Unlock()
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": "An operation is already in progress, use 'stop' to cancel it first",
 		}, nil, nil
@@ -109,7 +109,7 @@ func (sm *StateMachine) StartBuildSalad(ctx, cancelCtx context.Context, value an
 	buildCtx, buildCancelFunc := context.WithCancel(cancelCtx)
 	sm.opCancelFunc = buildCancelFunc
 	sm.opDone = make(chan struct{})
-	sm.status = "preparing"
+	sm.status = Preparing
 	sm.progress = 0
 	sm.customerName = customerName
 	sm.errorMsg = ""
@@ -132,7 +132,7 @@ func (sm *StateMachine) EndBuildSalad() {
 
 func (sm *StateMachine) BuildSaladFailed(failMsg string) {
 	sm.mu.Lock()
-	sm.status = "failed"
+	sm.status = Failed
 	sm.errorMsg = failMsg
 	sm.mu.Unlock()
 }
@@ -149,11 +149,40 @@ func (sm *StateMachine) OperationInProgress(cancelCtx context.Context) (map[stri
 	setupCtx, setupCancelFunc := context.WithCancel(cancelCtx)
 	sm.opCancelFunc = setupCancelFunc
 	sm.opDone = make(chan struct{})
-	sm.status = "setting_up_station"
+	sm.status = SettingUp
 	sm.progress = 0
 	sm.errorMsg = ""
 	sm.mu.Unlock()
 	return nil, setupCtx
+}
+
+func (sm *StateMachine) StartSetupStation(setupCancelFunc context.CancelFunc) (map[string]interface{}) {
+	sm.mu.Lock()
+	if sm.opCancelFunc != nil {
+		sm.mu.Unlock()
+		return map[string]interface{}{
+			"success": false,
+			"message": "An operation is already in progress, use 'stop' to cancel it first",
+		}
+	}
+	sm.opCancelFunc = setupCancelFunc
+	sm.opDone = make(chan struct{})
+	sm.status = SettingUp
+	sm.progress = 0
+	sm.errorMsg = ""
+	sm.mu.Unlock()
+
+	sm.logger.Infof("Starting station setup")
+
+	defer func() {
+		sm.mu.Lock()
+		sm.opCancelFunc = nil
+		close(sm.opDone)
+		sm.opDone = nil
+		sm.mu.Unlock()
+	}()
+
+	return nil
 }
 
 func (sm *StateMachine) EndSetupStation() {
@@ -166,7 +195,7 @@ func (sm *StateMachine) EndSetupStation() {
 
 func (sm *StateMachine) SetupStationError(err error) map[string]any {
 	sm.mu.Lock()
-	sm.status = "failed"
+	sm.status = Failed
 	sm.errorMsg = err.Error()
 	sm.mu.Unlock()
 	return map[string]any{
