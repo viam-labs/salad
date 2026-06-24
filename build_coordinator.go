@@ -32,11 +32,11 @@ var categoryOrder = map[string]int{
 	"base":     0,
 	"protein":  1,
 	"topping":  2,
-	"dressing": 3,
+	categoryDressing: 3,
 }
 
 const (
-	categoryDressing                   = "dressing"
+	categoryDressing           = "dressing"
 	defaultMeshTargetTriangles = 5000
 	themeSalad                 = "salad"
 	themeIceCream              = "icecream"
@@ -216,9 +216,6 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	if cfg.RightHome == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "right-home")
 	}
-	if len(cfg.Ingredients) == 0 {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
-	}
 
 	deps := []string{cfg.GrabberControls, cfg.ScaleSensor, cfg.DressingControls, cfg.ChefsKissControls, cfg.LeftHome, cfg.RightHome}
 	var optDeps []string
@@ -230,37 +227,6 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	}
 	if cfg.ImagingCamera != "" {
 		optDeps = append(optDeps, cfg.ImagingCamera)
-	}
-
-	for i, ing := range cfg.Ingredients {
-		if ing.Name == "" {
-			return nil, nil, resource.NewConfigValidationFieldRequiredError(
-				fmt.Sprintf("%s.ingredients.%d", path, i), "name",
-			)
-		}
-		if ing.GramsPerServing <= 0 {
-			return nil, nil, fmt.Errorf(
-				"ingredient %q at %s.ingredients.%d must have a positive grams-per-serving",
-				ing.Name, path, i,
-			)
-		}
-		if ing.Category == "" {
-			return nil, nil, resource.NewConfigValidationFieldRequiredError(
-				fmt.Sprintf("%s.ingredients.%d", path, i), "category",
-			)
-		}
-		if _, ok := categoryOrder[ing.Category]; !ok {
-			return nil, nil, fmt.Errorf(
-				"ingredient %q at %s.ingredients.%d has unknown category %q",
-				ing.Name, path, i, ing.Category,
-			)
-		}
-		if ing.Category != categoryDressing && ing.ZoneID < 0 {
-			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'zone-id' must be non-negative for grabbable ingredients, got %d", path, i, ing.ZoneID)
-		}
-		if ing.ServingDepthMM < 0 {
-			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'serving-depth-mm' must be non-negative, got %v", path, i, ing.ServingDepthMM)
-		}
 	}
 
 	if cfg.Filter != nil {
@@ -450,11 +416,11 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		s.ingredients[ing.Name] = ing
 	}
 
-	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]any{"get_dressings": true})
+	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{"get_dressings": true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dressings from dressing controls: %w", err)
 	}
-	if dressings, ok := dressingsResult["dressings"].([]map[string]any); ok {
+	if dressings, ok := dressingsResult["dressings"].([]map[string]interface{}); ok {
 		for _, dressing := range dressings {
 			s.ingredients[dressing["name"].(string)] = BuildCoordinatorIngredientConfig{
 				Name:            dressing["name"].(string),
@@ -472,16 +438,16 @@ func (s *buildCoordinator) Name() resource.Name {
 	return s.name
 }
 
-func (s *buildCoordinator) Status(ctx context.Context) (map[string]any, error) {
+func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, error) {
 	return s.sm.GetStateMachineStatus(), nil
 }
 
-func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
+func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
 		outputMap, buildCtx, err := s.sm.StartBuildSalad(ctx, s.cancelCtx, val, customerName)
 		if err != nil {
-			return map[string]any{
+			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("%v", err),
 			}, nil
@@ -500,7 +466,7 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]any) (m
 	if _, ok := cmd["reset"]; ok {
 		err := s.resetAll(ctx)
 		if err != nil {
-			return map[string]any{
+			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 			}, nil
@@ -530,7 +496,7 @@ func (s *buildCoordinator) getTheme() string {
 	return normalizeTheme(s.cfg.Theme)
 }
 
-func (s *buildCoordinator) listIngredients() map[string]any {
+func (s *buildCoordinator) listIngredients() map[string]interface{} {
 	ingredients := make([]interface{}, 0, len(s.ingredients))
 	for _, ing := range s.ingredients {
 		entry := map[string]interface{}{
@@ -548,11 +514,11 @@ func (s *buildCoordinator) listIngredients() map[string]any {
 	}
 }
 
-func (s *buildCoordinator) doStop() (map[string]any, error) {
+func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	return s.sm.DoStop()
 }
 
-func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, customerName string) (map[string]any, error) {
+func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
 
 	if customerName != "" {
@@ -563,7 +529,7 @@ func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, cus
 
 	defer s.sm.EndBuildSalad()
 
-	var result map[string]any
+	var result map[string]interface{}
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
@@ -582,7 +548,7 @@ func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, cus
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
 		s.sm.UpdateStateMachineStatus(statemachine.Stopped, 0)
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
 		}, nil
@@ -606,7 +572,7 @@ func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, cus
 		if result != nil {
 			return result, nil
 		}
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": failMsg,
 		}, nil
@@ -617,7 +583,7 @@ func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, cus
 		if customerName != "" {
 			msg = customerName + "'s salad is ready!"
 		}
-		if _, ttsErr := s.textToSpeech.DoCommand(buildCtx, map[string]any{"say": msg}); ttsErr != nil {
+		if _, ttsErr := s.textToSpeech.DoCommand(buildCtx, map[string]interface{}{"say": msg}); ttsErr != nil {
 			s.logger.Errorw("text-to-speech announcement failed", "err", ttsErr)
 		}
 	}
@@ -625,7 +591,7 @@ func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, cus
 	return result, err
 }
 
-func (s *buildCoordinator) doSetupStation() (map[string]any, error) {
+func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 	if s.imagingCamera == nil {
 		return nil, fmt.Errorf("setup_station requires 'imaging-camera' to be configured")
 	}
@@ -653,7 +619,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]any, error) {
 
 	s.sm.UpdateStateMachineStatus(statemachine.Idle, 0)
 	s.logger.Infof("Station setup complete")
-	return map[string]any{
+	return map[string]interface{}{
 		"success": true,
 		"message": "Station setup complete",
 	}, nil
@@ -770,7 +736,7 @@ func (s *buildCoordinator) executeSetup(ctx context.Context) error {
 	return nil
 }
 
-func (s *buildCoordinator) getSetupResult() (map[string]any, error) {
+func (s *buildCoordinator) getSetupResult() (map[string]interface{}, error) {
 	if err := s.checkAssets(); err != nil {
 		return nil, err
 	}
@@ -793,7 +759,7 @@ func (s *buildCoordinator) getSetupResult() (map[string]any, error) {
 		return nil, fmt.Errorf("failed to parse zones: %w", err)
 	}
 
-	return map[string]any{
+	return map[string]interface{}{
 		"pcd":   base64.StdEncoding.EncodeToString(pcdBytes),
 		"zones": zones,
 	}, nil
@@ -832,10 +798,10 @@ func (s *buildCoordinator) checkAssets() error {
 	return nil
 }
 
-func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[string]any, error) {
+func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[string]interface{}, error) {
 	// check setup was run before executing salad build
 	if err := s.checkAssets(); err != nil {
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Please run setup_station before building a salad: %v", err),
 		}, nil
@@ -844,19 +810,19 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	// reset to initial positions
 	err := s.resetAll(ctx)
 	if err != nil {
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 		}, nil
 	}
 	if _, err := s.readScaleWeight(ctx); err != nil {
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Scale is not available, cannot start build: %v", err),
 		}, nil
 	}
 
-	ingredientMap, ok := value.(map[string]any)
+	ingredientMap, ok := value.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("build_salad value must be a map of ingredient name to servings count")
 	}
@@ -871,12 +837,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	}
 
 	if lilArmEnabled {
-		_, err = s.bowlControls.DoCommand(ctx, map[string]any{
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"grab_bowl": true,
 			"target":    60,
 		})
 		if err != nil {
-			return map[string]any{
+			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("Failed to grab bowl: %v", err),
 			}, nil
@@ -884,12 +850,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	}
 
 	if s.bowlControls != nil {
-		_, err = s.bowlControls.DoCommand(ctx, map[string]any{
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"reset":        true,
 			"skip_lil_arm": s.skipLilArm,
 		})
 		if err != nil {
-			return map[string]any{
+			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("Failed to reset bowl controls after preparing: %v", err),
 			}, nil
@@ -942,7 +908,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 		name := t.name
 		buildID := s.sm.GetBuildID()
 		go func() {
-			if _, err := s.dressingControls.DoCommand(ctx, map[string]any{
+			if _, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 				"pre_plan_dressing": name,
 				"build_id":          buildID,
 			}); err != nil {
@@ -962,7 +928,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
 			s.logger.Errorf("Failed to add ingredient %q: %v", target.name, err)
-			return map[string]any{
+			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("Failed to add ingredient %q: %v", target.name, err),
 			}, nil
@@ -970,11 +936,11 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 		completedServings += target.servings
 	}
 
-	_, err = s.grabberControls.DoCommand(ctx, map[string]any{
+	_, err = s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
 	if err != nil {
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": fmt.Sprintf("Failed to reset grabber controls: %v", err),
 		}, nil
@@ -998,12 +964,12 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
 	if s.bowlControls != nil {
-		_, err = s.bowlControls.DoCommand(ctx, map[string]any{
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"reset":        true,
 			"skip_lil_arm": s.skipLilArm,
 		})
 		if err != nil {
-			return map[string]any{
+			return map[string]interface{}{
 				"success": false,
 				"message": fmt.Sprintf("Failed to reset bowl controls: %v", err),
 			}, nil
@@ -1025,14 +991,14 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	s.sm.UpdateStateMachineStatus(statemachine.Complete, 100)
 
 	// chefs kiss
-	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]any{
+	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
 		"chefs_kiss": true,
 	}); err != nil {
 		// TODO: Should not fail silently
 		s.logger.Errorf("Failed to perform chefs kiss: %v", err)
 	}
 
-	return map[string]any{
+	return map[string]interface{}{
 		"success": true,
 		"message": "Salad built and delivered successfully",
 	}, nil
@@ -1071,7 +1037,7 @@ func isMotionPlanningFailure(err error) bool {
 }
 
 func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
-	_, err := s.dressingControls.DoCommand(ctx, map[string]any{
+	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 		"pour_dressing": name,
 		"build_id":      s.sm.GetBuildID(),
 	})
@@ -1187,14 +1153,14 @@ func (s *buildCoordinator) resetAll(ctx context.Context) error {
 	if err := s.rightHome.SetPosition(ctx, 2, nil); err != nil {
 		return fmt.Errorf("failed to set right-home switch to position 2: %w", err)
 	}
-	_, err := s.grabberControls.DoCommand(ctx, map[string]any{
+	_, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 		"reset": true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reset grabber controls: %w", err)
 	}
 	if s.bowlControls != nil {
-		_, err = s.bowlControls.DoCommand(ctx, map[string]any{
+		_, err = s.bowlControls.DoCommand(ctx, map[string]interface{}{
 			"reset":        true,
 			"skip_lil_arm": s.skipLilArm,
 		})
