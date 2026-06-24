@@ -84,7 +84,13 @@ type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
 	GramsPerServing float64 `json:"grams-per-serving"`
 	Category        string  `json:"category"`
-	ZoneID          *int    `json:"zone-id"`
+	// ZoneID is the grabber zone to pull this ingredient from. Ignored for
+	// dressing-category ingredients (which are poured, not grabbed).
+	ZoneID int `json:"zone-id"`
+	// ServingDepthMM is how far below the detected food surface the gripper
+	// descends when grabbing a serving of this ingredient. Passed to grabber
+	// controls at grab time. Defaults to DefaultServingDepthMM when zero/unset.
+	ServingDepthMM float64 `json:"serving-depth-mm,omitempty"`
 }
 
 type BuildCoordinatorFilterConfig struct {
@@ -162,10 +168,10 @@ func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
 }
 
 type BuildCoordinatorConfig struct {
+	Ingredients         []BuildCoordinatorIngredientConfig  `json:"ingredients"`
 	GrabberControls     string                              `json:"grabber-controls"`
 	BowlControls        string                              `json:"bowl-controls"`
 	ScaleSensor         string                              `json:"scale-sensor"`
-	Ingredients         []BuildCoordinatorIngredientConfig  `json:"ingredients"`
 	DressingControls    string                              `json:"dressing-controls"`
 	ChefsKissControls   string                              `json:"chefs-kiss-controls"`
 	TextToSpeech        string                              `json:"text-to-speech"`
@@ -249,10 +255,11 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 				ing.Name, path, i, ing.Category,
 			)
 		}
-		if ing.ZoneID == nil {
-			return nil, nil, resource.NewConfigValidationFieldRequiredError(
-				fmt.Sprintf("%s.ingredients.%d", path, i), "zone-id",
-			)
+		if ing.Category != categoryDressing && ing.ZoneID < 0 {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'zone-id' must be non-negative for grabbable ingredients, got %d", path, i, ing.ZoneID)
+		}
+		if ing.ServingDepthMM < 0 {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'serving-depth-mm' must be non-negative, got %v", path, i, ing.ServingDepthMM)
 		}
 	}
 
@@ -274,6 +281,27 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 
 	if cfg.Theme != "" && normalizeTheme(cfg.Theme) == "" {
 		return nil, nil, fmt.Errorf("%s.theme must be 'salad', 'icecream', or 'mediterranean', got %q", path, cfg.Theme)
+	}
+
+	if len(cfg.Ingredients) == 0 {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "ingredients")
+	}
+	for i, ing := range cfg.Ingredients {
+		if ing.Name == "" {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'name' field is required", path, i)
+		}
+		if ing.GramsPerServing <= 0 {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'grams-per-serving' must be positive, got %v", path, i, ing.GramsPerServing)
+		}
+		if _, ok := categoryOrder[ing.Category]; !ok {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: unknown category %q", path, i, ing.Category)
+		}
+		if ing.Category != categoryDressing && ing.ZoneID < 0 {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'zone-id' must be non-negative for grabbable ingredients, got %d", path, i, ing.ZoneID)
+		}
+		if ing.ServingDepthMM < 0 {
+			return nil, nil, fmt.Errorf("%s.ingredients[%d]: 'serving-depth-mm' must be non-negative, got %v", path, i, ing.ServingDepthMM)
+		}
 	}
 
 	return deps, optDeps, nil
@@ -408,31 +436,18 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.rightHome = rightHomeSwitch
 
-	// get config for grabber controls to pull out ingredients
-	ingredientsResult, err := s.grabberControls.DoCommand(ctx, map[string]any{"get_ingredients": true})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ingredients from grabber controls: %w", err)
-	}
-
-	if ingredients, ok := ingredientsResult["ingredients"].([]map[string]any); ok {
-		for _, ing := range ingredients {
-			zoneID, ok := ing["zone_id"].(int)
-			if !ok {
-				return nil, fmt.Errorf("zone_id is not an int: %v", ing["zone_id"])
-			}
-			_, ok = categoryOrder[ing["category"].(string)]
-			if !ok {
-				return nil, fmt.Errorf("unknown category: %v", ing["category"])
-			}
-			s.ingredients[ing["name"].(string)] = BuildCoordinatorIngredientConfig{
-				Name:            ing["name"].(string),
-				GramsPerServing: ing["grams_per_serving"].(float64),
-				Category:        ing["category"].(string),
-				ZoneID:          &zoneID,
-			}
+	// Ingredient (food) metadata lives here in the coordinator config; the
+	// grabber only knows about zones. Each ingredient maps to a grabber zone
+	// via its zone-id.
+	for _, ing := range conf.Ingredients {
+		if _, ok := categoryOrder[ing.Category]; !ok {
+			return nil, fmt.Errorf("ingredient %q has unknown category %q", ing.Name, ing.Category)
 		}
-	} else {
-		return nil, fmt.Errorf("failed to get ingredients from grabber controls: %w", err)
+		ing := ing
+		if ing.ServingDepthMM == 0 {
+			ing.ServingDepthMM = DefaultServingDepthMM
+		}
+		s.ingredients[ing.Name] = ing
 	}
 
 	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]any{"get_dressings": true})
@@ -445,7 +460,6 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 				Name:            dressing["name"].(string),
 				GramsPerServing: 5,
 				Category:        categoryDressing,
-				ZoneID:          nil,
 			}
 		}
 	}
@@ -517,15 +531,19 @@ func (s *buildCoordinator) getTheme() string {
 }
 
 func (s *buildCoordinator) listIngredients() map[string]any {
-	ingredients := make([]any, 0, len(s.cfg.Ingredients))
-	for _, ing := range s.cfg.Ingredients {
-		ingredients = append(ingredients, map[string]any{
+	ingredients := make([]interface{}, 0, len(s.ingredients))
+	for _, ing := range s.ingredients {
+		entry := map[string]interface{}{
 			"name":              ing.Name,
 			"grams_per_serving": ing.GramsPerServing,
 			"category":          ing.Category,
-		})
+		}
+		if ing.Category != categoryDressing {
+			entry["zone_id"] = ing.ZoneID
+		}
+		ingredients = append(ingredients, entry)
 	}
-	return map[string]any{
+	return map[string]interface{}{
 		"ingredients": ingredients,
 	}
 }
@@ -803,9 +821,12 @@ func (s *buildCoordinator) checkAssets() error {
 	for _, z := range zones.Zones {
 		availableZoneIDs[z.ID] = true
 	}
-	for _, ing := range s.cfg.Ingredients {
-		if !availableZoneIDs[*ing.ZoneID] {
-			return fmt.Errorf("ingredient %q has zone-id %d which is not in zones.json (zones: %v)", ing.Name, *ing.ZoneID, zones.Zones)
+	for _, ing := range s.ingredients {
+		if ing.Category == categoryDressing {
+			continue
+		}
+		if !availableZoneIDs[ing.ZoneID] {
+			return fmt.Errorf("ingredient %q has zone-id %d which is not in zones.json (zones: %v)", ing.Name, ing.ZoneID, zones.Zones)
 		}
 	}
 	return nil
@@ -885,11 +906,6 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	var totalServings float64
 
 	for name, servingsRaw := range ingredientMap {
-		gramsPerServing, exists := s.ingredients[name]
-		if !exists {
-			return nil, fmt.Errorf("unknown ingredient %q, not in configuration", name)
-		}
-
 		servings, err := toFloat64(servingsRaw)
 		if err != nil {
 			return nil, fmt.Errorf("invalid servings value for ingredient %q: %w", name, err)
@@ -901,8 +917,8 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 		targets = append(targets, ingredientTarget{
 			name:        name,
 			servings:    servings,
-			targetGrams: gramsPerServing * servings,
-			category:    s.ingredientCategories[name],
+			targetGrams: s.ingredients[name].GramsPerServing * servings,
+			category:    s.ingredients[name].Category,
 		})
 		totalServings += servings
 	}
@@ -920,7 +936,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 
 	// kick off background pre-planning for each dressing while ingredients are grabbed
 	for _, t := range targets {
-		if t.category != dressing {
+		if t.category != categoryDressing {
 			continue
 		}
 		name := t.name
@@ -941,7 +957,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 		}
 		s.sm.UpdateStateMachineStatus(statemachine.Adding, completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
-		if target.category == dressing {
+		if target.category == categoryDressing {
 			continue
 		}
 		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
@@ -1083,8 +1099,14 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 
 		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, depth-offset %.1fmm)",
 			name, totalAdded, targetGrams, depthOffset)
-		result, err := s.grabberControls.DoCommand(ctx, map[string]any{
-			"get_from_bin":    s.ingredientZoneIDs[name],
+
+		ing := s.ingredients[name]
+		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
+			"get_from_bin": map[string]interface{}{
+				"zone-id":          ing.ZoneID,
+				"name":             ing.Name,
+				"serving-depth-mm": ing.ServingDepthMM,
+			},
 			"depth-offset-mm": depthOffset,
 			"build_id":        s.sm.GetBuildID(),
 		})

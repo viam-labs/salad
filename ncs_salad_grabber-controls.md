@@ -35,8 +35,8 @@ The following attribute template can be used to configure this model:
   "dropping-pose": { "x": <float>, "y": <float>, "z": <float>, "orientation": { "x": <float>, "y": <float>, "z": <float>, "th": <float> } },
   "bowl-hover-height-mm": <float>,
   "left-home": <string>,
-  "bins": [
-    { "name": <string>, "zone-id": <int> }
+  "zones": [
+    { "zone-id": <int>, "hover-x-offset-mm": <float>, "hover-y-offset-mm": <float> }
   ],
   "bin-hover-height-mm": <float>,
   "bin-hover-orientation": { "x": <float>, "y": <float>, "z": <float>, "th": <float> },
@@ -66,7 +66,7 @@ The following attributes are available for this model:
 | `dropping-pose` | object | Required | Inline pose (fields: `x`, `y`, `z` in mm, `orientation` as OV-degrees) where the gripper opens to drop the ingredient into the bowl. |
 | `bowl-hover-height-mm` | float | Optional | Height (mm) added to `dropping-pose.z` to compute the hover pose used before and after dropping. Defaults to `150`. |
 | `left-home` | string | Required | Name of a `switch` used by `reset` to send the arm home. |
-| `bins` | array | Required | Map from bin name to segmentation zone ID. Must be non-empty; each entry must have a non-empty `name`. The `zone-id` must exist in `zones.json` at runtime. |
+| `zones` | array | Required | List of grabbable zones. Must be non-empty and contain unique `zone-id`s. Each `zone-id` must exist in `zones.json` at runtime. Ingredient/food metadata (name, category, grams-per-serving, serving depth) is *not* configured here — it lives in `build-coordinator` and is passed in at grab time via `get_from_bin`. Each entry: `zone-id` (int, required), `hover-x-offset-mm` / `hover-y-offset-mm` (float, optional XY shifts of the hover pose, world frame mm). |
 | `bin-hover-height-mm` | float | Required | Hover height above the bin's mean Z (mm). Used for both pre-grab approach and post-grab return. Must be non-zero. |
 | `bin-hover-orientation` | orientation vector (degrees) | Required | Orientation used at the hover pose and for the straight descend/ascend through the bin. Must be specified. |
 | `grab-height-mm` | float | Required (implicit) | Offset (mm) added to the bin's min Z when computing the grab depth. Negative values descend below the bin floor. |
@@ -95,11 +95,11 @@ The following attributes are available for this model:
   "bowl-hover-height-mm": 150,
   "left-home": "left-home",
   "shake-arm-service": "left-shake",
-  "bins": [
-    { "name": "lettuce",  "zone-id": 0 },
-    { "name": "chicken",  "zone-id": 1 },
-    { "name": "tomato",   "zone-id": 2 },
-    { "name": "croutons", "zone-id": 3 }
+  "zones": [
+    { "zone-id": 0 },
+    { "zone-id": 1 },
+    { "zone-id": 2, "hover-x-offset-mm": 10 },
+    { "zone-id": 3 }
   ],
   "bin-hover-height-mm": 100,
   "bin-hover-orientation": { "x": 0, "y": 0, "z": -1, "th": 0 },
@@ -113,7 +113,8 @@ The following attributes are available for this model:
 ## DoCommand
 
 `DoCommand` accepts exactly one of the following top-level keys. Any other
-key results in `unknown command, expected 'get_from_bin' or 'bin_hover' field`.
+key results in `unknown command, expected 'get_from_bin', 'reset',
+'calibrate', 'get_gripper_calibration', or 'get_zone_config' field`.
 
 ### get_from_bin
 
@@ -131,18 +132,30 @@ Plans and executes a full grab cycle for a single bin:
 10. Move arm back to bowl hover pose.
 11. (If `shake-arm-service` is configured) call `{"shake_arm": true}`.
 
-The required `get_from_bin` value is the integer zone ID to grab from
-(must be one of the `zone-id`s in `bins`). The optional `depth-offset-mm`
-descends an additional N millimeters below the configured grab Z; it must
-be non-negative. If motion planning fails ("`physically unreachable`",
-"`zero IK solutions`", "`no plan found`", or "`fatal early collision`")
-and `depth-offset-mm > 0`, the build coordinator halves it and retries.
+The `get_from_bin` value carries the grab arguments. It may be either a bare
+integer zone ID (legacy form) or a map supplied by `build-coordinator`:
+
+- `zone-id` (int, required) — the zone to grab from; must be one of the
+  configured `zones`.
+- `name` (string, optional) — ingredient name, used only for log/response
+  labels.
+- `serving-depth-mm` (float, optional) — how far below the detected food
+  surface the gripper descends. Defaults to `30` when omitted or zero.
+
+The optional top-level `depth-offset-mm` descends an additional N millimeters;
+it must be non-negative. If motion planning fails ("`physically unreachable`",
+"`zero IK solutions`", "`no plan found`", or "`fatal early collision`") and
+`depth-offset-mm > 0`, the build coordinator halves it and retries.
 
 Request:
 
 ```json
 {
-  "get_from_bin": 2,
+  "get_from_bin": {
+    "zone-id": 2,
+    "name": "tomato",
+    "serving-depth-mm": 30
+  },
   "depth-offset-mm": 0
 }
 ```
@@ -153,8 +166,9 @@ Response:
 {
   "success": true,
   "bin": "tomato",
+  "zone-id": 2,
   "depth-offset-mm": 0,
-  "message": "Successfully grabbed from bin 'tomato' and moved to bowl"
+  "message": "Successfully grabbed from 'tomato' and moved to bowl"
 }
 ```
 

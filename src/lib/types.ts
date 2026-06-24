@@ -2,6 +2,7 @@ export interface Ingredient {
   name: string;
   grams_per_serving: number;
   category: string;
+  zone_id?: number;
 }
 
 export type AppScreen = "loading" | "ordering" | "building" | "complete" | "error" | "setup";
