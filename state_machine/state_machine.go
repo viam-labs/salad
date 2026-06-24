@@ -91,7 +91,7 @@ func (sm *StateMachine) DoStop() (map[string]any, error) {
 	}, nil
 }
 
-func (sm *StateMachine) StartBuildSalad(ctx, cancelCtx context.Context, value any, customerName string) (map[string]any, context.Context, error) {
+func (sm *StateMachine) StartBuildSalad(ctx, buildCtx context.Context, buildCancelFunc context.CancelFunc, value any, customerName string) (map[string]any, context.Context, error) {
 	// Verify we're transitioning from a valid state.
 	if !(sm.status == Idle || sm.status == Complete) {
 		return nil, nil, fmt.Errorf("Salad must be in idle or complete state")
@@ -106,7 +106,6 @@ func (sm *StateMachine) StartBuildSalad(ctx, cancelCtx context.Context, value an
 			"message": "An operation is already in progress, use 'stop' to cancel it first",
 		}, nil, nil
 	}
-	buildCtx, buildCancelFunc := context.WithCancel(cancelCtx)
 	sm.opCancelFunc = buildCancelFunc
 	sm.opDone = make(chan struct{})
 	sm.status = Preparing

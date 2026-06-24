@@ -445,8 +445,9 @@ func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
-		s.sm.StartBuildSalad(ctx, s.cancelCtx, val, customerName)
-		return s.doBuildSalad(ctx, val, customerName)
+		buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
+		s.sm.StartBuildSalad(ctx, buildCtx, buildCancelFunc, val, customerName)
+		return s.doBuildSalad(ctx, buildCtx, val, customerName)
 	}
 	if _, ok := cmd["setup_station"]; ok {
 		return s.doSetupStation()
@@ -510,10 +511,8 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 }
 
 //nolint:unparam // ctx kept for DoCommand-style API symmetry; build runs under s.cancelCtx so it survives caller cancellation
-func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
+func (s *buildCoordinator) doBuildSalad(ctx context.Context, buildCtx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Guard against concurrent builds.
-
-	buildCtx, _ := context.WithCancel(s.cancelCtx)
 
 	if customerName != "" {
 		s.logger.Infof("New salad order received for %q: %v", customerName, value)
