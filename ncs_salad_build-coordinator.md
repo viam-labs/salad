@@ -19,11 +19,11 @@ coordinator owns the end-to-end build flow:
    these assets to compute hover and grab poses for each ingredient bin.
 
 When a grab adds no weight (less than `0.5g` of change on the scale), the
-coordinator probes deeper into the bin on the next attempt by
-`depth-step-mm`, capped at `max-depth-offset-mm`. If motion planning rejects
-a depth as unreachable, the offset is halved and retried (binary search for
-the deepest reachable Z). After 3 consecutive grabs with no weight change,
-the ingredient errors out (likely an empty bin).
+coordinator probes deeper into the bin on the next attempt by adding
+`depth-step-mm` to the ingredient's `serving-depth-mm`. Each consecutive
+no-change grab reaches one step further down. After 3 consecutive grabs with
+no weight change, the ingredient errors out (likely an empty bin). Any error
+returned by `grabber-controls` also fails the ingredient.
 
 ## Configuration
 
@@ -51,7 +51,6 @@ The following attribute template can be used to configure this model:
   "simulate": <bool>,
   "skip-lil-arm": <bool>,
   "depth-step-mm": <float>,
-  "max-depth-offset-mm": <float>,
   "mesh-target-triangles": <int>,
   "filter": {
     "voxel-mm": <float>,
@@ -87,8 +86,7 @@ The following attributes are available for this model:
 | `capture-dir` | string | Optional | Filesystem directory for timestamped capture outputs (PCDs, meshes, zones). Defaults to `/root/.viam/capture`. |
 | `simulate` | bool | Optional | When `true`, `build_salad` skips all robot commands and immediately reports success. Defaults to `false`. |
 | `skip-lil-arm` | bool | Optional | When `true`, the coordinator skips the optional lil-arm `grab_bowl`/`grab_lid` steps and tells `bowl-controls.reset` not to send the lil-arm home. Useful when the lil-arm is unreliable but you still want it configured in `bowl-controls`. Defaults to `false`. |
-| `depth-step-mm` | float | Optional | Millimeters to descend deeper into the bin on each empty-handed grab retry. Set to `0` or negative to disable depth probing. Defaults to `20`. |
-| `max-depth-offset-mm` | float | Optional | Cap on how many millimeters below the configured grab Z the depth probe is allowed to reach. Set to `0` or negative to disable depth probing. Defaults to `80`. |
+| `depth-step-mm` | float | Optional | Millimeters added to the ingredient's `serving-depth-mm` on each consecutive empty-handed grab retry. Set to `0` or negative to disable depth probing. Defaults to `5`. |
 | `mesh-target-triangles` | int | Optional | Decimate the Poisson-reconstructed mesh down to roughly this many triangles using quadric error metrics. The mesh is loaded as a world obstacle for every motion plan, so a smaller mesh means faster planning. Set to `0` to disable decimation. Must be `>= 0`. Defaults to `5000`. |
 | `filter` | object | Optional | Voxel filter parameters applied to the merged PCD before meshification (see below). Defaults are tuned against typical fridge captures. |
 | `segmentation` | object | Optional | Bin segmentation tuning parameters applied to the reconstructed mesh (see below). |
@@ -134,8 +132,7 @@ Each entry in `ingredients` has the following fields:
   "scale-sensor": "scale",
   "imaging-camera": "overhead-cam",
   "text-to-speech": "tts",
-  "depth-step-mm": 20,
-  "max-depth-offset-mm": 80,
+  "depth-step-mm": 5,
   "mesh-target-triangles": 5000,
   "filter": {
     "voxel-mm": 10,

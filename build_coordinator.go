@@ -192,7 +192,6 @@ type BuildCoordinatorConfig struct {
 	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
 	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
-	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
 	Theme               string                              `json:"theme,omitempty"`
 	// BuildEvents is the optional name of a build-events sensor that receives
 	// per-build observability events. When unset, events are discarded.
@@ -1274,35 +1273,22 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 }
 
 const (
-	zeroChangeTolerance     = 0.5 // grams
-	defaultDepthStepMM      = 20.0
-	defaultMaxDepthOffsetMM = 80.0
+	zeroChangeTolerance = 0.5 // grams
+	maxZeroChangeTries  = 3
+	defaultDepthStepMM  = 5.0 // mm
 )
 
-func (s *buildCoordinator) depthProbeParams() (step, max float64) {
-	step = defaultDepthStepMM
+// depthStepMM returns how many millimeters deeper each successive no-change
+// grab should reach. A non-positive configured value disables deepening.
+func (s *buildCoordinator) depthStepMM() float64 {
+	step := defaultDepthStepMM
 	if s.cfg.DepthStepMM != nil {
 		step = *s.cfg.DepthStepMM
 	}
-	max = defaultMaxDepthOffsetMM
-	if s.cfg.MaxDepthOffsetMM != nil {
-		max = *s.cfg.MaxDepthOffsetMM
+	if step < 0 {
+		return 0
 	}
-	if step <= 0 || max <= 0 {
-		return 0, 0
-	}
-	return step, max
-}
-
-func isMotionPlanningFailure(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "physically unreachable") ||
-		strings.Contains(msg, "zero IK solutions") ||
-		strings.Contains(msg, "no plan found") ||
-		strings.Contains(msg, "fatal early collision")
+	return step
 }
 
 func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
@@ -1342,10 +1328,13 @@ type addIngredientResult struct {
 func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targetGrams float64) (addIngredientResult, error) {
 	var result addIngredientResult
 	var zeroChangeStreak int
-	var depthOffset float64
 	var attemptIndex int
 
-	depthStep, maxDepth := s.depthProbeParams()
+	// depthOffset is how far below the configured serving depth the current grab
+	// reaches; it grows by depthStep on each consecutive no-change grab.
+	var depthOffset float64
+
+	depthStep := s.depthStepMM()
 	ing := s.ingredients[name]
 
 	// emitGrab records one grab_attempt event and advances attemptIndex. The
@@ -1382,38 +1371,27 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			return result, fmt.Errorf("failed to read scale before grab: %w", err)
 		}
 
-		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, depth-offset %.1fmm)",
-			name, result.totalAdded, targetGrams, depthOffset)
+		// Each consecutive no-change grab probes one step deeper by reaching
+		// further below the configured serving depth.
+		depthOffset = float64(zeroChangeStreak) * depthStep
+		servingDepth := ing.ServingDepthMM + depthOffset
+
+		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, serving-depth %.1fmm)",
+			name, result.totalAdded, targetGrams, servingDepth)
 
 		grabStart := time.Now()
 		grabResult, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 			"get_from_bin": map[string]interface{}{
 				"zone-id":          ing.ZoneID,
 				"name":             ing.Name,
-				"serving-depth-mm": ing.ServingDepthMM,
+				"serving-depth-mm": servingDepth,
 			},
-			"depth-offset-mm": depthOffset,
-			"build_id":        s.getBuildID(),
+			"build_id": s.getBuildID(),
 		})
 		grabDurMs := float64(time.Since(grabStart).Milliseconds())
 		if err != nil {
 			result.grabCount++
-			motionFail := isMotionPlanningFailure(err)
-			outcome := "error"
-			if motionFail {
-				outcome = "motion_plan_failed"
-			}
-			emitGrab(weightBefore, weightBefore, 0, outcome, motionFail, err.Error(), grabDurMs)
-			if motionFail && depthOffset > 0 {
-				newOffset := depthOffset / 2
-				if newOffset < 0.5 {
-					newOffset = 0
-				}
-				s.logger.Warnf("Motion planning failed for %q at depth-offset %.1fmm; halving to %.1fmm",
-					name, depthOffset, newOffset)
-				depthOffset = newOffset
-				continue
-			}
+			emitGrab(weightBefore, weightBefore, 0, "error", false, err.Error(), grabDurMs)
 			result.finalDepthOffset = depthOffset
 			return result, fmt.Errorf("failed to grab from bin %q: %w", name, err)
 		}
@@ -1446,19 +1424,16 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 
 		if change < zeroChangeTolerance {
 			zeroChangeStreak++
-			if zeroChangeStreak >= 3 {
-				s.logger.Errorf("3 consecutive grabs with no weight change for ingredient %q, possible empty bin", name)
+			if zeroChangeStreak >= maxZeroChangeTries {
+				s.logger.Errorf("%d consecutive grabs with no weight change for ingredient %q, possible empty bin",
+					maxZeroChangeTries, name)
 				result.binEmpty = true
-				break
+				result.finalDepthOffset = depthOffset
+				return result, fmt.Errorf("%d consecutive grabs with no weight change for ingredient %q, possible empty bin",
+					maxZeroChangeTries, name)
 			}
-			s.logger.Warnf("No weight change detected for %q (streak: %d/3)", name, zeroChangeStreak)
-			if depthStep > 0 && zeroChangeStreak >= 2 && depthOffset < maxDepth {
-				depthOffset += depthStep
-				if depthOffset > maxDepth {
-					depthOffset = maxDepth
-				}
-				s.logger.Infof("Probing deeper for %q: depth-offset now %.1fmm", name, depthOffset)
-			}
+			s.logger.Warnf("No weight change detected for %q (try %d/%d), probing %.1fmm deeper on next grab",
+				name, zeroChangeStreak, maxZeroChangeTries, depthStep)
 		} else {
 			zeroChangeStreak = 0
 			result.totalAdded += change
