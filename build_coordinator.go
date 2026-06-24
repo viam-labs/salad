@@ -446,7 +446,10 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
 		buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
-		s.sm.StartBuildSalad(ctx, buildCtx, buildCancelFunc, val, customerName)
+		err_map := s.sm.StartBuildSalad(ctx, buildCtx, buildCancelFunc, val, customerName)
+		if err_map != nil {
+			return err_map, nil
+		}
 		return s.doBuildSalad(ctx, buildCtx, val, customerName)
 	}
 	if _, ok := cmd["setup_station"]; ok {
