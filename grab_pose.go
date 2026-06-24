@@ -2,6 +2,7 @@ package salad
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/spatialmath"
@@ -52,6 +53,44 @@ func FoodPointFromPlaneFitStats(zone *segmentation.Zone, stats segmentation.Plan
 		LevelMM:    levelMM,
 		FloorPoint: floor,
 	}, nil
+}
+
+// GripperWorldExtents maps the gripper's calibrated open dimensions onto the
+// world X and Y axes, returning extents suitable for
+// segmentation.ZoneHeightMap.MaskGripperOverflow(xExtentMM, yExtentMM).
+//
+// The open gripper is wider on one axis than the other, so the bounding box we
+// must keep inside the zone depends on how the gripper is rotated in world
+// space at grab time. This decides whether the width or the depth runs along
+// world X vs world Y.
+//
+// Assumptions:
+//   - openWidthMM was measured along the gripper's local X axis and openDepthMM
+//     along its local Y axis (see grabberControls.measureOpenGripper, which
+//     uses geometryXSpan / geometryYSpan on the gripper-frame geometries).
+//   - orientation is the gripper's world orientation at grab time (the grab
+//     pose orientation, e.g. BinHoverOrientation). The columns of its rotation
+//     matrix are therefore the world-frame directions of the gripper's local
+//     axes.
+//   - The zone's XY bounds (which MaskGripperOverflow checks against) are
+//     axis-aligned with world X/Y, i.e. the zone plane's Y axis is the world Y
+//     axis. The gripper's open bounding box is likewise treated as axis-aligned
+//     in world XY.
+//   - Exactly one of the gripper's local X/Y axes aligns with world Y and the
+//     other with world X; we only need to decide which. The gripper axis whose
+//     world-space unit vector has the larger |dot| with the world Y unit vector
+//     is taken to be the world-Y-aligned axis.
+func GripperWorldExtents(orientation spatialmath.Orientation, openWidthMM, openDepthMM float64) (xExtentMM, yExtentMM float64) {
+	rm := orientation.RotationMatrix()
+	gripperXInWorld := rm.Col(0) // world direction of gripper local +X (the width axis)
+	gripperYInWorld := rm.Col(1) // world direction of gripper local +Y (the depth axis)
+	worldY := r3.Vector{X: 0, Y: 1, Z: 0}
+	if math.Abs(gripperXInWorld.Dot(worldY)) >= math.Abs(gripperYInWorld.Dot(worldY)) {
+		// Gripper width (local X) runs along world Y; depth (local Y) runs along world X.
+		return openDepthMM, openWidthMM
+	}
+	// Gripper depth (local Y) runs along world Y; width (local X) runs along world X.
+	return openWidthMM, openDepthMM
 }
 
 // ComputeGrabBasePoint returns the world-frame point where the gripper should

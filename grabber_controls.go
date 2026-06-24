@@ -677,11 +677,16 @@ func (s *grabberControls) getBinFoodPoint(ctx context.Context, zone *segmentatio
 
 	// Restrict the search to cells where the open gripper fits inside the zone
 	// (plus padding), then take the highest remaining cell as the grab target.
+	// The calibrated open dimensions are in the gripper's local frame, so map
+	// them onto world X/Y using the grab orientation before masking (the
+	// gripper may be rotated so its width runs along world Y, not world X).
+	// See GripperWorldExtents for the assumptions this relies on.
 	openWidthMM, openDepthMM, err := s.calibratedOpenGripperDims()
 	if err != nil {
 		return FoodPoint{}, err
 	}
-	stats.HeightMap.MaskGripperOverflow(openWidthMM, openDepthMM)
+	xExtentMM, yExtentMM := GripperWorldExtents(s.cfg.BinHoverOrientation, openWidthMM, openDepthMM)
+	stats.HeightMap.MaskGripperOverflow(xExtentMM, yExtentMM)
 
 	foodPoint, err := FoodPointFromPlaneFitStats(zone, stats)
 	if err != nil {
