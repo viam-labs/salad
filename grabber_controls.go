@@ -183,6 +183,7 @@ type grabberControls struct {
 	gripperCalibrated     bool
 	closedGripperHeightMM float64
 	openGripperWidthMM    float64
+	openGripperDepthMM    float64
 
 	fileSaver *fileio.FileSaver
 }
@@ -292,8 +293,8 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 	}
 	s.setGripperCalibration(calibration)
 	s.logger.Infof(
-		"Grabber controls initialized with %d zones; closed gripper height = %.2f mm, open gripper width = %.2f mm",
-		len(s.zones), calibration.closedHeightMM, calibration.openWidthMM,
+		"Grabber controls initialized with %d zones; closed gripper height = %.2f mm, open gripper width = %.2f mm, open gripper depth = %.2f mm",
+		len(s.zones), calibration.closedHeightMM, calibration.openWidthMM, calibration.openDepthMM,
 	)
 	return s, nil
 }
@@ -324,6 +325,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return map[string]any{
 			"closed_gripper_to_arm_base_height_mm": calibration.closedHeightMM,
 			"open_gripper_width_mm":                calibration.openWidthMM,
+			"open_gripper_depth_mm":                calibration.openDepthMM,
 		}, nil
 	}
 
@@ -343,6 +345,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 	calibrated := s.gripperCalibrated
 	closedHeightMM := s.closedGripperHeightMM
 	openWidthMM := s.openGripperWidthMM
+	openDepthMM := s.openGripperDepthMM
 	s.calibrationMu.Unlock()
 	if !calibrated {
 		return nil, fmt.Errorf("gripper not calibrated, run calibrate command first")
@@ -350,6 +353,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 	return map[string]interface{}{
 		"closed_gripper_to_arm_base_height_mm": closedHeightMM,
 		"open_gripper_width_mm":                openWidthMM,
+		"open_gripper_depth_mm":                openDepthMM,
 	}, nil
 }
 
@@ -378,6 +382,7 @@ func (s *grabberControls) getZoneConfig() map[string]interface{} {
 type gripperCalibration struct {
 	closedHeightMM float64
 	openWidthMM    float64
+	openDepthMM    float64
 }
 
 func (s *grabberControls) runGripperCalibration(ctx context.Context) (gripperCalibration, error) {
@@ -385,13 +390,14 @@ func (s *grabberControls) runGripperCalibration(ctx context.Context) (gripperCal
 	if err != nil {
 		return gripperCalibration{}, err
 	}
-	openWidthMM, err := s.measureOpenGripperWidth(ctx)
+	openWidthMM, openDepthMM, err := s.measureOpenGripper(ctx)
 	if err != nil {
 		return gripperCalibration{}, err
 	}
 	return gripperCalibration{
 		closedHeightMM: closedHeightMM,
 		openWidthMM:    openWidthMM,
+		openDepthMM:    openDepthMM,
 	}, nil
 }
 
@@ -399,6 +405,7 @@ func (s *grabberControls) setGripperCalibration(calibration gripperCalibration) 
 	s.calibrationMu.Lock()
 	s.closedGripperHeightMM = calibration.closedHeightMM
 	s.openGripperWidthMM = calibration.openWidthMM
+	s.openGripperDepthMM = calibration.openDepthMM
 	s.gripperCalibrated = true
 	s.calibrationMu.Unlock()
 }
@@ -444,20 +451,28 @@ func (s *grabberControls) measureClosedGripperHeight(ctx context.Context) (float
 	return maxGeometryZ(geomsInArm.Geometries())
 }
 
-func (s *grabberControls) measureOpenGripperWidth(ctx context.Context) (float64, error) {
+func (s *grabberControls) measureOpenGripper(ctx context.Context) (widthMM, depthMM float64, err error) {
 	if err := s.gripper.Open(ctx, nil); err != nil {
-		return 0, fmt.Errorf("open gripper: %w", err)
+		return 0, 0, fmt.Errorf("open gripper: %w", err)
 	}
 
 	geoms, err := s.gripper.Geometries(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("read gripper geometries: %w", err)
+		return 0, 0, fmt.Errorf("read gripper geometries: %w", err)
 	}
 	if len(geoms) == 0 {
-		return 0, fmt.Errorf("gripper returned no geometries")
+		return 0, 0, fmt.Errorf("gripper returned no geometries")
 	}
 
-	return geometryXSpan(geoms)
+	widthMM, err = geometryXSpan(geoms)
+	if err != nil {
+		return 0, 0, err
+	}
+	depthMM, err = geometryYSpan(geoms)
+	if err != nil {
+		return 0, 0, err
+	}
+	return widthMM, depthMM, nil
 }
 
 func (s *grabberControls) calibratedClosedGripperHeight() (float64, error) {
@@ -501,6 +516,25 @@ func geometryXSpan(geoms []spatialmath.Geometry) (float64, error) {
 		return 0, fmt.Errorf("geometries produced no points")
 	}
 	return math.Abs(maxX - minX), nil
+}
+
+func geometryYSpan(geoms []spatialmath.Geometry) (float64, error) {
+	minY := math.Inf(1)
+	maxY := math.Inf(-1)
+	for _, g := range geoms {
+		for _, pt := range g.ToPoints(1.0) {
+			if pt.Y < minY {
+				minY = pt.Y
+			}
+			if pt.Y > maxY {
+				maxY = pt.Y
+			}
+		}
+	}
+	if math.IsInf(maxY, -1) {
+		return 0, fmt.Errorf("geometries produced no points")
+	}
+	return math.Abs(maxY - minY), nil
 }
 
 // loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
