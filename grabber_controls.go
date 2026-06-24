@@ -3,6 +3,7 @@ package salad
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -30,10 +31,6 @@ var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
 
 const defaultBowlHoverHeightMM = 150.0
 
-// defaultServingDepthMM is how far below the detected food surface the gripper
-// descends to scoop a serving when a bin does not specify a `serving-depth-mm`.
-const defaultServingDepthMM = 30.0
-
 func init() {
 	resource.RegisterService(genericservice.API, GrabberControls,
 		resource.Registration[resource.Resource, *GrabberControlsConfig]{
@@ -42,20 +39,16 @@ func init() {
 	)
 }
 
-// GrabberControlsBinConfig represents a single bin configuration with switches.
-type GrabberControlsBinConfig struct {
-	Name   string `json:"name"`
-	ZoneID int    `json:"zone-id"`
-	// ServingDepthMM is how far below the detected food surface the gripper
-	// descends when grabbing a serving from this bin. Defaults to
-	// defaultServingDepthMM when zero/unset.
-	ServingDepthMM float64 `json:"serving-depth-mm,omitempty"`
-	// HoverXOffsetMM and HoverYOffsetMM shift the bin hover XY position from
-	// the zone centroid (world frame, mm).
-	HoverXOffsetMM  float64 `json:"hover-x-offset-mm,omitempty"`
-	HoverYOffsetMM  float64 `json:"hover-y-offset-mm,omitempty"`
-	GramsPerServing float64 `json:"grams-per-serving,omitempty"`
-	Category        string  `json:"category,omitempty"`
+// GrabberControlsZoneConfig describes a single grabbable zone: its zone ID and
+// any hover-position offsets. All food/ingredient metadata (name, category,
+// grams-per-serving, serving depth) lives in the build coordinator and is
+// passed in at grab time, not stored here.
+type GrabberControlsZoneConfig struct {
+	ZoneID int `json:"zone-id"`
+	// HoverXOffsetMM and HoverYOffsetMM shift the zone hover XY position from
+	// the zone plane point (world frame, mm).
+	HoverXOffsetMM float64 `json:"hover-x-offset-mm,omitempty"`
+	HoverYOffsetMM float64 `json:"hover-y-offset-mm,omitempty"`
 }
 
 type BowlDropPose struct {
@@ -66,7 +59,7 @@ type BowlDropPose struct {
 }
 
 type GrabberControlsConfig struct {
-	Bins                              []GrabberControlsBinConfig            `json:"bins"`
+	Zones                             []GrabberControlsZoneConfig           `json:"zones"`
 	BinHoverHeightMM                  float64                               `json:"bin-hover-height-mm"`
 	BinHoverOrientation               *spatialmath.OrientationVectorDegrees `json:"bin-hover-orientation,omitempty"`
 	EnableBinClearance                bool                                  `json:"enable-bin-clearance,omitempty"`
@@ -74,7 +67,6 @@ type GrabberControlsConfig struct {
 	BinClearanceZOffsetMM             float64                               `json:"bin-clearance-z-offset-mm,omitempty"`
 	ClearanceLineToleranceMM          float64                               `json:"clearance-line-tolerance-mm,omitempty"`
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
-	GrabHeightMM                      float64                               `json:"grab-height-mm"`
 	DroppingPose                      *BowlDropPose                         `json:"dropping-pose"`
 	BowlHoverHeightMM                 float64                               `json:"bowl-hover-height-mm,omitempty"`
 	Arm                               string                                `json:"arm"`
@@ -84,16 +76,14 @@ type GrabberControlsConfig struct {
 	ShakeArmService                   *string                               `json:"shake-arm-service,omitempty"`
 	ScoopShakeService                 *string                               `json:"scoop-shake-service,omitempty"`
 	AssetsDir                         string                                `json:"assets-dir"`
-	XOffsetMM                         float64                               `json:"x-offset-mm,omitempty"`
-	YOffsetMM                         float64                               `json:"y-offset-mm,omitempty"`
 	GrabLineToleranceMM               float64                               `json:"grab-line-tolerance-mm,omitempty"`
 	GrabOrientationToleranceDegs      float64                               `json:"grab-orientation-tolerance-degs,omitempty"`
 	BinImagingCam                     string                                `json:"bin-imaging-cam"`
 }
 
 func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, error) {
-	if len(cfg.Bins) == 0 {
-		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "bins")
+	if len(cfg.Zones) == 0 {
+		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "zones")
 	}
 
 	if cfg.BinHoverHeightMM == 0 {
@@ -149,19 +139,12 @@ func (cfg *GrabberControlsConfig) Validate(path string) ([]string, []string, err
 	if cfg.ScoopShakeService != nil && *cfg.ScoopShakeService != "" {
 		requiredDeps = append(requiredDeps, *cfg.ScoopShakeService)
 	}
-	for i, bin := range cfg.Bins {
-		if bin.Name == "" {
-			return nil, nil, fmt.Errorf("%s.bins[%d]: 'name' field is required", path, i)
+	seenZoneIDs := make(map[int]bool, len(cfg.Zones))
+	for i, zone := range cfg.Zones {
+		if seenZoneIDs[zone.ZoneID] {
+			return nil, nil, fmt.Errorf("%s.zones[%d]: duplicate zone-id %d", path, i, zone.ZoneID)
 		}
-		if bin.ServingDepthMM < 0 {
-			return nil, nil, fmt.Errorf("%s.bins[%d]: 'serving-depth-mm' must be non-negative, got %v", path, i, bin.ServingDepthMM)
-		}
-		if bin.GramsPerServing <= 0 {
-			return nil, nil, fmt.Errorf("%s.bins[%d]: 'grams-per-serving' must be positive, got %v", path, i, bin.GramsPerServing)
-		}
-		if bin.Category == "" {
-			return nil, nil, fmt.Errorf("%s.bins[%d]: 'category' field is required", path, i)
-		}
+		seenZoneIDs[zone.ZoneID] = true
 	}
 
 	return requiredDeps, []string{}, nil
@@ -178,7 +161,7 @@ type grabberControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	bins              map[int]*grabberBinSwitches
+	zones             map[int]*grabberZone
 	droppingPose      spatialmath.Pose
 	bowlHoverPose     spatialmath.Pose
 	arm               arm.Arm
@@ -190,19 +173,22 @@ type grabberControls struct {
 	motionService     motion.Service
 	fsService         framesystem.Service
 
-	assetsMu   sync.Mutex
-	assetsDir  string
-	binMesh    *spatialmath.Mesh
-	worldState *referenceframe.WorldState
-	zones      *segmentation.ZonesResult
+	assetsMu    sync.Mutex
+	assetsDir   string
+	binMesh     *spatialmath.Mesh
+	worldState  *referenceframe.WorldState
+	loadedZones *segmentation.ZonesResult
+
+	calibrationMu         sync.Mutex
+	gripperCalibrated     bool
+	closedGripperHeightMM float64
+	openGripperWidthMM    float64
 
 	fileSaver *fileio.FileSaver
 }
 
-type grabberBinSwitches struct {
-	name           string
-	hoverPose      spatialmath.Pose
-	servingDepthMM float64
+type grabberZone struct {
+	hoverPose spatialmath.Pose
 }
 
 func newGrabberControls(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -223,7 +209,7 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		cfg:        conf,
 		cancelCtx:  cancelCtx,
 		cancelFunc: cancelFunc,
-		bins:       make(map[int]*grabberBinSwitches),
+		zones:      make(map[int]*grabberZone),
 	}
 
 	droppingPt := r3.Vector{X: conf.DroppingPose.X, Y: conf.DroppingPose.Y, Z: conf.DroppingPose.Z}
@@ -261,15 +247,8 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 	}
 	s.leftHome = leftHomeSwitch
 
-	for _, binCfg := range conf.Bins {
-		servingDepth := binCfg.ServingDepthMM
-		if servingDepth == 0 {
-			servingDepth = defaultServingDepthMM
-		}
-		s.bins[binCfg.ZoneID] = &grabberBinSwitches{
-			name:           binCfg.Name,
-			servingDepthMM: servingDepth,
-		}
+	for _, zoneCfg := range conf.Zones {
+		s.zones[zoneCfg.ZoneID] = &grabberZone{}
 	}
 
 	motionSvc, err := motion.FromProvider(deps, conf.MotionService)
@@ -307,7 +286,15 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 
 	s.fileSaver = fileio.NewFileSaver(logger, defaultPlanCaptureDir)
 
-	s.logger.Infof("Grabber controls initialized with %d bins", len(s.bins))
+	calibration, err := s.runGripperCalibration(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("startup gripper calibration: %w", err)
+	}
+	s.setGripperCalibration(calibration)
+	s.logger.Infof(
+		"Grabber controls initialized with %d zones; closed gripper height = %.2f mm, open gripper width = %.2f mm",
+		len(s.zones), calibration.closedHeightMM, calibration.openWidthMM,
+	)
 	return s, nil
 }
 
@@ -328,31 +315,192 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return s.reset(ctx)
 	}
 
-	if _, ok := cmd["get_ingredients"]; ok {
-		ingredients := make([]map[string]any, 0, len(s.cfg.Bins))
-		for _, bin := range s.cfg.Bins {
-			ingredients = append(ingredients, map[string]any{
-				"name":              bin.Name,
-				"grams_per_serving": bin.GramsPerServing,
-				"category":          bin.Category,
-				"zone_id":           bin.ZoneID,
-			})
+	if _, ok := cmd["calibrate"]; ok {
+		calibration, err := s.runGripperCalibration(ctx)
+		if err != nil {
+			return nil, err
 		}
-		return map[string]any{"ingredients": ingredients}, nil
+		s.setGripperCalibration(calibration)
+		return map[string]any{
+			"closed_gripper_to_arm_base_height_mm": calibration.closedHeightMM,
+			"open_gripper_width_mm":                calibration.openWidthMM,
+		}, nil
 	}
 
-	return nil, fmt.Errorf("unknown command, expected 'get_from_bin' or 'reset' field")
+	if _, ok := cmd["get_gripper_calibration"]; ok {
+		return s.getGripperCalibration()
+	}
+
+	if _, ok := cmd["get_zone_config"]; ok {
+		return s.getZoneConfig(), nil
+	}
+
+	return nil, fmt.Errorf("unknown command, expected 'get_from_bin', 'reset', 'calibrate', 'get_gripper_calibration', or 'get_zone_config' field")
 }
 
-func (s *grabberControls) applyXYOffset(pose spatialmath.Pose) spatialmath.Pose {
-	if s.cfg.XOffsetMM == 0 && s.cfg.YOffsetMM == 0 {
-		return pose
+func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error) {
+	s.calibrationMu.Lock()
+	calibrated := s.gripperCalibrated
+	closedHeightMM := s.closedGripperHeightMM
+	openWidthMM := s.openGripperWidthMM
+	s.calibrationMu.Unlock()
+	if !calibrated {
+		return nil, fmt.Errorf("gripper not calibrated, run calibrate command first")
 	}
-	pt := pose.Point()
-	return spatialmath.NewPose(
-		r3.Vector{X: pt.X + s.cfg.XOffsetMM, Y: pt.Y + s.cfg.YOffsetMM, Z: pt.Z},
-		pose.Orientation(),
-	)
+	return map[string]interface{}{
+		"closed_gripper_to_arm_base_height_mm": closedHeightMM,
+		"open_gripper_width_mm":                openWidthMM,
+	}, nil
+}
+
+func (s *grabberControls) getZoneConfig() map[string]interface{} {
+	orient := s.cfg.BinHoverOrientation
+	zones := make([]map[string]interface{}, 0, len(s.cfg.Zones))
+	for _, zoneCfg := range s.cfg.Zones {
+		zones = append(zones, map[string]interface{}{
+			"zone_id":           zoneCfg.ZoneID,
+			"hover_x_offset_mm": zoneCfg.HoverXOffsetMM,
+			"hover_y_offset_mm": zoneCfg.HoverYOffsetMM,
+		})
+	}
+	return map[string]interface{}{
+		"bin_hover_height_mm": s.cfg.BinHoverHeightMM,
+		"bin_hover_orientation": map[string]float64{
+			"ox":    orient.OX,
+			"oy":    orient.OY,
+			"oz":    orient.OZ,
+			"theta": orient.Theta,
+		},
+		"zones": zones,
+	}
+}
+
+type gripperCalibration struct {
+	closedHeightMM float64
+	openWidthMM    float64
+}
+
+func (s *grabberControls) runGripperCalibration(ctx context.Context) (gripperCalibration, error) {
+	closedHeightMM, err := s.measureClosedGripperHeight(ctx)
+	if err != nil {
+		return gripperCalibration{}, err
+	}
+	openWidthMM, err := s.measureOpenGripperWidth(ctx)
+	if err != nil {
+		return gripperCalibration{}, err
+	}
+	return gripperCalibration{
+		closedHeightMM: closedHeightMM,
+		openWidthMM:    openWidthMM,
+	}, nil
+}
+
+func (s *grabberControls) setGripperCalibration(calibration gripperCalibration) {
+	s.calibrationMu.Lock()
+	s.closedGripperHeightMM = calibration.closedHeightMM
+	s.openGripperWidthMM = calibration.openWidthMM
+	s.gripperCalibrated = true
+	s.calibrationMu.Unlock()
+}
+
+func (s *grabberControls) measureClosedGripperHeight(ctx context.Context) (float64, error) {
+	if _, err := s.gripper.Grab(ctx, nil); err != nil {
+		return 0, fmt.Errorf("close gripper: %w", err)
+	}
+
+	geoms, err := s.gripper.Geometries(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("read gripper geometries: %w", err)
+	}
+	if len(geoms) == 0 {
+		return 0, fmt.Errorf("gripper returned no geometries")
+	}
+
+	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)
+	if err != nil {
+		return 0, fmt.Errorf("build frame system: %w", err)
+	}
+
+	startInputs := referenceframe.NewZeroInputs(fs)
+
+	armCurrentInputs, err := s.arm.CurrentInputs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("getting arm current inputs: %w", err)
+	}
+	if len(armCurrentInputs) > 0 {
+		startInputs[s.cfg.Arm] = armCurrentInputs
+	}
+
+	gf := referenceframe.NewGeometriesInFrame(s.cfg.Gripper, geoms)
+	tf, err := fs.Transform(startInputs.ToLinearInputs(), gf, s.cfg.Arm)
+	if err != nil {
+		return 0, fmt.Errorf("transform gripper geometries to arm frame: %w", err)
+	}
+	geomsInArm, ok := tf.(*referenceframe.GeometriesInFrame)
+	if !ok {
+		return 0, fmt.Errorf("expected GeometriesInFrame after transform, got %T", tf)
+	}
+
+	return maxGeometryZ(geomsInArm.Geometries())
+}
+
+func (s *grabberControls) measureOpenGripperWidth(ctx context.Context) (float64, error) {
+	if err := s.gripper.Open(ctx, nil); err != nil {
+		return 0, fmt.Errorf("open gripper: %w", err)
+	}
+
+	geoms, err := s.gripper.Geometries(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("read gripper geometries: %w", err)
+	}
+	if len(geoms) == 0 {
+		return 0, fmt.Errorf("gripper returned no geometries")
+	}
+
+	return geometryXSpan(geoms)
+}
+
+func (s *grabberControls) calibratedClosedGripperHeight() (float64, error) {
+	s.calibrationMu.Lock()
+	defer s.calibrationMu.Unlock()
+	if !s.gripperCalibrated {
+		return 0, fmt.Errorf("gripper not calibrated, run calibrate command first")
+	}
+	return s.closedGripperHeightMM, nil
+}
+
+func maxGeometryZ(geoms []spatialmath.Geometry) (float64, error) {
+	maxZ := math.Inf(-1)
+	for _, g := range geoms {
+		for _, pt := range g.ToPoints(1.0) {
+			if pt.Z > maxZ {
+				maxZ = pt.Z
+			}
+		}
+	}
+	if math.IsInf(maxZ, -1) {
+		return 0, fmt.Errorf("geometries produced no points")
+	}
+	return maxZ, nil
+}
+
+func geometryXSpan(geoms []spatialmath.Geometry) (float64, error) {
+	minX := math.Inf(1)
+	maxX := math.Inf(-1)
+	for _, g := range geoms {
+		for _, pt := range g.ToPoints(1.0) {
+			if pt.X < minX {
+				minX = pt.X
+			}
+			if pt.X > maxX {
+				maxX = pt.X
+			}
+		}
+	}
+	if math.IsInf(maxX, -1) {
+		return 0, fmt.Errorf("geometries produced no points")
+	}
+	return math.Abs(maxX - minX), nil
 }
 
 // loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
@@ -385,29 +533,29 @@ func (s *grabberControls) loadAssets() error {
 		s.worldState = ws
 	}
 
-	if s.zones == nil {
+	if s.loadedZones == nil {
 		zones, err := segmentation.LoadZones(s.assetsDir + "/zones.json")
 		if err != nil {
 			return fmt.Errorf("zones not available at %s, run setup first: %w", s.assetsDir+"/zones.json", err)
 		}
-		s.zones = zones
-		for _, binCfg := range s.cfg.Bins {
-			z, ok := zones.ZoneByID(binCfg.ZoneID)
+		s.loadedZones = zones
+		for _, zoneCfg := range s.cfg.Zones {
+			z, ok := zones.ZoneByID(zoneCfg.ZoneID)
 			if !ok {
-				return fmt.Errorf("zone %d not found for bin %q", binCfg.ZoneID, binCfg.Name)
+				return fmt.Errorf("zone %d not found in loaded zones", zoneCfg.ZoneID)
 			}
-			cx, cy, err := z.Centroid()
-			if err != nil {
-				return fmt.Errorf("bin %q: %w", binCfg.Name, err)
-			}
-			s.bins[binCfg.ZoneID].hoverPose = spatialmath.NewPose(
-				r3.Vector{
-					X: cx + binCfg.HoverXOffsetMM,
-					Y: cy + binCfg.HoverYOffsetMM,
-					Z: s.zones.ZMean + s.cfg.BinHoverHeightMM,
-				},
+			hoverPose, err := BinHoverPose(
+				z,
+				s.loadedZones.ZMean,
+				s.cfg.BinHoverHeightMM,
+				zoneCfg.HoverXOffsetMM,
+				zoneCfg.HoverYOffsetMM,
 				s.cfg.BinHoverOrientation,
 			)
+			if err != nil {
+				return fmt.Errorf("zone %d: %w", zoneCfg.ZoneID, err)
+			}
+			s.zones[zoneCfg.ZoneID].hoverPose = hoverPose
 		}
 	}
 
@@ -415,56 +563,24 @@ func (s *grabberControls) loadAssets() error {
 }
 
 func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
-	for i := range s.zones.Zones {
-		if s.zones.Zones[i].ID == zoneID {
-			return &s.zones.Zones[i], nil
+	for i := range s.loadedZones.Zones {
+		if s.loadedZones.Zones[i].ID == zoneID {
+			return &s.loadedZones.Zones[i], nil
 		}
 	}
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
 func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
-	zonePlane := zone.Plane
-	zoneCenterVec := r3.Vector{
-		X: zonePlane.Point[0],
-		Y: zonePlane.Point[1],
-		Z: zonePlane.Point[2],
+	closedGripperHeightMM, err := s.calibratedClosedGripperHeight()
+	if err != nil {
+		return nil, err
 	}
-
-	zoneNormalVec := r3.Vector{
-		X: zonePlane.Normal[0],
-		Y: zonePlane.Normal[1],
-		Z: zonePlane.Normal[2],
+	pose, err := ComputeGrabPose(zone, foodLevelMM, servingDepthMM, closedGripperHeightMM, s.cfg.BinHoverOrientation)
+	if err != nil {
+		return nil, err
 	}
-	if foodLevelMM < 35.0 {
-		return nil, fmt.Errorf("food level is too low: %.2f mm", foodLevelMM)
-	}
-	foodHeightPosition := zoneCenterVec.Add(zoneNormalVec.Mul(foodLevelMM))
-
-	// hardcoding for now but want to detect this at some point
-	closedGripperToArmBaseHeightMM := 330.0
-
-	// food grab position is `servingDepthMM` beneath the detected food surface,
-	// measured along the bin's plane normal.
-	grabBasePoint := foodHeightPosition.Add(zoneNormalVec.Mul(-servingDepthMM))
-
-	idealArmBasePosition := grabBasePoint.Add(zoneNormalVec.Mul(closedGripperToArmBaseHeightMM))
-
-	// compute orientation from gripper dynamically
-	// currentGripperPose, err := s.fsService.GetPose(ctx, s.gripper.Name().Name, referenceframe.World, nil, nil)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to get current gripper pose: %w", err)
-	// }
-	// gripperBasePoint := currentGripperPose.Pose().Point()
-
-	// Signed distance from the gripper to the zone plane along the (unit) normal.
-	// Positive means the gripper is on the +normal side of the plane.
-	// signedDist := gripperBasePoint.Sub(zoneCenterVec).Dot(zoneNormalVec)
-	// Vector pointing from gripperBasePoint to its projection on the plane.
-	// gripperToPlaneDirection := zoneNormalVec.Mul(-signedDist).Normalize()
-	gripperOrientationVec := s.cfg.BinHoverOrientation
-
-	return spatialmath.NewPose(idealArmBasePosition, gripperOrientationVec), nil
+	return pose, nil
 }
 
 // logBinImagingCamPlaneFit snapshots the bin-imaging camera point cloud, culls
@@ -519,10 +635,12 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		zone.Plane.TiltDeg(),
 		time.Since(start).Seconds(),
 	)
-	if stats.MeanSignedDistanceMM < 0 {
-		return 0, fmt.Errorf("mean signed distance to plane is negative: %.2f mm", stats.MeanSignedDistanceMM)
+	foodLevelMM, err := FoodLevelMMFromPlaneFitStats(zone, stats)
+	if err != nil {
+		s.logger.Errorf("distance to plane is wrong: %v, pointsInBounds: %d, planePoint: %v", err, stats.PointsInBounds, r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]})
+		return 0, err
 	}
-	return stats.MeanSignedDistanceMM, nil
+	return foodLevelMM, nil
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -530,15 +648,9 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	zoneIDVal := cmd["get_from_bin"]
-	var zoneID int
-	switch v := zoneIDVal.(type) {
-	case int:
-		zoneID = v
-	case float64:
-		zoneID = int(v)
-	default:
-		return nil, fmt.Errorf("'get_from_bin' must be an int zone ID, got %T", zoneIDVal)
+	zoneID, name, servingDepthMM, err := parseGetFromBinArgs(cmd["get_from_bin"])
+	if err != nil {
+		return nil, err
 	}
 
 	var depthOffsetMM float64
@@ -558,9 +670,14 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 
 	buildID, _ := cmd["build_id"].(string)
 
-	bin, ok := s.bins[zoneID]
+	zoneCfg, ok := s.zones[zoneID]
 	if !ok {
 		return nil, fmt.Errorf("zone %d not found in configuration", zoneID)
+	}
+
+	label := name
+	if label == "" {
+		label = fmt.Sprintf("zone %d", zoneID)
 	}
 
 	zone, err := s.getZone(zoneID)
@@ -573,24 +690,75 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	s.logger.Infof("Planning get_from_bin for bin '%s' (zone %d, depth-offset %.1fmm)", bin.name, zoneID, depthOffsetMM)
-	plan, err := s.planGrab(ctx, bin, zoneID, zone, binFoodLevelMM, buildID)
+	s.logger.Infof("Planning get_from_bin for '%s' (zone %d, serving-depth %.1fmm, depth-offset %.1fmm)", label, zoneID, servingDepthMM, depthOffsetMM)
+	plan, err := s.planGrab(ctx, zoneCfg, label, zoneID, zone, binFoodLevelMM, servingDepthMM, buildID)
 	if err != nil {
 		return nil, err
 	}
-	s.logger.Infof("Executing get_from_bin for bin '%s' (zone %d, %d steps)", bin.name, zoneID, len(plan.Steps))
+	s.logger.Infof("Executing get_from_bin for '%s' (zone %d, %d steps)", label, zoneID, len(plan.Steps))
 
 	if err := s.executeGrab(ctx, plan); err != nil {
 		return nil, err
 	}
-	s.logger.Infof("Successfully completed get_from_bin for bin '%s' (zone %d)", bin.name, zoneID)
+	s.logger.Infof("Successfully completed get_from_bin for '%s' (zone %d)", label, zoneID)
 
 	return map[string]interface{}{
 		"success":         true,
-		"bin":             bin.name,
+		"bin":             label,
+		"zone-id":         zoneID,
 		"depth-offset-mm": depthOffsetMM,
-		"message":         fmt.Sprintf("Successfully grabbed from bin '%s' and moved to bowl", bin.name),
+		"message":         fmt.Sprintf("Successfully grabbed from '%s' and moved to bowl", label),
 	}, nil
+}
+
+// parseGetFromBinArgs reads the value of the "get_from_bin" command. It accepts
+// either a bare zone ID (legacy form) or a map carrying the zone ID along with
+// optional ingredient metadata supplied by the build coordinator:
+//
+//	{"zone-id": <int>, "name": <string>, "serving-depth-mm": <number>}
+//
+// name is used only for logging. serving-depth-mm defaults to
+// DefaultServingDepthMM when omitted or zero.
+func parseGetFromBinArgs(v interface{}) (zoneID int, name string, servingDepthMM float64, err error) {
+	servingDepthMM = DefaultServingDepthMM
+	switch val := v.(type) {
+	case int:
+		zoneID = val
+	case float64:
+		zoneID = int(val)
+	case map[string]interface{}:
+		zid, ok := val["zone-id"]
+		if !ok {
+			return 0, "", 0, fmt.Errorf("'get_from_bin' map is missing required 'zone-id' field")
+		}
+		switch z := zid.(type) {
+		case int:
+			zoneID = z
+		case float64:
+			zoneID = int(z)
+		default:
+			return 0, "", 0, fmt.Errorf("'get_from_bin.zone-id' must be a number, got %T", zid)
+		}
+		if n, ok := val["name"].(string); ok {
+			name = n
+		}
+		if sd, ok := val["serving-depth-mm"]; ok {
+			switch d := sd.(type) {
+			case float64:
+				servingDepthMM = d
+			case int:
+				servingDepthMM = float64(d)
+			default:
+				return 0, "", 0, fmt.Errorf("'get_from_bin.serving-depth-mm' must be a number, got %T", sd)
+			}
+		}
+	default:
+		return 0, "", 0, fmt.Errorf("'get_from_bin' must be a zone ID or a map of grab arguments, got %T", v)
+	}
+	if servingDepthMM <= 0 {
+		servingDepthMM = DefaultServingDepthMM
+	}
+	return zoneID, name, servingDepthMM, nil
 }
 
 func (s *grabberControls) reset(ctx context.Context) (map[string]interface{}, error) {
