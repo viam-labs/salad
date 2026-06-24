@@ -87,10 +87,10 @@ func GripperWorldExtents(orientation spatialmath.Orientation, openWidthMM, openD
 	worldY := r3.Vector{X: 0, Y: 1, Z: 0}
 	if math.Abs(gripperXInWorld.Dot(worldY)) >= math.Abs(gripperYInWorld.Dot(worldY)) {
 		// Gripper width (local X) runs along world Y; depth (local Y) runs along world X.
-		return openDepthMM, openWidthMM
+		return openWidthMM, openDepthMM
 	}
 	// Gripper depth (local Y) runs along world Y; width (local X) runs along world X.
-	return openWidthMM, openDepthMM
+	return openDepthMM, openWidthMM
 }
 
 // ComputeGrabBasePoint returns the world-frame point where the gripper should
