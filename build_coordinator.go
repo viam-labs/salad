@@ -582,9 +582,12 @@ func finalEventType(status BuildCoordinatorStatus) string {
 		return events.TypeBuildComplete
 	case BuildStatusStopped:
 		return events.TypeBuildStopped
-	case BuildStatusFailed:
+	case BuildStatusFailed,
+		BuildStatusIdle, BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
 		return events.TypeBuildFailed
 	default:
+		// Dynamic statuses (e.g. "adding salad: tomato") aren't terminal; treat
+		// as failed so we never lose a build-end record.
 		return events.TypeBuildFailed
 	}
 }
@@ -630,7 +633,6 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 	}, nil
 }
 
-//nolint:unparam // ctx kept for DoCommand-style API symmetry; build runs under s.cancelCtx so it survives caller cancellation
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Customer name is required so leaderboards have a stable join key.
 	displayName := events.DisplayName(customerName)
