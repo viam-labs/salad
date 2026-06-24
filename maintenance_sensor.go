@@ -63,12 +63,12 @@ func (m *maintenanceSensor) Name() resource.Name {
 	return m.name
 }
 
-func (m *maintenanceSensor) Status(ctx context.Context) (map[string]any, error) {
-	return map[string]any{}, nil
+func (m *maintenanceSensor) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
 }
 
-func (m *maintenanceSensor) Readings(ctx context.Context, extra map[string]any) (map[string]any, error) {
-	resp, err := m.buildCoordinator.DoCommand(ctx, map[string]any{"status": true})
+func (m *maintenanceSensor) Readings(ctx context.Context, extra map[string]interface{}) (map[string]interface{}, error) {
+	resp, err := m.buildCoordinator.DoCommand(ctx, map[string]interface{}{"status": true})
 	if err != nil {
 		m.logger.CWarnw(
 			ctx, "maintenance-sensor: failed to query build coordinator",
@@ -77,21 +77,22 @@ func (m *maintenanceSensor) Readings(ctx context.Context, extra map[string]any) 
 		return nil, fmt.Errorf("failed to query build coordinator: %w", err)
 	}
 
-	statusRaw, _ := resp["status"].(string)
-	buildStatus := BuildCoordinatorStatus(statusRaw)
-	isSafe := buildStatus.IsMaintenanceSafe()
+	status, _ := resp["status"].(string)
+	isBusy := status != "" && status != "idle" && status != "complete"
+
+	isSafe := !isBusy
 	m.logger.CDebugf(
 		ctx, "maintenance-sensor: is_safe=%v build_status=%q is_busy=%v",
-		isSafe, statusRaw, !isSafe,
+		isSafe, status,
 	)
 
-	return map[string]any{
+	return map[string]interface{}{
 		"is_safe":      isSafe,
-		"build_status": statusRaw,
+		"build_status": status,
 	}, nil
 }
 
-func (m *maintenanceSensor) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
+func (m *maintenanceSensor) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	return nil, nil
 }
 

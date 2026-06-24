@@ -224,7 +224,10 @@ func (s *dressingControls) planCircularPour(
 	if pointsPerRev == 0 {
 		pointsPerRev = 8
 	}
-	revolutions := max(cfg.Revolutions, 1)
+	revolutions := cfg.Revolutions
+	if revolutions < 1 {
+		revolutions = 1
+	}
 
 	poses := computeCircularPoses(s.cfg.PourDressing.toPose(), cfg.RadiusMm, pointsPerRev)
 	goals := make([]*armplanning.PlanState, len(poses))

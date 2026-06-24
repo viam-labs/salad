@@ -102,24 +102,24 @@ func (s *supplyDetector) Name() resource.Name {
 	return s.name
 }
 
-func (s *supplyDetector) Status(ctx context.Context) (map[string]any, error) {
-	return map[string]any{}, nil
+func (s *supplyDetector) Status(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
 }
 
-func (s *supplyDetector) DoCommand(ctx context.Context, cmd map[string]any) (map[string]any, error) {
+func (s *supplyDetector) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if _, ok := cmd["check_supply"]; ok {
 		return s.checkSupply(ctx)
 	}
 	return nil, fmt.Errorf("unknown command, expected 'check_supply'")
 }
 
-func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]any, error) {
+func (s *supplyDetector) checkSupply(ctx context.Context) (map[string]interface{}, error) {
 	img, err := camera.DecodeImageFromCamera(ctx, s.cam, []string{"image/jpeg"}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get image: %w", err)
 	}
 
-	result := make(map[string]any)
+	result := make(map[string]interface{})
 
 	for _, bin := range s.cfg.Bins {
 		ratio, err := s.nonSteelRatio(img, bin)

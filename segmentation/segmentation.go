@@ -358,8 +358,8 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 	for r := range isDivider {
 		isDivider[r] = make([]bool, cols)
 	}
-	for r := range rows {
-		for c := range cols {
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
 			if !grid[r][c].hasData {
 				continue
 			}
@@ -425,8 +425,8 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 	nextLabel := 0
 	componentCells := map[int][]coord{}
 
-	for startR := range rows {
-		for startC := range cols {
+	for startR := 0; startR < rows; startR++ {
+		for startC := 0; startC < cols; startC++ {
 			if !isOpen(startR, startC) || labels[startR][startC] >= 0 {
 				continue
 			}
@@ -547,8 +547,8 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 		return !grid[r][c].hasData || grid[r][c].maxZ >= zThreshold
 	}
 	expandQueue := []coord{}
-	for startR := range rows {
-		for startC := range cols {
+	for startR := 0; startR < rows; startR++ {
+		for startC := 0; startC < cols; startC++ {
 			if labels[startR][startC] >= 0 {
 				expandQueue = append(expandQueue, coord{startR, startC})
 			}
@@ -594,8 +594,8 @@ func segmentTriangles(triangles []*spatialmath.Triangle, opts Options) ([]Zone, 
 	for i := range expandedBounds {
 		expandedBounds[i] = [4]float64{math.MaxFloat64, -math.MaxFloat64, math.MaxFloat64, -math.MaxFloat64}
 	}
-	for r := range rows {
-		for c := range cols {
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
 			label := labels[r][c]
 			if label < 0 {
 				continue
@@ -659,8 +659,8 @@ func dilateMask(mask [][]bool, rows, cols, radius int) [][]bool {
 	for r := range result {
 		result[r] = make([]bool, cols)
 	}
-	for r := range rows {
-		for c := range cols {
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
 			if !mask[r][c] {
 				continue
 			}
