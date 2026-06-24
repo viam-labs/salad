@@ -15,10 +15,16 @@
 
   let order: Record<string, number> = $state({});
   let customerName = $state("");
+  let nameError = $state(false);
+
+  let trimmedName = $derived(customerName.trim());
+  let nameValid = $derived(trimmedName.length > 0);
 
   let totalItems = $derived(
     Object.values(order).reduce((sum, n) => sum + n, 0),
   );
+
+  let canBuild = $derived(totalItems > 0 && nameValid);
 
   let cartNames = $derived(
     Object.entries(order)
@@ -46,8 +52,12 @@
   }
 
   function handleBuild() {
-    if (totalItems > 0) {
-      onBuild({ ...order }, customerName.trim());
+    if (!nameValid) {
+      nameError = true;
+      return;
+    }
+    if (canBuild) {
+      onBuild({ ...order }, trimmedName);
     }
   }
 </script>
@@ -55,15 +65,25 @@
 <div class="ordering-screen">
   <h1>{text.orderTitle}</h1>
   <div class="name-card">
-    <label class="name-label" for="customer-name">What's your name?</label>
+    <label class="name-label" for="customer-name">
+      What's your name? <span class="name-required" aria-hidden="true">*</span>
+    </label>
     <input
       id="customer-name"
       class="name-input"
+      class:invalid={nameError && !nameValid}
       type="text"
       placeholder="e.g. Viam"
       maxlength="40"
+      required
+      aria-required="true"
+      aria-invalid={nameError && !nameValid}
       bind:value={customerName}
+      oninput={() => { if (nameValid) nameError = false; }}
     />
+    {#if nameError && !nameValid}
+      <div class="name-error" role="alert">Please enter your name to build.</div>
+    {/if}
   </div>
 
   {#each categoryOrder as cat (cat)}
@@ -88,7 +108,7 @@
       {cartNames}
     {/if}
   </div>
-  <button class="btn-build" disabled={totalItems === 0} onclick={handleBuild}>
+  <button class="btn-build" disabled={!canBuild} onclick={handleBuild}>
     {text.buildButton}
   </button>
 </div>

@@ -7,11 +7,23 @@ let coordinator: VIAM.GenericServiceClient;
 let streamClient: VIAM.StreamClient;
 let cameraStream: MediaStream;
 
-export async function initConnection(): Promise<void> {
-  let apiKeyId = "";
-  let apiKeySecret = "";
-  let host = "";
+// Captured at connect time; reused to lazily build the dashboard's ViamClient
+// and resolve its org/location.
+let apiKeyId = "";
+let apiKeySecret = "";
+let machinePartId = "";
 
+// {orgId, locationId} the Data API needs, derived at runtime and cached.
+// Populated lazily when the dashboard first opens.
+interface DashboardContext {
+  client: VIAM.ViamClient;
+  orgId: string;
+  locationId: string;
+}
+let dashboardCtx: DashboardContext | null = null;
+let dashboardCtxPromise: Promise<DashboardContext> | null = null;
+
+export async function initConnection(): Promise<void> {
   const machineCookieKey = window.location.pathname.split("/")[2];
   const cookie = Cookies.get(machineCookieKey);
   if (!cookie) {
@@ -23,10 +35,11 @@ export async function initConnection(): Promise<void> {
   const parsed = JSON.parse(cookie);
   apiKeyId = parsed.apiKey.id;
   apiKeySecret = parsed.apiKey.key;
-  host = parsed.hostname;
+  // The cookie key is the machine part id; used to resolve location/org.
+  machinePartId = machineCookieKey;
 
   robotClient = await VIAM.createRobotClient({
-    host,
+    host: parsed.hostname,
     credentials: {
       type: "api-key",
       payload: apiKeySecret,
@@ -38,6 +51,54 @@ export async function initConnection(): Promise<void> {
   coordinator = new VIAM.GenericServiceClient(robotClient, "salad-coordinator");
   streamClient = new VIAM.StreamClient(robotClient);
   cameraStream = await streamClient.getStream("overhead-webcam");
+}
+
+// Resolves and caches the ViamClient + {orgId, locationId} the Data API needs.
+// The ViamClient is created here (not at startup) so the cloud handshake only
+// happens when the dashboard opens; concurrent callers share one in-flight
+// promise.
+export function getDashboardContext(): Promise<DashboardContext> {
+  if (dashboardCtx) return Promise.resolve(dashboardCtx);
+  if (dashboardCtxPromise) return dashboardCtxPromise;
+  dashboardCtxPromise = (async () => {
+    if (!machinePartId) {
+      throw new Error(
+        "Machine part id not available; initConnection must complete first.",
+      );
+    }
+    const client = await VIAM.createViamClient({
+      credentials: {
+        type: "api-key",
+        payload: apiKeySecret,
+        authEntity: apiKeyId,
+      },
+    });
+    const partResp = await client.appClient.getRobotPart(machinePartId);
+    const part = partResp.part;
+    if (!part) {
+      throw new Error(`getRobotPart(${machinePartId}) returned no part.`);
+    }
+    const locationId = part.locationId;
+    if (!locationId) {
+      throw new Error("Robot part is missing location_id.");
+    }
+    const location = await client.appClient.getLocation(locationId);
+    // Fall back to the first sharing org if there's no primary owner.
+    const orgId =
+      location?.primaryOrgIdentity?.id ??
+      location?.organizations?.[0]?.organizationId ??
+      "";
+    if (!orgId) {
+      throw new Error(`Could not resolve org id for location ${locationId}.`);
+    }
+    dashboardCtx = { client, orgId, locationId };
+    return dashboardCtx;
+  })();
+  // Reset the in-flight promise on failure so a later caller can retry.
+  dashboardCtxPromise.catch(() => {
+    dashboardCtxPromise = null;
+  });
+  return dashboardCtxPromise;
 }
 
 export async function fetchTheme(): Promise<string> {

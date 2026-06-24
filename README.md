@@ -22,14 +22,87 @@ Each file is named `<namespace>_<module>_<model>.md`.
 | [`ncs:salad:passthrough-to-camera`](ncs_salad_passthrough-to-camera.md) | `rdk:service:vision` | Vision service that forwards `NextPointCloud` from a configured camera through the vision API. |
 | [`ncs:salad:file-vision`](ncs_salad_file-vision.md) | `rdk:service:vision` | Vision service that returns a fixed 3D mesh loaded from a `.ply` file. |
 | [`ncs:salad:supply-detector`](ncs_salad_supply-detector.md) | `rdk:service:generic` | Estimates per-bin ingredient supply (`available` / `low` / `unknown`) from rectangular ROIs on an overhead camera frame. |
+| `ncs:salad:build-events` | `rdk:component:sensor` | Queue-backed sensor that records one Viam tabular data row per observability event from the build coordinator. Powers the in-app dashboard. See [Observability](#observability). |
 
 ## Application
 
 `meta.json` ships a single-machine application named `salad` whose
 entrypoint is `dist/index.html`. The front-end is built with Svelte
 (see `src/`, `svelte.config.js`, `vite.config.js`) and is used to drive
-the build coordinator's commands and visualize captured PCDs and the
-segmented bin mesh.
+the build coordinator's commands, visualize captured PCDs and the
+segmented bin mesh, and render the observability dashboard.
+
+## Observability
+
+Every salad build emits a stream of structured events into Viam's
+tabular data store via the `ncs:salad:build-events` sensor. The Svelte
+app reads them back through `client.dataClient.tabularDataByMQL` and
+renders trend charts, ingredient stats, and recent-build tables in a
+dashboard reachable from the 📊 button in the app shell.
+
+### Configure the sensor and data capture
+
+Add the sensor to your machine, then wire it into the build coordinator
+as `"build-events"`. Configure Data Management to capture `Readings`:
+
+```jsonc
+{
+  "name": "salad-events",
+  "type": "sensor",
+  "model": "ncs:salad:build-events",
+  "attributes": {},
+  "service_configs": [
+    {
+      "type": "data_manager",
+      "attributes": {
+        "capture_methods": [
+          {
+            "method": "Readings",
+            "capture_frequency_hz": 5,
+            "additional_params": {}
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Then in the build coordinator config: `"build-events": "salad-events"`.
+The sensor's `Readings` method returns `data.ErrNoCaptureToStore` when
+no events are queued, so Data Management only writes one row per real
+event — no idle samples.
+
+### Event types
+
+| `event_type` | Emitted | Key fields |
+|---|---|---|
+| `build_start` | When a new order is accepted | `order`, `total_servings` |
+| `build_complete` / `build_failed` / `build_stopped` | At the end of every build | `duration_ms`, `total_servings`, optional `error_message` |
+| `ingredient_start` | Before each non-dressing ingredient | `ingredient_name`, `category`, `zone_id`, `target_grams`, `requested_servings` |
+| `ingredient_complete` | After each non-dressing ingredient | `actual_grams`, `grams_error`, `grab_count`, `successful_grab_count`, `final_depth_offset_mm`, `bin_empty_detected`, `duration_ms` |
+| `grab_attempt` | Per call to `get_from_bin` | `attempt_index`, `depth_offset_mm`, `weight_before_g`, `weight_after_g`, `weight_change_g`, `outcome` (`success` \| `zero_change` \| `motion_plan_failed` \| `error`), `motion_planning_failure`, `duration_ms` |
+| `dressing_pour` | Per dressing | `dressing_name`, `outcome`, `duration_ms` |
+| `setup_complete` / `setup_failed` | After `setup_station` | `duration_ms`, optional `error_message` |
+
+All events share `build_id`, `customer_name` (normalized join key),
+`customer_name_display` (original-cased), `theme`, and `timestamp`.
+
+### Customer names
+
+Customer names are now required when placing an order from the UI. The
+backend normalizes them (trim, collapse whitespace, lowercase) into
+`customer_name` so leaderboards have a stable join key, while the
+original-cased version is kept as `customer_name_display` for rendering.
+
+
+### Dashboard
+
+The dashboard is reachable from the 📊 button in the app shell — no
+configuration required. On first open it derives the org id and
+location id at runtime by calling `appClient.getRobotPart` and
+`appClient.getLocation` with the machine's existing api-key, so the
+same front-end build works on any machine with no edits.
 
 ## CLI
 

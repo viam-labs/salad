@@ -20,6 +20,7 @@ import (
 	"go.viam.com/rdk/resource"
 	genericservice "go.viam.com/rdk/services/generic"
 
+	"salad/events"
 	"salad/filter"
 	"salad/segmentation"
 	saladutils "salad/utils"
@@ -188,6 +189,9 @@ type BuildCoordinatorConfig struct {
 	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
 	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
 	Theme               string                              `json:"theme,omitempty"`
+	// BuildEvents is the optional name of a build-events sensor that receives
+	// per-build observability events. When unset, events are discarded.
+	BuildEvents string `json:"build-events,omitempty"`
 }
 
 func init() {
@@ -228,6 +232,9 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 	}
 	if cfg.ImagingCamera != "" {
 		optDeps = append(optDeps, cfg.ImagingCamera)
+	}
+	if cfg.BuildEvents != "" {
+		optDeps = append(optDeps, sensor.Named(cfg.BuildEvents).String())
 	}
 
 	if cfg.Filter != nil {
@@ -309,6 +316,7 @@ type buildCoordinator struct {
 	leftHome          sw.Switch
 	rightHome         sw.Switch
 	ingredients       map[string]BuildCoordinatorIngredientConfig
+	emitter           events.Emitter
 
 	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
 	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
@@ -351,6 +359,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		simulate:    conf.Simulate,
 		skipLilArm:  conf.SkipLilArm,
 		assetsDir:   "/home/viam/assets",
+		emitter:     events.Nop{},
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -413,6 +422,19 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("failed to get right-home switch %q: %w", conf.RightHome, err)
 	}
 	s.rightHome = rightHomeSwitch
+
+	if conf.BuildEvents != "" {
+		eventsRes, err := sensor.FromProvider(deps, conf.BuildEvents)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get build-events sensor %q: %w", conf.BuildEvents, err)
+		}
+		emitter, ok := eventsRes.(events.Emitter)
+		if !ok {
+			return nil, fmt.Errorf("build-events sensor %q does not implement events.Emitter; configure it with model %q", conf.BuildEvents, events.Model)
+		}
+		s.emitter = emitter
+		s.logger.Infof("Build events will be emitted to sensor %q", conf.BuildEvents)
+	}
 
 	// Ingredient (food) metadata lives here in the coordinator config; the
 	// grabber only knows about zones. Each ingredient maps to a grabber zone
@@ -522,6 +544,51 @@ func (s *buildCoordinator) getStatus() map[string]interface{} {
 	}
 }
 
+// emit publishes one event, stamped with the active build's identity.
+// Safe for concurrent use.
+func (s *buildCoordinator) emit(ctx context.Context, eventType string, fields map[string]interface{}) {
+	s.mu.RLock()
+	buildID := s.buildID
+	displayName := s.customerName
+	s.mu.RUnlock()
+	s.emitter.Emit(ctx, events.Event{
+		Type:                eventType,
+		BuildID:             buildID,
+		CustomerName:        events.NormalizeName(displayName),
+		CustomerNameDisplay: displayName,
+		Theme:               s.getTheme(),
+		Fields:              fields,
+		Timestamp:           time.Now(),
+	})
+}
+
+// sumServings totals the requested servings across an order map, ignoring
+// non-numeric values.
+func sumServings(order map[string]interface{}) float64 {
+	var total float64
+	for _, v := range order {
+		if f, err := toFloat64(v); err == nil {
+			total += f
+		}
+	}
+	return total
+}
+
+// finalEventType maps a terminal build status to its event type; unknown
+// states map to failed so we never lose a build-end record.
+func finalEventType(status BuildCoordinatorStatus) string {
+	switch status {
+	case BuildStatusComplete:
+		return events.TypeBuildComplete
+	case BuildStatusStopped:
+		return events.TypeBuildStopped
+	case BuildStatusFailed:
+		return events.TypeBuildFailed
+	default:
+		return events.TypeBuildFailed
+	}
+}
+
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
 	ingredients := make([]interface{}, 0, len(s.ingredients))
 	for _, ing := range s.ingredients {
@@ -565,6 +632,16 @@ func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
 
 //nolint:unparam // ctx kept for DoCommand-style API symmetry; build runs under s.cancelCtx so it survives caller cancellation
 func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
+	// Customer name is required so leaderboards have a stable join key.
+	displayName := events.DisplayName(customerName)
+	normalizedName := events.NormalizeName(customerName)
+	if normalizedName == "" {
+		return map[string]interface{}{
+			"success": false,
+			"message": "customer name is required",
+		}, nil
+	}
+
 	// Guard against concurrent builds.
 
 	// TODO: Move inside state machine.
@@ -583,17 +660,13 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	s.opDone = make(chan struct{})
 	s.status = BuildStatusPreparing
 	s.progress = 0
-	s.customerName = customerName
+	s.customerName = displayName
 	s.errorMsg = ""
 	s.buildID = fmt.Sprintf("%s_%s", time.Now().UTC().Format("20060102-150405"), uuid.NewString()[:8])
 	s.mu.Unlock()
 	s.logger.Infof("Build ID: %s", s.buildID)
 
-	if customerName != "" {
-		s.logger.Infof("New salad order received for %q: %v", customerName, value)
-	} else {
-		s.logger.Infof("New salad order received: %v", value)
-	}
+	s.logger.Infof("New salad order received for %q: %v", displayName, value)
 
 	// TODO: Move to a state machine function.
 	defer func() {
@@ -604,6 +677,35 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		close(s.opDone)
 		s.opDone = nil
 		s.mu.Unlock()
+	}()
+
+	// total_servings is reused by both the start and end events.
+	var orderMap map[string]interface{}
+	if m, ok := value.(map[string]interface{}); ok {
+		orderMap = m
+	}
+	totalServings := sumServings(orderMap)
+	buildStart := time.Now()
+	s.emit(ctx, events.TypeBuildStart, map[string]interface{}{
+		"order":          orderMap,
+		"total_servings": totalServings,
+	})
+
+	// Registered after the state-clearing defer so it runs first and still
+	// sees the build's identity.
+	defer func() {
+		s.mu.RLock()
+		finalStatus := s.status
+		errMsg := s.errorMsg
+		s.mu.RUnlock()
+		fields := map[string]interface{}{
+			"duration_ms":    float64(time.Since(buildStart).Milliseconds()),
+			"total_servings": totalServings,
+		}
+		if errMsg != "" {
+			fields["error_message"] = errMsg
+		}
+		s.emit(ctx, finalEventType(finalStatus), fields)
 	}()
 
 	var result map[string]interface{}
@@ -659,10 +761,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	}
 
 	if err == nil && s.textToSpeech != nil {
-		msg := "Your salad is ready!"
-		if customerName != "" {
-			msg = customerName + "'s salad is ready!"
-		}
+		msg := displayName + "'s salad is ready!"
 		if _, ttsErr := s.textToSpeech.DoCommand(buildCtx, map[string]interface{}{"say": msg}); ttsErr != nil {
 			s.logger.Errorw("text-to-speech announcement failed", "err", ttsErr)
 		}
@@ -702,9 +801,15 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		s.mu.Unlock()
 	}()
 
+	setupStart := time.Now()
 	err := s.executeSetup(setupCtx)
+	setupDurMs := float64(time.Since(setupStart).Milliseconds())
 	if setupCtx.Err() != nil {
 		s.updateStatus(BuildStatusStopped, 0)
+		s.emit(s.cancelCtx, events.TypeSetupFailed, map[string]interface{}{
+			"duration_ms":   setupDurMs,
+			"error_message": "setup stopped",
+		})
 		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
@@ -715,6 +820,10 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		s.status = BuildStatusFailed
 		s.errorMsg = err.Error()
 		s.mu.Unlock()
+		s.emit(s.cancelCtx, events.TypeSetupFailed, map[string]interface{}{
+			"duration_ms":   setupDurMs,
+			"error_message": err.Error(),
+		})
 		return map[string]interface{}{
 			"success": false,
 			"message": err.Error(),
@@ -723,6 +832,9 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 
 	s.updateStatus(BuildStatusIdle, 0)
 	s.logger.Infof("Station setup complete")
+	s.emit(s.cancelCtx, events.TypeSetupComplete, map[string]interface{}{
+		"duration_ms": setupDurMs,
+	})
 	return map[string]interface{}{
 		"success": true,
 		"message": "Station setup complete",
@@ -1030,11 +1142,34 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if target.category == categoryDressing {
 			continue
 		}
-		if err := s.addIngredient(ctx, target.name, target.targetGrams); err != nil {
-			s.logger.Errorf("Failed to add ingredient %q: %v", target.name, err)
+		ing := s.ingredients[target.name]
+		s.emit(ctx, events.TypeIngredientStart, map[string]interface{}{
+			"ingredient_name":    target.name,
+			"category":           target.category,
+			"zone_id":            ing.ZoneID,
+			"target_grams":       target.targetGrams,
+			"requested_servings": target.servings,
+		})
+		ingStart := time.Now()
+		ingResult, ingErr := s.addIngredient(ctx, target.name, target.targetGrams)
+		ingFields := map[string]interface{}{
+			"ingredient_name":       target.name,
+			"target_grams":          target.targetGrams,
+			"requested_servings":    target.servings,
+			"actual_grams":          ingResult.totalAdded,
+			"grams_error":           ingResult.totalAdded - target.targetGrams,
+			"grab_count":            ingResult.grabCount,
+			"successful_grab_count": ingResult.successfulGrabs,
+			"final_depth_offset_mm": ingResult.finalDepthOffset,
+			"bin_empty_detected":    ingResult.binEmpty,
+			"duration_ms":           float64(time.Since(ingStart).Milliseconds()),
+		}
+		s.emit(ctx, events.TypeIngredientFinish, ingFields)
+		if ingErr != nil {
+			s.logger.Errorf("Failed to add ingredient %q: %v", target.name, ingErr)
 			return map[string]interface{}{
 				"success": false,
-				"message": fmt.Sprintf("Failed to add ingredient %q: %v", target.name, err),
+				"message": fmt.Sprintf("Failed to add ingredient %q: %v", target.name, ingErr),
 			}, nil
 		}
 		completedServings += target.servings
@@ -1141,37 +1276,87 @@ func isMotionPlanningFailure(err error) bool {
 }
 
 func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
+	dressingStart := time.Now()
 	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 		"pour_dressing": name,
 		"build_id":      s.getBuildID(),
 	})
+	durMs := float64(time.Since(dressingStart).Milliseconds())
 	if err != nil {
+		s.emit(ctx, events.TypeDressingPour, map[string]interface{}{
+			"dressing_name": name,
+			"duration_ms":   durMs,
+			"outcome":       "error",
+			"error_message": err.Error(),
+		})
 		return fmt.Errorf("failed to pour dressing %q: %w", name, err)
 	}
+	s.emit(ctx, events.TypeDressingPour, map[string]interface{}{
+		"dressing_name": name,
+		"duration_ms":   durMs,
+		"outcome":       "success",
+	})
 	return nil
 }
 
-func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targetGrams float64) error {
-	var totalAdded float64
+// addIngredientResult summarizes one addIngredient call for the
+// ingredient_complete event.
+type addIngredientResult struct {
+	totalAdded       float64
+	grabCount        int
+	successfulGrabs  int
+	finalDepthOffset float64
+	binEmpty         bool
+}
+
+func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targetGrams float64) (addIngredientResult, error) {
+	var result addIngredientResult
 	var zeroChangeStreak int
 	var depthOffset float64
+	var attemptIndex int
 
 	depthStep, maxDepth := s.depthProbeParams()
+	ing := s.ingredients[name]
 
-	for totalAdded < targetGrams {
+	// emitGrab records one grab_attempt event and advances attemptIndex. The
+	// payload shape is identical across outcomes, so callers vary only the
+	// per-attempt values.
+	emitGrab := func(weightBefore, weightAfter, change float64, outcome string, motionFail bool, errMsg string, durMs float64) {
+		fields := map[string]interface{}{
+			"ingredient_name":         name,
+			"zone_id":                 ing.ZoneID,
+			"attempt_index":           attemptIndex,
+			"depth_offset_mm":         depthOffset,
+			"weight_before_g":         weightBefore,
+			"weight_after_g":          weightAfter,
+			"weight_change_g":         change,
+			"outcome":                 outcome,
+			"motion_planning_failure": motionFail,
+			"duration_ms":             durMs,
+		}
+		if errMsg != "" {
+			fields["error_message"] = errMsg
+		}
+		s.emit(ctx, events.TypeGrabAttempt, fields)
+		attemptIndex++
+	}
+
+	for result.totalAdded < targetGrams {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			result.finalDepthOffset = depthOffset
+			return result, ctx.Err()
 		}
 		weightBefore, err := s.readScaleWeight(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to read scale before grab: %w", err)
+			result.finalDepthOffset = depthOffset
+			return result, fmt.Errorf("failed to read scale before grab: %w", err)
 		}
 
 		s.logger.Infof("Grabbing %q (added so far: %.1fg / %.1fg, depth-offset %.1fmm)",
-			name, totalAdded, targetGrams, depthOffset)
+			name, result.totalAdded, targetGrams, depthOffset)
 
-		ing := s.ingredients[name]
-		result, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
+		grabStart := time.Now()
+		grabResult, err := s.grabberControls.DoCommand(ctx, map[string]interface{}{
 			"get_from_bin": map[string]interface{}{
 				"zone-id":          ing.ZoneID,
 				"name":             ing.Name,
@@ -1180,8 +1365,16 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			"depth-offset-mm": depthOffset,
 			"build_id":        s.getBuildID(),
 		})
+		grabDurMs := float64(time.Since(grabStart).Milliseconds())
 		if err != nil {
-			if isMotionPlanningFailure(err) && depthOffset > 0 {
+			result.grabCount++
+			motionFail := isMotionPlanningFailure(err)
+			outcome := "error"
+			if motionFail {
+				outcome = "motion_plan_failed"
+			}
+			emitGrab(weightBefore, weightBefore, 0, outcome, motionFail, err.Error(), grabDurMs)
+			if motionFail && depthOffset > 0 {
 				newOffset := depthOffset / 2
 				if newOffset < 0.5 {
 					newOffset = 0
@@ -1191,26 +1384,41 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 				depthOffset = newOffset
 				continue
 			}
-			return fmt.Errorf("failed to grab from bin %q: %w", name, err)
+			result.finalDepthOffset = depthOffset
+			return result, fmt.Errorf("failed to grab from bin %q: %w", name, err)
 		}
-		if success, ok := result["success"].(bool); ok && !success {
-			msg, _ := result["message"].(string)
-			return fmt.Errorf("grab from bin %q failed: %s", name, msg)
+		if success, ok := grabResult["success"].(bool); ok && !success {
+			result.grabCount++
+			msg, _ := grabResult["message"].(string)
+			emitGrab(weightBefore, weightBefore, 0, "error", false, msg, grabDurMs)
+			result.finalDepthOffset = depthOffset
+			return result, fmt.Errorf("grab from bin %q failed: %s", name, msg)
 		}
 
 		weightAfter, err := s.readScaleWeight(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to read scale after grab: %w", err)
+			result.finalDepthOffset = depthOffset
+			return result, fmt.Errorf("failed to read scale after grab: %w", err)
 		}
 
 		change := weightAfter - weightBefore
 		s.logger.Infof("Scale change for %q: %.1fg (before: %.1fg, after: %.1fg)",
 			name, change, weightBefore, weightAfter)
 
+		result.grabCount++
+		outcome := "success"
+		if change < zeroChangeTolerance {
+			outcome = "zero_change"
+		} else {
+			result.successfulGrabs++
+		}
+		emitGrab(weightBefore, weightAfter, change, outcome, false, "", grabDurMs)
+
 		if change < zeroChangeTolerance {
 			zeroChangeStreak++
 			if zeroChangeStreak >= 3 {
 				s.logger.Errorf("3 consecutive grabs with no weight change for ingredient %q, possible empty bin", name)
+				result.binEmpty = true
 				break
 			}
 			s.logger.Warnf("No weight change detected for %q (streak: %d/3)", name, zeroChangeStreak)
@@ -1223,12 +1431,13 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 			}
 		} else {
 			zeroChangeStreak = 0
-			totalAdded += change
+			result.totalAdded += change
 		}
 	}
 
-	s.logger.Infof("Ingredient %q complete: added %.1fg (target: %.1fg)", name, totalAdded, targetGrams)
-	return nil
+	result.finalDepthOffset = depthOffset
+	s.logger.Infof("Ingredient %q complete: added %.1fg (target: %.1fg)", name, result.totalAdded, targetGrams)
+	return result, nil
 }
 
 func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error) {
