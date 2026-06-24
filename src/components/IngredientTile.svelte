@@ -4,12 +4,10 @@
   interface Props {
     name: string;
     count: number;
-    limit: number;
-    categoryTotal: number;
     onUpdate: (count: number) => void;
   }
 
-  let { name, count, limit, categoryTotal, onUpdate }: Props = $props();
+  let { name, count, onUpdate }: Props = $props();
 
   let emoji = $derived(getEmoji(name));
   let selected = $derived(count > 0);
@@ -21,6 +19,6 @@
   <div class="stepper">
     <button disabled={count <= 0} onclick={() => onUpdate(count - 1)}>&minus;</button>
     <span class="stepper-count">{count}</span>
-    <button disabled={categoryTotal >= limit} onclick={() => onUpdate(count + 1)}>+</button>
+    <button disabled={count >= 2} onclick={() => onUpdate(count + 1)}>+</button>
   </div>
 </div>

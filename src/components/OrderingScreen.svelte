@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { categoryOrder, portionLimits } from "../lib/constants";
+  import { categoryOrder } from "../lib/constants";
   import { getCopy } from "../lib/theme.svelte";
   import type { Ingredient } from "../lib/types";
   import CategorySection from "./CategorySection.svelte";
