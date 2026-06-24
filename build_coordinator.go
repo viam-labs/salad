@@ -445,6 +445,7 @@ func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
+		s.sm.StartBuildSalad(ctx, s.cancelCtx, val, customerName)
 		return s.doBuildSalad(ctx, val, customerName)
 	}
 	if _, ok := cmd["setup_station"]; ok {
