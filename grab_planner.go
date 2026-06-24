@@ -80,12 +80,8 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 		return nil, err
 	}
 
-	// hover := s.applyXYOffset(bin.hoverPose)
-	// grab := s.applyXYOffset(grabPose)
-
-	hoverWithOffset := s.applyXYOffset(bin.hoverPose)
 	// use the grab pose orientation so the orientations are consistent between the two
-	hover := spatialmath.NewPose(hoverWithOffset.Point(), grabPose.Orientation())
+	hover := spatialmath.NewPose(bin.hoverPose.Point(), grabPose.Orientation())
 
 	grabPoseThatsJustHeightDiff := spatialmath.NewPose(r3.Vector{
 		X: hover.Point().X,
@@ -115,7 +111,7 @@ func (s *grabberControls) planGrab(ctx context.Context, bin *grabberBinSwitches,
 	specs = append(specs,
 		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose, constraints: s.clearanceLinearConstraints()},
 		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
-		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose},
+		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose, postAction: GrabStepActionShake},
 		grabStepSpec{name: "return_home", goal: homePose},
 	)
 

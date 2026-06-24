@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { buildSalad, getStatus, stopBuild, getCameraStream } from "../lib/robot";
+  import { getCopy } from "../lib/theme.svelte";
 
   interface Props {
     order: Record<string, number>;
@@ -11,6 +12,8 @@
   }
 
   let { order, customerName, onComplete, onStopped, onFailed }: Props = $props();
+
+  let text = $derived(getCopy());
 
   let status = $state("Starting\u2026");
   let progress = $state(0);
@@ -63,7 +66,7 @@
 </script>
 
 <div class="building-screen">
-  <h1>{customerName ? `Building ${customerName}'s Salad\u2026` : "Building Your Salad\u2026"}</h1>
+  <h1>{text.buildingTitle(customerName)}</h1>
   <div class="progress-container">
     <div class="status-text">{status}</div>
     <div class="progress-bar-bg">

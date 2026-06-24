@@ -36,9 +36,49 @@ var categoryOrder = map[string]int{
 }
 
 const (
-	dressing                   = "dressing"
+	categoryDressing                   = "dressing"
 	defaultMeshTargetTriangles = 5000
+	themeSalad                 = "salad"
+	themeIceCream              = "icecream"
+	themeMediterranean         = "mediterranean"
 )
+
+// BuildCoordinatorStatus is the build coordinator's operational state.
+type BuildCoordinatorStatus string
+
+const (
+	BuildStatusIdle             BuildCoordinatorStatus = "idle"
+	BuildStatusPreparing        BuildCoordinatorStatus = "preparing"
+	BuildStatusSettingUpStation BuildCoordinatorStatus = "setting_up_station"
+	BuildStatusDeliveringSalad  BuildCoordinatorStatus = "delivering salad"
+	BuildStatusComplete         BuildCoordinatorStatus = "complete"
+	BuildStatusStopped          BuildCoordinatorStatus = "stopped"
+	BuildStatusFailed           BuildCoordinatorStatus = "failed"
+)
+
+const buildStatusAddingPrefix = "adding "
+
+// BuildStatusAddingIngredient reports progress while an ingredient is being added.
+func BuildStatusAddingIngredient(name string) BuildCoordinatorStatus {
+	return BuildCoordinatorStatus(buildStatusAddingPrefix + name)
+}
+
+// String returns the wire-format status value.
+func (s BuildCoordinatorStatus) String() string {
+	return string(s)
+}
+
+// IsMaintenanceSafe reports whether maintenance/reconfig is safe for this status.
+func (s BuildCoordinatorStatus) IsMaintenanceSafe() bool {
+	switch s {
+	case "", BuildStatusIdle, BuildStatusComplete, BuildStatusFailed, BuildStatusStopped:
+		return true
+	case BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
+		return false
+	default:
+		return false
+	}
+}
 
 type BuildCoordinatorIngredientConfig struct {
 	Name            string  `json:"name"`
@@ -140,6 +180,7 @@ type BuildCoordinatorConfig struct {
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
 	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
 	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
+	Theme               string                              `json:"theme,omitempty"`
 }
 
 func init() {
@@ -231,7 +272,26 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 		return nil, nil, fmt.Errorf("%s.mesh-target-triangles must be >= 0, got %d", path, *cfg.MeshTargetTriangles)
 	}
 
+	if cfg.Theme != "" && normalizeTheme(cfg.Theme) == "" {
+		return nil, nil, fmt.Errorf("%s.theme must be 'salad', 'icecream', or 'mediterranean', got %q", path, cfg.Theme)
+	}
+
 	return deps, optDeps, nil
+}
+
+func normalizeTheme(theme string) string {
+	switch strings.ToLower(strings.TrimSpace(theme)) {
+	case themeSalad:
+		return themeSalad
+	case themeIceCream, "ice-cream", "ice_cream":
+		return themeIceCream
+	case themeMediterranean, "med", "mezze":
+		return themeMediterranean
+	case "":
+		return themeSalad
+	default:
+		return ""
+	}
 }
 
 type buildCoordinator struct {
@@ -244,18 +304,16 @@ type buildCoordinator struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	grabberControls      resource.Resource
-	bowlControls         resource.Resource
-	chefsKissControls    resource.Resource
-	scaleSensor          sensor.Sensor
-	dressingControls     resource.Resource
-	textToSpeech         resource.Resource
-	imagingCamera        camera.Camera
-	leftHome             sw.Switch
-	rightHome            sw.Switch
-	ingredients          map[string]float64 // name -> grams per serving
-	ingredientCategories map[string]string  // name -> category
-	ingredientZoneIDs    map[string]int     // name -> zone ID
+	grabberControls   resource.Resource
+	bowlControls      resource.Resource
+	chefsKissControls resource.Resource
+	scaleSensor       sensor.Sensor
+	dressingControls  resource.Resource
+	textToSpeech      resource.Resource
+	imagingCamera     camera.Camera
+	leftHome          sw.Switch
+	rightHome         sw.Switch
+	ingredients       map[string]BuildCoordinatorIngredientConfig
 
 	skipLilArm bool
 	simulate   bool
@@ -278,17 +336,15 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 
 	s := &buildCoordinator{
-		name:                 name,
-		logger:               logger,
-		cfg:                  conf,
-		cancelCtx:            cancelCtx,
-		cancelFunc:           cancelFunc,
-		ingredients:          make(map[string]float64),
-		ingredientCategories: make(map[string]string),
-		ingredientZoneIDs:    make(map[string]int),
-		simulate:             conf.Simulate,
-		skipLilArm:           conf.SkipLilArm,
-		assetsDir:            "/home/viam/assets",
+		name:        name,
+		logger:      logger,
+		cfg:         conf,
+		cancelCtx:   cancelCtx,
+		cancelFunc:  cancelFunc,
+		ingredients: map[string]BuildCoordinatorIngredientConfig{},
+		simulate:    conf.Simulate,
+		skipLilArm:  conf.SkipLilArm,
+		assetsDir:   "/home/viam/assets",
 	}
 
 	grabber, ok := deps[genericservice.Named(conf.GrabberControls)]
@@ -352,13 +408,47 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	s.rightHome = rightHomeSwitch
 
-	for _, ing := range conf.Ingredients {
-		s.ingredients[ing.Name] = ing.GramsPerServing
-		s.ingredientCategories[ing.Name] = ing.Category
-		s.ingredientZoneIDs[ing.Name] = *ing.ZoneID
+	// get config for grabber controls to pull out ingredients
+	ingredientsResult, err := s.grabberControls.DoCommand(ctx, map[string]any{"get_ingredients": true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ingredients from grabber controls: %w", err)
 	}
 
-	s.sm = *statemachine.NewStateMachine()
+	if ingredients, ok := ingredientsResult["ingredients"].([]map[string]any); ok {
+		for _, ing := range ingredients {
+			zoneID, ok := ing["zone_id"].(int)
+			if !ok {
+				return nil, fmt.Errorf("zone_id is not an int: %v", ing["zone_id"])
+			}
+			_, ok = categoryOrder[ing["category"].(string)]
+			if !ok {
+				return nil, fmt.Errorf("unknown category: %v", ing["category"])
+			}
+			s.ingredients[ing["name"].(string)] = BuildCoordinatorIngredientConfig{
+				Name:            ing["name"].(string),
+				GramsPerServing: ing["grams_per_serving"].(float64),
+				Category:        ing["category"].(string),
+				ZoneID:          &zoneID,
+			}
+		}
+	} else {
+		return nil, fmt.Errorf("failed to get ingredients from grabber controls: %w", err)
+	}
+
+	dressingsResult, err := s.dressingControls.DoCommand(ctx, map[string]any{"get_dressings": true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dressings from dressing controls: %w", err)
+	}
+	if dressings, ok := dressingsResult["dressings"].([]map[string]any); ok {
+		for _, dressing := range dressings {
+			s.ingredients[dressing["name"].(string)] = BuildCoordinatorIngredientConfig{
+				Name:            dressing["name"].(string),
+				GramsPerServing: 5,
+				Category:        categoryDressing,
+				ZoneID:          nil,
+			}
+		}
+	}
 
 	s.logger.Infof("Build coordinator initialized with %d ingredients", len(s.ingredients))
 	return s, nil
@@ -416,7 +506,14 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]any) (m
 	if _, ok := cmd["get_setup_result"]; ok {
 		return s.getSetupResult()
 	}
-	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', or 'get_setup_result' field")
+	if _, ok := cmd["get_theme"]; ok {
+		return map[string]interface{}{"theme": s.getTheme()}, nil
+	}
+	return nil, fmt.Errorf("unknown command, expected 'build_salad', 'setup_station', 'stop', 'reset', 'status', 'list_ingredients', 'get_setup_result', or 'get_theme' field")
+}
+
+func (s *buildCoordinator) getTheme() string {
+	return normalizeTheme(s.cfg.Theme)
 }
 
 func (s *buildCoordinator) listIngredients() map[string]any {
@@ -453,7 +550,7 @@ func (s *buildCoordinator) doBuildSalad(buildCtx context.Context, value any, cus
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
 		s.sm.UpdateStateMachineStatus(statemachine.Complete, 100)
-		result = map[string]any{
+		result = map[string]interface{}{
 			"success":   true,
 			"message":   "Salad built and delivered successfully (simulated)",
 			"simulated": true,
@@ -527,7 +624,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]any, error) {
 	err := s.executeSetup(setupCtx)
 	if setupCtx.Err() != nil {
 		s.sm.UpdateStateMachineStatus(statemachine.Stopped, 0)
-		return map[string]any{
+		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
 		}, nil
@@ -901,7 +998,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value any) (map[str
 	// Dressing pours over the bowl at the delivery position, after both
 	// the grabber and bowl-controls arms have gone home.
 	for _, target := range targets {
-		if target.category == dressing {
+		if target.category == categoryDressing {
 			s.sm.UpdateStateMachineStatus(statemachine.Adding, 100)
 			if err := s.addDressing(ctx, target.name); err != nil {
 				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)

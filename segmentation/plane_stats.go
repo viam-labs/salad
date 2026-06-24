@@ -95,6 +95,43 @@ func (hm *ZoneHeightMap) MedianSignedDistanceAt(p r3.Vector) *float64 {
 	return &v
 }
 
+// ApproximateHeightAround returns the mean median signed distance (mm) over
+// height-map cells in a square neighborhood centered on p's cell. Radius is
+// measured in grid cells (Chebyshev distance), not world distance: radius 1
+// averages the 3×3 block, radius 2 the 5×5 block, and so on. Cells with no
+// points are skipped. Returns nil if p lies outside the map's XY bounds or no
+// populated cells fall in the neighborhood.
+func (hm *ZoneHeightMap) ApproximateHeightAround(p r3.Vector, radius int) *float64 {
+	if p.X < hm.MinX || p.X > hm.MaxX || p.Y < hm.MinY || p.Y > hm.MaxY {
+		return nil
+	}
+	if radius < 0 {
+		return nil
+	}
+	centerRow, centerCol := hm.CellXY(p.X, p.Y)
+	var sum float64
+	var n int
+	for dr := -radius; dr <= radius; dr++ {
+		for dc := -radius; dc <= radius; dc++ {
+			r := centerRow + dr
+			c := centerCol + dc
+			if r < 0 || r >= ZoneHeightMapGridSize || c < 0 || c >= ZoneHeightMapGridSize {
+				continue
+			}
+			if hm.PointCount[r][c] == 0 {
+				continue
+			}
+			sum += hm.MedianSignedDistanceMM[r][c]
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	avg := sum / float64(n)
+	return &avg
+}
+
 func (hm *ZoneHeightMap) PointCountAt(p r3.Vector) int {
 	row, col := hm.CellXY(p.X, p.Y)
 	return hm.PointCount[row][col]

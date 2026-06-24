@@ -77,18 +77,17 @@ func (m *maintenanceSensor) Readings(ctx context.Context, extra map[string]any) 
 		return nil, fmt.Errorf("failed to query build coordinator: %w", err)
 	}
 
-	status, _ := resp["status"].(string)
-	isBusy := status != "" && status != "idle" && status != "complete"
-
-	isSafe := !isBusy
+	statusRaw, _ := resp["status"].(string)
+	buildStatus := BuildCoordinatorStatus(statusRaw)
+	isSafe := buildStatus.IsMaintenanceSafe()
 	m.logger.CDebugf(
 		ctx, "maintenance-sensor: is_safe=%v build_status=%q is_busy=%v",
-		isSafe, status,
+		isSafe, statusRaw, !isSafe,
 	)
 
 	return map[string]any{
 		"is_safe":      isSafe,
-		"build_status": status,
+		"build_status": statusRaw,
 	}, nil
 }
 
