@@ -52,6 +52,7 @@ const (
 	BuildStatusIdle             BuildCoordinatorStatus = "idle"
 	BuildStatusPreparing        BuildCoordinatorStatus = "preparing"
 	BuildStatusSettingUpStation BuildCoordinatorStatus = "setting_up_station"
+	BuildStatusWaitingForBowl   BuildCoordinatorStatus = "waiting for bowl"
 	BuildStatusDeliveringSalad  BuildCoordinatorStatus = "delivering salad"
 	BuildStatusComplete         BuildCoordinatorStatus = "complete"
 	BuildStatusStopped          BuildCoordinatorStatus = "stopped"
@@ -75,7 +76,7 @@ func (s BuildCoordinatorStatus) IsMaintenanceSafe() bool {
 	switch s {
 	case "", BuildStatusIdle, BuildStatusComplete, BuildStatusFailed, BuildStatusStopped:
 		return true
-	case BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
+	case BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusWaitingForBowl, BuildStatusDeliveringSalad:
 		return false
 	default:
 		return false
@@ -169,6 +170,21 @@ func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
 	return nil
 }
 
+type BowlDetectionConfig struct {
+	WeightG          *float64 `json:"weight-g,omitempty"`
+	WeightToleranceG *float64 `json:"weight-tolerance-g,omitempty"`
+}
+
+func (c *BowlDetectionConfig) Validate(path string) error {
+	if c.WeightG != nil && *c.WeightG <= 0 {
+		return fmt.Errorf("%s.weight-g must be > 0, got %v", path, *c.WeightG)
+	}
+	if c.WeightToleranceG != nil && *c.WeightToleranceG < 0 {
+		return fmt.Errorf("%s.weight-tolerance-g must be >= 0, got %v", path, *c.WeightToleranceG)
+	}
+	return nil
+}
+
 type BuildCoordinatorConfig struct {
 	Ingredients         []BuildCoordinatorIngredientConfig  `json:"ingredients"`
 	GrabberControls     string                              `json:"grabber-controls"`
@@ -185,6 +201,7 @@ type BuildCoordinatorConfig struct {
 	RightHome           string                              `json:"right-home"`
 	Filter              *BuildCoordinatorFilterConfig       `json:"filter"`
 	Segmentation        *BuildCoordinatorSegmentationConfig `json:"segmentation"`
+	BowlDetection       *BowlDetectionConfig                `json:"bowl-detection,omitempty"`
 	MeshTargetTriangles *int                                `json:"mesh-target-triangles,omitempty"`
 	DepthStepMM         *float64                            `json:"depth-step-mm,omitempty"`
 	MaxDepthOffsetMM    *float64                            `json:"max-depth-offset-mm,omitempty"`
@@ -245,6 +262,12 @@ func (cfg *BuildCoordinatorConfig) Validate(path string) ([]string, []string, er
 
 	if cfg.Segmentation != nil {
 		if err := cfg.Segmentation.Validate(path + ".segmentation"); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if cfg.BowlDetection != nil {
+		if err := cfg.BowlDetection.Validate(path + ".bowl-detection"); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -331,6 +354,9 @@ type buildCoordinator struct {
 	opDone       chan struct{}
 	buildID      string
 
+	// scale baseline at startup; for taring
+	scaleZeroOffset float64
+
 	assetsDir string
 }
 
@@ -410,6 +436,25 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		return nil, fmt.Errorf("failed to get scale sensor %q: %w", conf.ScaleSensor, err)
 	}
 	s.scaleSensor = scale
+
+	// we assume the scale is empty now; this will applied as a "tare" later
+	var zeroOffset float64
+	var scaleErr error
+	for attempt := 0; attempt < scaleZeroReadRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		zeroOffset, scaleErr = s.readScaleWeight(ctx)
+		if scaleErr == nil {
+			break
+		}
+		time.Sleep(scaleZeroReadDelay)
+	}
+	if scaleErr != nil {
+		return nil, fmt.Errorf("failed to read scale %q at startup to establish zero offset (scale is a required dependency): %w", conf.ScaleSensor, scaleErr)
+	}
+	s.scaleZeroOffset = zeroOffset
+	s.logger.Infof("Captured empty-scale zero offset at startup: %.2fg", zeroOffset)
 
 	leftHomeSwitch, err := sw.FromProvider(deps, conf.LeftHome)
 	if err != nil {
@@ -583,7 +628,7 @@ func finalEventType(status BuildCoordinatorStatus) string {
 	case BuildStatusStopped:
 		return events.TypeBuildStopped
 	case BuildStatusFailed,
-		BuildStatusIdle, BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
+		BuildStatusIdle, BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusWaitingForBowl, BuildStatusDeliveringSalad:
 		return events.TypeBuildFailed
 	default:
 		// Dynamic statuses (e.g. "adding salad: tomato") aren't terminal; treat
@@ -1153,6 +1198,11 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		}()
 	}
 
+	// Confirm a bowl is on the scale before adding any ingredients
+	if err := s.waitForBowl(ctx); err != nil {
+		return nil, err
+	}
+
 	for _, target := range targets {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -1267,6 +1317,16 @@ const (
 	zeroChangeTolerance     = 0.5 // grams
 	defaultDepthStepMM      = 20.0
 	defaultMaxDepthOffsetMM = 80.0
+
+	// Bowl detection / scale zero-offset tuning.
+	defaultBowlWeightG    = 20.0
+	defaultBowlToleranceG = 4.0
+	bowlPollInterval      = 50 * time.Millisecond
+	bowlWaitLogInterval   = 2 * time.Second
+	bowlDetectConsecutive = 3
+
+	scaleZeroReadRetries = 5
+	scaleZeroReadDelay   = 100 * time.Millisecond
 )
 
 func (s *buildCoordinator) depthProbeParams() (step, max float64) {
@@ -1477,6 +1537,70 @@ func (s *buildCoordinator) readScaleWeight(ctx context.Context) (float64, error)
 	}
 
 	return weight, nil
+}
+
+func (s *buildCoordinator) readZeroAdjustedScaleWeight(ctx context.Context) (float64, error) {
+	raw, err := s.readScaleWeight(ctx)
+	if err != nil {
+		return 0, err
+	}
+	s.mu.RLock()
+	offset := s.scaleZeroOffset
+	s.mu.RUnlock()
+	return raw - offset, nil
+}
+
+// waitForBowl blocks until a bowl is detected on the scale: the zero-adjusted
+// weight must stay at or above (bowlWeight - tolerance) for
+// bowlDetectConsecutive consecutive samples. It is ctx-aware so a stop cancels
+// the wait. The bowl is placed manually, so this may block indefinitely;
+// progress is logged periodically.
+func (s *buildCoordinator) waitForBowl(ctx context.Context) error {
+	weight, tolerance := defaultBowlWeightG, defaultBowlToleranceG
+	if s.cfg.BowlDetection != nil {
+		if s.cfg.BowlDetection.WeightG != nil {
+			weight = *s.cfg.BowlDetection.WeightG
+		}
+		if s.cfg.BowlDetection.WeightToleranceG != nil {
+			tolerance = *s.cfg.BowlDetection.WeightToleranceG
+		}
+	}
+	threshold := weight - tolerance
+	s.updateStatus(BuildStatusWaitingForBowl, 0)
+	s.logger.Infof("Waiting for bowl on scale (need zero-adjusted weight >= %.1fg)", threshold)
+
+	ticker := time.NewTicker(bowlPollInterval)
+	defer ticker.Stop()
+	logTicker := time.NewTicker(bowlWaitLogInterval)
+	defer logTicker.Stop()
+
+	var consecutive int
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-logTicker.C:
+			if w, err := s.readZeroAdjustedScaleWeight(ctx); err == nil {
+				s.logger.Infof("Still waiting for bowl: current zero-adjusted weight %.1fg (need >= %.1fg)", w, threshold)
+			}
+		case <-ticker.C:
+			w, err := s.readZeroAdjustedScaleWeight(ctx)
+			if err != nil {
+				s.logger.Debugf("scale read while waiting for bowl failed: %v", err)
+				consecutive = 0
+				continue
+			}
+			if w >= threshold {
+				consecutive++
+				if consecutive >= bowlDetectConsecutive {
+					s.logger.Infof("Bowl detected on scale (zero-adjusted weight %.1fg)", w)
+					return nil
+				}
+			} else {
+				consecutive = 0
+			}
+		}
+	}
 }
 
 func (s *buildCoordinator) resetAll(ctx context.Context) error {
