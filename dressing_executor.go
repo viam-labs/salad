@@ -34,7 +34,7 @@ func (s *dressingControls) executeDressing(ctx context.Context, plan *dressingPl
 		s.logger.Debugf("completed step %q", step.name)
 
 		switch step.postAction {
-		case GrabStepActionNone, GrabStepActionGoHome, GrabStepActionShake:
+		case GrabStepActionNone, GrabStepActionGoHome, GrabStepActionShake, GrabStepActionHalfOpen:
 			// dressing only handles open/close post-actions
 		// Open with grab_with_torque (not gripper.Open) because once we've grabbed with
 		// torque, we need to apply some torque to actively push the jaws open.

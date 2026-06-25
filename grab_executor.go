@@ -35,7 +35,7 @@ func (s *grabberControls) executePrePostAction(ctx context.Context, action GrabS
 		}
 		s.logger.Debugf("opened gripper")
 	case GrabStepActionHalfOpen:
-		if _, err := s.gripper.DoCommand(ctx, map[string]any{"set": 425.0}); err != nil {
+		if _, err := s.gripper.DoCommand(ctx, map[string]any{"set": s.gripperHalfOpenPosition}); err != nil {
 			return fmt.Errorf("set half open gripper: %w", err)
 		}
 	case GrabStepActionClose:
