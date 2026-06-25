@@ -22,7 +22,7 @@ export const EventType = {
 export interface DataContext {
   client: VIAM.ViamClient;
   orgId: string;
-  locationId: string;
+  robotId: string;
 }
 
 // ── Result types ────────────────────────────────────────────────
@@ -142,7 +142,7 @@ function dateTrunc(unit: BucketUnit) {
 
 function baseMatch(ctx: DataContext, extra: Record<string, unknown> = {}) {
   return {
-    location_id: ctx.locationId,
+    robot_id: ctx.robotId,
     component_name: RESOURCE_NAME,
     ...extra,
   };

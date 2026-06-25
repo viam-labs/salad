@@ -13,12 +13,12 @@ let apiKeyId = "";
 let apiKeySecret = "";
 let machinePartId = "";
 
-// {orgId, locationId} the Data API needs, derived at runtime and cached.
+// {orgId, robotId} the Data API needs, derived at runtime and cached.
 // Populated lazily when the dashboard first opens.
 interface DashboardContext {
   client: VIAM.ViamClient;
   orgId: string;
-  locationId: string;
+  robotId: string;
 }
 let dashboardCtx: DashboardContext | null = null;
 let dashboardCtxPromise: Promise<DashboardContext> | null = null;
@@ -53,7 +53,7 @@ export async function initConnection(): Promise<void> {
   cameraStream = await streamClient.getStream("overhead-webcam");
 }
 
-// Resolves and caches the ViamClient + {orgId, locationId} the Data API needs.
+// Resolves and caches the ViamClient + {orgId, robotId} the Data API needs.
 // The ViamClient is created here (not at startup) so the cloud handshake only
 // happens when the dashboard opens; concurrent callers share one in-flight
 // promise.
@@ -78,6 +78,11 @@ export function getDashboardContext(): Promise<DashboardContext> {
     if (!part) {
       throw new Error(`getRobotPart(${machinePartId}) returned no part.`);
     }
+    const robotId = part.robot;
+    if (!robotId) {
+      throw new Error("Robot part is missing robot id.");
+    }
+    // location_id is only needed to resolve the owning org for the Data API.
     const locationId = part.locationId;
     if (!locationId) {
       throw new Error("Robot part is missing location_id.");
@@ -91,7 +96,7 @@ export function getDashboardContext(): Promise<DashboardContext> {
     if (!orgId) {
       throw new Error(`Could not resolve org id for location ${locationId}.`);
     }
-    dashboardCtx = { client, orgId, locationId };
+    dashboardCtx = { client, orgId, robotId };
     return dashboardCtx;
   })();
   // Reset the in-flight promise on failure so a later caller can retry.
