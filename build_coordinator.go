@@ -669,7 +669,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, buildCtx context.Co
 		}
 	}
 	if buildFailed {
-		s.sm.BuildSaladFailed(failMsg) // TODO add back failedPhase
+		failedPhase = s.sm.BuildSaladFailed(failMsg)
 		if result != nil {
 			return result, nil
 		}

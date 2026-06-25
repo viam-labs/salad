@@ -148,11 +148,13 @@ func (sm *StateMachine) GetFinalStatus() (Status, string) {
 	return finalStatus, errMsg
 }
 
-func (sm *StateMachine) BuildSaladFailed(failMsg string) {
+func (sm *StateMachine) BuildSaladFailed(failMsg string) (string) {
 	sm.mu.Lock()
+	failedPhase := sm.status
 	sm.status = Failed
 	sm.errorMsg = failMsg
 	sm.mu.Unlock()
+	return string(failedPhase)
 }
 
 func (sm *StateMachine) OperationInProgress(cancelCtx context.Context) (map[string]any, context.Context) {
@@ -191,14 +193,6 @@ func (sm *StateMachine) StartSetupStation(setupCancelFunc context.CancelFunc) (m
 	sm.mu.Unlock()
 
 	sm.logger.Infof("Starting station setup")
-
-	defer func() {
-		sm.mu.Lock()
-		sm.opCancelFunc = nil
-		close(sm.opDone)
-		sm.opDone = nil
-		sm.mu.Unlock()
-	}()
 
 	return nil
 }
