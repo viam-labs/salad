@@ -62,6 +62,24 @@ func (sm *StateMachine) GetStateMachineStatus() map[string]any {
 	}
 }
 
+// finalEventType maps a terminal build status to its event type; unknown
+// states map to failed so we never lose a build-end record.
+func (sm *StateMachine) FinalEventType(status Status) string {
+	switch status {
+	case statemachine.Complete:
+		return events.TypeBuildComplete
+	case BuildStatusStopped:
+		return events.TypeBuildStopped
+	case BuildStatusFailed,
+		BuildStatusIdle, BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
+		return events.TypeBuildFailed
+	default:
+		// Dynamic statuses (e.g. "adding salad: tomato") aren't terminal; treat
+		// as failed so we never lose a build-end record.
+		return events.TypeBuildFailed
+	}
+}
+
 func (sm *StateMachine) GetBuildID() string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -89,6 +107,14 @@ func (sm *StateMachine) DoStop() (map[string]any, error) {
 		"success": true,
 		"message": "Operation stopped",
 	}, nil
+}
+
+func (sm *StateMachine) Emit() (string, string) {
+	sm.mu.RLock()
+	buildID := sm.buildID
+	displayName := sm.customerName
+	sm.mu.RUnlock()
+	return buildID, displayName
 }
 
 func (sm *StateMachine) StartBuildSalad(ctx, buildCtx context.Context, buildCancelFunc context.CancelFunc, value any, customerName string) (map[string]any) {
@@ -130,6 +156,14 @@ func (sm *StateMachine) EndBuildSalad() {
 	close(sm.opDone)
 	sm.opDone = nil
 	sm.mu.Unlock()
+}
+
+func (sm *StateMachine) GetFinalStatus() (Status, string) {
+	sm.mu.RLock()
+	finalStatus := sm.status
+	errMsg := sm.errorMsg
+	sm.mu.RUnlock()
+	return finalStatus, errMsg
 }
 
 func (sm *StateMachine) BuildSaladFailed(failMsg string) {
