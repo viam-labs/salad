@@ -8,6 +8,7 @@ import (
 	vision "go.viam.com/rdk/services/vision"
 
 	"salad"
+	"salad/events"
 )
 
 func main() {
@@ -21,5 +22,6 @@ func main() {
 		resource.APIModel{API: genericservice.API, Model: salad.ChefsKissControls},
 		resource.APIModel{API: genericservice.API, Model: salad.SupplyDetector},
 		resource.APIModel{API: sensor.API, Model: salad.MaintenanceSensor},
+		resource.APIModel{API: sensor.API, Model: events.Model},
 	)
 }

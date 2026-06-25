@@ -7,6 +7,7 @@
   import BuildingScreen from "./components/BuildingScreen.svelte";
   import CompleteScreen from "./components/CompleteScreen.svelte";
   import SetupScreen from "./components/SetupScreen.svelte";
+  import DashboardScreen from "./components/DashboardScreen.svelte";
 
   let screen: AppScreen = $state("loading");
   let ingredients: Ingredient[] = $state([]);
@@ -105,8 +106,9 @@
   <video use:attachStream autoplay playsinline style="display:none"></video>
 {/if}
 
-{#if screen !== "loading" && screen !== "error" && screen !== "building"}
+{#if screen !== "loading" && screen !== "error" && screen !== "building" && screen !== "dashboard"}
   <button class="camera-fab" onclick={openCamera}>📷</button>
+  <button class="dashboard-fab" onclick={() => (screen = "dashboard")} aria-label="Open dashboard">📊</button>
 {/if}
 
 {#if showCamera}
@@ -162,4 +164,6 @@
   <BuildingScreen {order} {customerName} onComplete={handleComplete} onStopped={handleNewOrder} onFailed={handleFailed} />
 {:else if screen === "complete"}
   <CompleteScreen {customerName} onNewOrder={handleNewOrder} />
+{:else if screen === "dashboard"}
+  <DashboardScreen onBack={() => (screen = "ordering")} />
 {/if}

@@ -133,6 +133,23 @@ body {
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+.name-input.invalid {
+  border-color: #c0392b;
+  box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.18);
+}
+
+.name-required {
+  color: #c0392b;
+  margin-left: 0.15rem;
+}
+
+.name-error {
+  color: #c0392b;
+  font-size: 0.9rem;
+  margin-top: 0.4rem;
+  flex-basis: 100%;
+}
+
 /* ── Category Sections ───────────────────────────────── */
 .category-section {
   margin-bottom: 2rem;
@@ -438,6 +455,29 @@ body {
 }
 
 .camera-fab:hover {
+  background: var(--green-darker);
+}
+
+.dashboard-fab {
+  position: fixed;
+  top: 1.5rem;
+  left: 5.25rem;
+  z-index: 200;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: none;
+  background: var(--green-dark);
+  font-size: 1.25rem;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.dashboard-fab:hover {
   background: var(--green-darker);
 }
 

@@ -5,7 +5,7 @@ export interface Ingredient {
   zone_id?: number;
 }
 
-export type AppScreen = "loading" | "ordering" | "building" | "complete" | "error" | "setup";
+export type AppScreen = "loading" | "ordering" | "building" | "complete" | "error" | "setup" | "dashboard";
 
 export interface ZoneMesh {
   vertices: [number, number, number][];
