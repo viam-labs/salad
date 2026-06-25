@@ -693,6 +693,10 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		"total_servings": totalServings,
 	})
 
+	// failedPhase records which build phase was active when a failure surfaced,
+	// captured below before the status flips to "failed".
+	var failedPhase string
+
 	// Registered after the state-clearing defer so it runs first and still
 	// sees the build's identity.
 	defer func() {
@@ -706,6 +710,9 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		}
 		if errMsg != "" {
 			fields["error_message"] = errMsg
+		}
+		if failedPhase != "" {
+			fields["failed_phase"] = failedPhase
 		}
 		s.emit(ctx, finalEventType(finalStatus), fields)
 	}()
@@ -750,6 +757,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	}
 	if buildFailed {
 		s.mu.Lock()
+		failedPhase = s.status.String()
 		s.status = BuildStatusFailed
 		s.errorMsg = failMsg
 		s.mu.Unlock()
@@ -804,28 +812,41 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 	}()
 
 	setupStart := time.Now()
+	// One terminal emit for setup, mirroring the build path: the outcome is
+	// recorded in locals and published once, on return.
+	var setupErr error
+	setupStopped := false
+	defer func() {
+		fields := map[string]interface{}{
+			"duration_ms": float64(time.Since(setupStart).Milliseconds()),
+		}
+		eventType := events.TypeSetupComplete
+		switch {
+		case setupStopped:
+			eventType = events.TypeSetupFailed
+			fields["error_message"] = "setup stopped"
+		case setupErr != nil:
+			eventType = events.TypeSetupFailed
+			fields["error_message"] = setupErr.Error()
+		}
+		s.emit(s.cancelCtx, eventType, fields)
+	}()
+
 	err := s.executeSetup(setupCtx)
-	setupDurMs := float64(time.Since(setupStart).Milliseconds())
 	if setupCtx.Err() != nil {
+		setupStopped = true
 		s.updateStatus(BuildStatusStopped, 0)
-		s.emit(s.cancelCtx, events.TypeSetupFailed, map[string]interface{}{
-			"duration_ms":   setupDurMs,
-			"error_message": "setup stopped",
-		})
 		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
 		}, nil
 	}
 	if err != nil {
+		setupErr = err
 		s.mu.Lock()
 		s.status = BuildStatusFailed
 		s.errorMsg = err.Error()
 		s.mu.Unlock()
-		s.emit(s.cancelCtx, events.TypeSetupFailed, map[string]interface{}{
-			"duration_ms":   setupDurMs,
-			"error_message": err.Error(),
-		})
 		return map[string]interface{}{
 			"success": false,
 			"message": err.Error(),
@@ -834,9 +855,6 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 
 	s.updateStatus(BuildStatusIdle, 0)
 	s.logger.Infof("Station setup complete")
-	s.emit(s.cancelCtx, events.TypeSetupComplete, map[string]interface{}{
-		"duration_ms": setupDurMs,
-	})
 	return map[string]interface{}{
 		"success": true,
 		"message": "Station setup complete",
