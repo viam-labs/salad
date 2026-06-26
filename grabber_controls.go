@@ -183,6 +183,7 @@ type grabberControls struct {
 	gripperCalibrated     bool
 	closedGripperHeightMM float64
 	openGripperWidthMM    float64
+	openGripperDepthMM    float64
 
 	fileSaver *fileio.FileSaver
 }
@@ -292,8 +293,8 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 	}
 	s.setGripperCalibration(calibration)
 	s.logger.Infof(
-		"Grabber controls initialized with %d zones; closed gripper height = %.2f mm, open gripper width = %.2f mm",
-		len(s.zones), calibration.closedHeightMM, calibration.openWidthMM,
+		"Grabber controls initialized with %d zones; closed gripper height = %.2f mm, open gripper width = %.2f mm, open gripper depth = %.2f mm",
+		len(s.zones), calibration.closedHeightMM, calibration.openWidthMM, calibration.openDepthMM,
 	)
 	return s, nil
 }
@@ -324,6 +325,7 @@ func (s *grabberControls) DoCommand(ctx context.Context, cmd map[string]interfac
 		return map[string]any{
 			"closed_gripper_to_arm_base_height_mm": calibration.closedHeightMM,
 			"open_gripper_width_mm":                calibration.openWidthMM,
+			"open_gripper_depth_mm":                calibration.openDepthMM,
 		}, nil
 	}
 
@@ -343,6 +345,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 	calibrated := s.gripperCalibrated
 	closedHeightMM := s.closedGripperHeightMM
 	openWidthMM := s.openGripperWidthMM
+	openDepthMM := s.openGripperDepthMM
 	s.calibrationMu.Unlock()
 	if !calibrated {
 		return nil, fmt.Errorf("gripper not calibrated, run calibrate command first")
@@ -350,6 +353,7 @@ func (s *grabberControls) getGripperCalibration() (map[string]interface{}, error
 	return map[string]interface{}{
 		"closed_gripper_to_arm_base_height_mm": closedHeightMM,
 		"open_gripper_width_mm":                openWidthMM,
+		"open_gripper_depth_mm":                openDepthMM,
 	}, nil
 }
 
@@ -378,6 +382,7 @@ func (s *grabberControls) getZoneConfig() map[string]interface{} {
 type gripperCalibration struct {
 	closedHeightMM float64
 	openWidthMM    float64
+	openDepthMM    float64
 }
 
 func (s *grabberControls) runGripperCalibration(ctx context.Context) (gripperCalibration, error) {
@@ -385,13 +390,14 @@ func (s *grabberControls) runGripperCalibration(ctx context.Context) (gripperCal
 	if err != nil {
 		return gripperCalibration{}, err
 	}
-	openWidthMM, err := s.measureOpenGripperWidth(ctx)
+	openWidthMM, openDepthMM, err := s.measureOpenGripper(ctx)
 	if err != nil {
 		return gripperCalibration{}, err
 	}
 	return gripperCalibration{
 		closedHeightMM: closedHeightMM,
 		openWidthMM:    openWidthMM,
+		openDepthMM:    openDepthMM,
 	}, nil
 }
 
@@ -399,6 +405,7 @@ func (s *grabberControls) setGripperCalibration(calibration gripperCalibration) 
 	s.calibrationMu.Lock()
 	s.closedGripperHeightMM = calibration.closedHeightMM
 	s.openGripperWidthMM = calibration.openWidthMM
+	s.openGripperDepthMM = calibration.openDepthMM
 	s.gripperCalibrated = true
 	s.calibrationMu.Unlock()
 }
@@ -444,20 +451,28 @@ func (s *grabberControls) measureClosedGripperHeight(ctx context.Context) (float
 	return maxGeometryZ(geomsInArm.Geometries())
 }
 
-func (s *grabberControls) measureOpenGripperWidth(ctx context.Context) (float64, error) {
+func (s *grabberControls) measureOpenGripper(ctx context.Context) (widthMM, depthMM float64, err error) {
 	if err := s.gripper.Open(ctx, nil); err != nil {
-		return 0, fmt.Errorf("open gripper: %w", err)
+		return 0, 0, fmt.Errorf("open gripper: %w", err)
 	}
 
 	geoms, err := s.gripper.Geometries(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("read gripper geometries: %w", err)
+		return 0, 0, fmt.Errorf("read gripper geometries: %w", err)
 	}
 	if len(geoms) == 0 {
-		return 0, fmt.Errorf("gripper returned no geometries")
+		return 0, 0, fmt.Errorf("gripper returned no geometries")
 	}
 
-	return geometryXSpan(geoms)
+	widthMM, err = geometryXSpan(geoms)
+	if err != nil {
+		return 0, 0, err
+	}
+	depthMM, err = geometryYSpan(geoms)
+	if err != nil {
+		return 0, 0, err
+	}
+	return widthMM, depthMM, nil
 }
 
 func (s *grabberControls) calibratedClosedGripperHeight() (float64, error) {
@@ -467,6 +482,15 @@ func (s *grabberControls) calibratedClosedGripperHeight() (float64, error) {
 		return 0, fmt.Errorf("gripper not calibrated, run calibrate command first")
 	}
 	return s.closedGripperHeightMM, nil
+}
+
+func (s *grabberControls) calibratedOpenGripperDims() (widthMM, depthMM float64, err error) {
+	s.calibrationMu.Lock()
+	defer s.calibrationMu.Unlock()
+	if !s.gripperCalibrated {
+		return 0, 0, fmt.Errorf("gripper not calibrated, run calibrate command first")
+	}
+	return s.openGripperWidthMM, s.openGripperDepthMM, nil
 }
 
 func maxGeometryZ(geoms []spatialmath.Geometry) (float64, error) {
@@ -501,6 +525,25 @@ func geometryXSpan(geoms []spatialmath.Geometry) (float64, error) {
 		return 0, fmt.Errorf("geometries produced no points")
 	}
 	return math.Abs(maxX - minX), nil
+}
+
+func geometryYSpan(geoms []spatialmath.Geometry) (float64, error) {
+	minY := math.Inf(1)
+	maxY := math.Inf(-1)
+	for _, g := range geoms {
+		for _, pt := range g.ToPoints(1.0) {
+			if pt.Y < minY {
+				minY = pt.Y
+			}
+			if pt.Y > maxY {
+				maxY = pt.Y
+			}
+		}
+	}
+	if math.IsInf(maxY, -1) {
+		return 0, fmt.Errorf("geometries produced no points")
+	}
+	return math.Abs(maxY - minY), nil
 }
 
 // loadAssets lazy-loads the bin mesh and zones from disk. Safe to call on every grab
@@ -571,16 +614,12 @@ func (s *grabberControls) getZone(zoneID int) (*segmentation.Zone, error) {
 	return nil, fmt.Errorf("zone %d not found in loaded zones", zoneID)
 }
 
-func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, servingDepthMM float64) (spatialmath.Pose, error) {
+func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodPoint r3.Vector, servingDepthMM float64) (spatialmath.Pose, error) {
 	closedGripperHeightMM, err := s.calibratedClosedGripperHeight()
 	if err != nil {
 		return nil, err
 	}
-	pose, err := ComputeGrabPose(zone, foodLevelMM, servingDepthMM, closedGripperHeightMM, s.cfg.BinHoverOrientation)
-	if err != nil {
-		return nil, err
-	}
-	return pose, nil
+	return ComputeGrabPose(zone, foodPoint, servingDepthMM, closedGripperHeightMM, s.cfg.BinHoverOrientation), nil
 }
 
 // logBinImagingCamPlaneFit snapshots the bin-imaging camera point cloud, culls
@@ -594,16 +633,16 @@ func (s *grabberControls) computeGrabPose(zone *segmentation.Zone, foodLevelMM, 
 //
 // Failure modes (camera read, empty cloud, no in-bounds points) are logged at
 // warn level and do not propagate: this is observational only.
-func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentation.Zone) (float64, error) {
+func (s *grabberControls) getBinFoodPoint(ctx context.Context, zone *segmentation.Zone) (FoodPoint, error) {
 	if s.binImagingCam == nil {
-		return 0, fmt.Errorf("bin-imaging-cam is not set")
+		return FoodPoint{}, fmt.Errorf("bin-imaging-cam is not set")
 	}
 	start := time.Now()
 	camPc, err := s.binImagingCam.NextPointCloud(ctx, nil)
 	if err != nil {
 		s.logger.Warnf("zone %d: bin-imaging-cam NextPointCloud failed after %.2fs: %v",
 			zone.ID, time.Since(start).Seconds(), err)
-		return 0, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %w", time.Since(start).Seconds(), err)
+		return FoodPoint{}, fmt.Errorf("bin-imaging-cam NextPointCloud failed after %.2fs: %w", time.Since(start).Seconds(), err)
 	}
 
 	camName := s.binImagingCam.Name().ShortName()
@@ -611,7 +650,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 	if err != nil {
 		s.logger.Warnf("zone %d: failed to transform bin-imaging-cam point cloud from %q to world frame: %v",
 			zone.ID, camName, err)
-		return 0, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %w", camName, err)
+		return FoodPoint{}, fmt.Errorf("failed to transform bin-imaging-cam point cloud from %q to world frame: %w", camName, err)
 	}
 
 	stats, _ := segmentation.ZonePlaneFitStats(pc, zone, s.logger)
@@ -619,7 +658,7 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		s.logger.Warnf("zone %d: 0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
 			zone.ID, stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY,
 			stats.PointsInsideX, stats.PointsInsideY)
-		return 0, fmt.Errorf("0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
+		return FoodPoint{}, fmt.Errorf("0/%d bin-imaging-cam points fell inside zone XY rect [%.1f,%.1f]x[%.1f,%.1f] (in_x=%d, in_y=%d) -- camera pointed away or frames don't match",
 			stats.PointsTotal, zone.MinX, zone.MaxX, zone.MinY, zone.MaxY, stats.PointsInsideX, stats.PointsInsideY)
 	}
 	pct := 0.0
@@ -635,12 +674,30 @@ func (s *grabberControls) getBinFoodLevel(ctx context.Context, zone *segmentatio
 		zone.Plane.TiltDeg(),
 		time.Since(start).Seconds(),
 	)
-	foodLevelMM, err := FoodLevelMMFromPlaneFitStats(zone, stats)
+
+	// Restrict the search to cells where the open gripper fits inside the zone
+	// (plus padding), then take the highest remaining cell as the grab target.
+	// The calibrated open dimensions are in the gripper's local frame, so map
+	// them onto world X/Y using the grab orientation before masking (the
+	// gripper may be rotated so its width runs along world Y, not world X).
+	// See GripperWorldExtents for the assumptions this relies on.
+	openWidthMM, openDepthMM, err := s.calibratedOpenGripperDims()
 	if err != nil {
-		s.logger.Errorf("distance to plane is wrong: %v, pointsInBounds: %d, planePoint: %v", err, stats.PointsInBounds, r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]})
-		return 0, err
+		return FoodPoint{}, err
 	}
-	return foodLevelMM, nil
+	xExtentMM, yExtentMM := GripperWorldExtents(s.cfg.BinHoverOrientation, openWidthMM, openDepthMM)
+	stats.HeightMap.MaskGripperOverflow(xExtentMM, yExtentMM)
+
+	foodPoint, err := FoodPointFromPlaneFitStats(zone, stats)
+	if err != nil {
+		s.logger.Errorf("no valid food point in zone %d: %v, pointsInBounds: %d, planePoint: %v",
+			zone.ID, err, stats.PointsInBounds, r3.Vector{X: zone.Plane.Point[0], Y: zone.Plane.Point[1], Z: zone.Plane.Point[2]})
+		return FoodPoint{}, err
+	}
+	s.logger.Infof("zone %d highest food point: (%.1f, %.1f, %.1f) level=%.1f mm above floor (%.1f, %.1f, %.1f)",
+		zone.ID, foodPoint.Point.X, foodPoint.Point.Y, foodPoint.Point.Z, foodPoint.LevelMM,
+		foodPoint.FloorPoint.X, foodPoint.FloorPoint.Y, foodPoint.FloorPoint.Z)
+	return foodPoint, nil
 }
 
 func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
@@ -685,13 +742,13 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	binFoodLevelMM, err := s.getBinFoodLevel(ctx, zone)
+	binFoodPoint, err := s.getBinFoodPoint(ctx, zone)
 	if err != nil {
 		return nil, err
 	}
 
 	s.logger.Infof("Planning get_from_bin for '%s' (zone %d, serving-depth %.1fmm, depth-offset %.1fmm)", label, zoneID, servingDepthMM, depthOffsetMM)
-	plan, err := s.planGrab(ctx, zoneCfg, label, zoneID, zone, binFoodLevelMM, servingDepthMM, buildID)
+	plan, err := s.planGrab(ctx, zoneCfg, label, zoneID, zone, binFoodPoint.Point, servingDepthMM, buildID)
 	if err != nil {
 		return nil, err
 	}

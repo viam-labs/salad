@@ -79,6 +79,75 @@ func (hm *ZoneHeightMap) CellXY(x, y float64) (row, col int) {
 	return row, col
 }
 
+// GripperOverflowPaddingMM is an inner margin applied to every zone edge before
+// the gripper-overflow check: min bounds are pushed in by +padding and max
+// bounds by −padding, so the gripper must clear the zone walls by at least this
+// much.
+const GripperOverflowPaddingMM = 5.0
+
+// MaskGripperOverflow invalidates (sets to NaN, PointCount 0) every cell whose
+// center cannot host the gripper without its open XY bounding box leaving the
+// zone. The bounding box is gripperWidthMM along X and gripperDepthMM along Y,
+// centered on the cell center; a cell survives only if that box stays fully
+// within the zone bounds shrunk inward by GripperOverflowPaddingMM on every
+// side. Non-positive dimensions are ignored, so passing 0 for an axis disables
+// the check on that axis.
+func (hm *ZoneHeightMap) MaskGripperOverflow(gripperWidthMM, gripperDepthMM float64) {
+	if gripperWidthMM <= 0 && gripperDepthMM <= 0 {
+		return
+	}
+	halfWidth := math.Max(gripperWidthMM, 0) / 2
+	halfDepth := math.Max(gripperDepthMM, 0) / 2
+	minX := hm.MinX + GripperOverflowPaddingMM
+	maxX := hm.MaxX - GripperOverflowPaddingMM
+	minY := hm.MinY + GripperOverflowPaddingMM
+	maxY := hm.MaxY - GripperOverflowPaddingMM
+	cellX := (hm.MaxX - hm.MinX) / ZoneHeightMapGridSize
+	cellY := (hm.MaxY - hm.MinY) / ZoneHeightMapGridSize
+	for row := 0; row < ZoneHeightMapGridSize; row++ {
+		// row indexes Y, col indexes X (see CellXY).
+		centerY := hm.MinY + (float64(row)+0.5)*cellY
+		for col := 0; col < ZoneHeightMapGridSize; col++ {
+			centerX := hm.MinX + (float64(col)+0.5)*cellX
+			if centerX-halfWidth < minX || centerX+halfWidth > maxX ||
+				centerY-halfDepth < minY || centerY+halfDepth > maxY {
+				hm.MedianSignedDistanceMM[row][col] = math.NaN()
+				hm.PointCount[row][col] = 0
+			}
+		}
+	}
+}
+
+// HighestCell returns the world-frame XY center and median signed distance of
+// the populated cell with the greatest median signed distance to the plane. ok
+// is false when no cell has data. NaN cells (empty or masked by
+// MaskGripperOverflow) are skipped, so callers that mask first get the highest
+// gripper-valid cell.
+func (hm *ZoneHeightMap) HighestCell() (centerX, centerY, distMM float64, ok bool) {
+	bestRow, bestCol := -1, -1
+	best := math.Inf(-1)
+	for row := 0; row < ZoneHeightMapGridSize; row++ {
+		for col := 0; col < ZoneHeightMapGridSize; col++ {
+			v := hm.MedianSignedDistanceMM[row][col]
+			if math.IsNaN(v) {
+				continue
+			}
+			if v > best {
+				best = v
+				bestRow, bestCol = row, col
+			}
+		}
+	}
+	if bestRow < 0 {
+		return 0, 0, 0, false
+	}
+	cellX := (hm.MaxX - hm.MinX) / ZoneHeightMapGridSize
+	cellY := (hm.MaxY - hm.MinY) / ZoneHeightMapGridSize
+	centerX = hm.MinX + (float64(bestCol)+0.5)*cellX
+	centerY = hm.MinY + (float64(bestRow)+0.5)*cellY
+	return centerX, centerY, best, true
+}
+
 // MedianSignedDistanceAt returns the median signed distance (mm) stored for the
 // height-map cell that contains the point's (X, Y) projection. Z is ignored.
 // Returns nil if the point lies outside the map's XY bounds or the cell has no
