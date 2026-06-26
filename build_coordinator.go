@@ -43,6 +43,7 @@ const (
 	themeSalad                 = "salad"
 	themeIceCream              = "icecream"
 	themeMediterranean         = "mediterranean"
+	defaultAssetsDir           = "/home/viam/assets"
 )
 
 // BuildCoordinatorStatus is the build coordinator's operational state.
@@ -354,7 +355,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 
 	assetsDir := conf.AssetsDir
 	if assetsDir == "" {
-		assetsDir = "/home/viam/assets"
+		assetsDir = defaultAssetsDir
 	}
 
 	s := &buildCoordinator{

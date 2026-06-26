@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
 	"go.viam.com/rdk/app"
 	"go.viam.com/rdk/components/sensor"
 	"go.viam.com/rdk/config"
@@ -153,7 +152,7 @@ func runApp(ctx context.Context) error {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if tree.coord != nil {
-			_, _ = tree.coord.DoCommand(stopCtx, map[string]interface{}{"stop": true})
+			_, _ = tree.coord.DoCommand(stopCtx, map[string]interface{}{"stop": true}) //nolint:errcheck // best-effort stop on interrupt before exit
 		}
 		tree.close(stopCtx)
 		os.Exit(130)
@@ -361,19 +360,19 @@ func (t *localTree) fetchMergedConfig(ctx context.Context, partID, secret string
 
 func (t *localTree) close(ctx context.Context) {
 	if t.coord != nil {
-		_ = t.coord.Close(ctx)
+		_ = t.coord.Close(ctx) //nolint:errcheck // best-effort cleanup on shutdown
 	}
 	if t.eventsIn != nil {
-		_ = t.eventsIn.Close(ctx)
+		_ = t.eventsIn.Close(ctx) //nolint:errcheck // best-effort cleanup on shutdown
 	}
 	if t.conn != nil {
-		_ = t.conn.Close()
+		_ = t.conn.Close() //nolint:errcheck // best-effort cleanup on shutdown
 	}
 	if t.viam != nil {
-		_ = t.viam.Close()
+		_ = t.viam.Close() //nolint:errcheck // best-effort cleanup on shutdown
 	}
 	if t.machine != nil {
-		_ = t.machine.Close(ctx)
+		_ = t.machine.Close(ctx) //nolint:errcheck // best-effort cleanup on shutdown
 	}
 }
 
@@ -463,8 +462,8 @@ func shortDepName(dep string) string {
 // saladDepNames returns the deduped names of c's dependencies that are themselves
 // salad resources, so they get constructed before c.
 func saladDepNames(c resource.Config, saladNames map[string]bool) []string {
-	v, ok := c.ConvertedAttributes.(resource.ConfigValidator)
-	if !ok || c.ConvertedAttributes == nil {
+	v := c.ConvertedAttributes
+	if v == nil {
 		return nil
 	}
 	req, opt, err := v.Validate("")
@@ -606,7 +605,7 @@ func (t *localTree) fetchAssets(ctx context.Context) error {
 	}
 	for _, name := range []string{"merged.pcd", "zones.json", "mesh.ply"} {
 		src := "machine:" + path.Join(appFlags.MachineAssetsDir, name)
-		out, err := exec.CommandContext(ctx, "viam", "machines", "part", "cp",
+		out, err := exec.CommandContext(ctx, "viam", "machines", "part", "cp", //nolint:gosec // fixed args; partID and paths derived from our own config
 			"--part", t.partID, src, filepath.Join(dir, name)).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("copy %s from machine (needs `viam login` + a shell service; has setup_station run there?): %w\n%s", name, err, out)
