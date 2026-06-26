@@ -43,6 +43,7 @@ const (
 	themeSalad                 = "salad"
 	themeIceCream              = "icecream"
 	themeMediterranean         = "mediterranean"
+	defaultAssetsDir           = "/home/viam/assets"
 )
 
 // BuildCoordinatorStatus is the build coordinator's operational state.
@@ -170,15 +171,19 @@ func (c *BuildCoordinatorSegmentationConfig) Validate(path string) error {
 }
 
 type BuildCoordinatorConfig struct {
-	Ingredients         []BuildCoordinatorIngredientConfig  `json:"ingredients"`
-	GrabberControls     string                              `json:"grabber-controls"`
-	BowlControls        string                              `json:"bowl-controls"`
-	ScaleSensor         string                              `json:"scale-sensor"`
-	DressingControls    string                              `json:"dressing-controls"`
-	ChefsKissControls   string                              `json:"chefs-kiss-controls"`
-	TextToSpeech        string                              `json:"text-to-speech"`
-	ImagingCamera       string                              `json:"imaging-camera"`
-	CaptureDir          string                              `json:"capture-dir"`
+	Ingredients       []BuildCoordinatorIngredientConfig `json:"ingredients"`
+	GrabberControls   string                             `json:"grabber-controls"`
+	BowlControls      string                             `json:"bowl-controls"`
+	ScaleSensor       string                             `json:"scale-sensor"`
+	DressingControls  string                             `json:"dressing-controls"`
+	ChefsKissControls string                             `json:"chefs-kiss-controls"`
+	TextToSpeech      string                             `json:"text-to-speech"`
+	ImagingCamera     string                             `json:"imaging-camera"`
+	CaptureDir        string                             `json:"capture-dir"`
+	// AssetsDir holds the stable setup artifacts (merged.pcd, zones.json,
+	// mesh.ply) read by builds. Defaults to /home/viam/assets; overridable so
+	// the service can run off-machine (e.g. local development).
+	AssetsDir           string                              `json:"assets-dir,omitempty"`
 	Simulate            bool                                `json:"simulate"`
 	SkipLilArm          bool                                `json:"skip-lil-arm"`
 	LeftHome            string                              `json:"left-home"`
@@ -348,6 +353,11 @@ func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawCon
 func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name resource.Name, conf *BuildCoordinatorConfig, logger logging.Logger) (resource.Resource, error) {
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 
+	assetsDir := conf.AssetsDir
+	if assetsDir == "" {
+		assetsDir = defaultAssetsDir
+	}
+
 	s := &buildCoordinator{
 		name:        name,
 		logger:      logger,
@@ -358,7 +368,7 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		status:      BuildStatusIdle,
 		simulate:    conf.Simulate,
 		skipLilArm:  conf.SkipLilArm,
-		assetsDir:   "/home/viam/assets",
+		assetsDir:   assetsDir,
 		emitter:     events.Nop{},
 	}
 

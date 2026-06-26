@@ -25,6 +25,12 @@ bin/salad-cli: Makefile go.mod *.go cmd/cli/*.go filter/*.go segmentation/*.go u
 
 cli: bin/salad-cli
 
+# Run the salad services locally against the live machine (no module reload).
+# See `salad-cli app --help` and DEVELOPER_GUIDE.md. Pass flags via ARGS, e.g.
+# `make app ARGS="--simulate"` or `make app ARGS="--exec status"`.
+app: bin/salad-cli
+	./bin/salad-cli app $(ARGS)
+
 # Yes this regex could be more specific but making it more specific in a way
 # that works the same across GNU and BSD grep isn't currently worth the effort.
 GOVERSION = $(shell grep '^go .\..' go.mod | head -n1 | cut -d' ' -f2)
@@ -68,7 +74,7 @@ setup:
 	go mod tidy
 	which npm > /dev/null 2>&1 || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && apt-get -y install nodejs)
 
-.PHONY: build lint lint-fix check-lint va-update va-upload
+.PHONY: build lint lint-fix check-lint va-update va-upload cli app
 
 va-update: meta.json
 	viam module update --module=meta.json
