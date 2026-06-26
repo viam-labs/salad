@@ -9,10 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/sensor"
 	sw "go.viam.com/rdk/components/switch"
@@ -23,6 +21,7 @@ import (
 	"salad/events"
 	"salad/filter"
 	"salad/segmentation"
+	statemachine "salad/state_machine"
 	saladutils "salad/utils"
 )
 
@@ -318,20 +317,10 @@ type buildCoordinator struct {
 	ingredients       map[string]BuildCoordinatorIngredientConfig
 	emitter           events.Emitter
 
-	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
-	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
-	mu           sync.RWMutex
-	status       BuildCoordinatorStatus
-	progress     float64
-	customerName string
-	errorMsg     string
-	simulate     bool
-	skipLilArm   bool
-	opCancelFunc func()
-	opDone       chan struct{}
-	buildID      string
-
-	assetsDir string
+	skipLilArm bool
+	simulate   bool
+	assetsDir  string
+	sm         statemachine.StateMachine
 }
 
 func newBuildCoordinator(ctx context.Context, deps resource.Dependencies, rawConf resource.Config, logger logging.Logger) (resource.Resource, error) {
@@ -355,7 +344,6 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		cancelCtx:   cancelCtx,
 		cancelFunc:  cancelFunc,
 		ingredients: map[string]BuildCoordinatorIngredientConfig{},
-		status:      BuildStatusIdle,
 		simulate:    conf.Simulate,
 		skipLilArm:  conf.SkipLilArm,
 		assetsDir:   "/home/viam/assets",
@@ -473,13 +461,18 @@ func (s *buildCoordinator) Name() resource.Name {
 }
 
 func (s *buildCoordinator) Status(ctx context.Context) (map[string]interface{}, error) {
-	return s.getStatus(), nil
+	return s.sm.GetStateMachineStatus(), nil
 }
 
 func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if val, ok := cmd["build_salad"]; ok {
 		customerName, _ := cmd["customer_name"].(string)
-		return s.doBuildSalad(ctx, val, customerName)
+		buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
+		err_map := s.sm.StartBuildSalad(ctx, buildCtx, buildCancelFunc, val, customerName)
+		if err_map != nil {
+			return err_map, nil
+		}
+		return s.doBuildSalad(ctx, buildCtx, val, customerName)
 	}
 	if _, ok := cmd["setup_station"]; ok {
 		return s.doSetupStation()
@@ -495,14 +488,14 @@ func (s *buildCoordinator) DoCommand(ctx context.Context, cmd map[string]interfa
 				"message": fmt.Sprintf("Failed to reset all controls: %v", err),
 			}, nil
 		}
-		s.updateStatus(BuildStatusIdle, 0)
+		s.sm.UpdateStateMachineStatus(statemachine.Idle, 0)
 		return map[string]interface{}{
 			"success": true,
 			"message": "Successfully reset all controls",
 		}, nil
 	}
 	if _, ok := cmd["status"]; ok {
-		return s.getStatus(), nil
+		return s.sm.GetStateMachineStatus(), nil
 	}
 	if _, ok := cmd["list_ingredients"]; ok {
 		return s.listIngredients(), nil
@@ -520,37 +513,10 @@ func (s *buildCoordinator) getTheme() string {
 	return normalizeTheme(s.cfg.Theme)
 }
 
-func (s *buildCoordinator) updateStatus(status BuildCoordinatorStatus, progress float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status = status
-	s.progress = progress
-}
-
-func (s *buildCoordinator) getBuildID() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.buildID
-}
-
-func (s *buildCoordinator) getStatus() map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return map[string]interface{}{
-		"status":        s.status.String(),
-		"progress":      s.progress,
-		"customer_name": s.customerName,
-		"error_msg":     s.errorMsg,
-	}
-}
-
 // emit publishes one event, stamped with the active build's identity.
 // Safe for concurrent use.
 func (s *buildCoordinator) emit(ctx context.Context, eventType string, fields map[string]interface{}) {
-	s.mu.RLock()
-	buildID := s.buildID
-	displayName := s.customerName
-	s.mu.RUnlock()
+	buildID, displayName := s.sm.Emit()
 	s.emitter.Emit(ctx, events.Event{
 		Type:                eventType,
 		BuildID:             buildID,
@@ -576,20 +542,21 @@ func sumServings(order map[string]interface{}) float64 {
 
 // finalEventType maps a terminal build status to its event type; unknown
 // states map to failed so we never lose a build-end record.
-func finalEventType(status BuildCoordinatorStatus) string {
+func finalEventType(status statemachine.Status) string {
 	switch status {
-	case BuildStatusComplete:
+	case statemachine.Complete:
 		return events.TypeBuildComplete
-	case BuildStatusStopped:
+	case statemachine.Stopped:
 		return events.TypeBuildStopped
-	case BuildStatusFailed,
-		BuildStatusIdle, BuildStatusPreparing, BuildStatusSettingUpStation, BuildStatusDeliveringSalad:
+	case statemachine.Failed,
+		statemachine.Idle, statemachine.Preparing, statemachine.SettingUp, statemachine.Delivering:
 		return events.TypeBuildFailed
-	default:
+	case statemachine.Adding:
 		// Dynamic statuses (e.g. "adding salad: tomato") aren't terminal; treat
 		// as failed so we never lose a build-end record.
 		return events.TypeBuildFailed
 	}
+	return events.TypeBuildFailed
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
@@ -611,29 +578,10 @@ func (s *buildCoordinator) listIngredients() map[string]interface{} {
 }
 
 func (s *buildCoordinator) doStop() (map[string]interface{}, error) {
-	s.mu.RLock()
-	cancelFunc := s.opCancelFunc
-	done := s.opDone
-	s.mu.RUnlock()
-
-	if cancelFunc == nil {
-		return map[string]interface{}{
-			"success": false,
-			"message": "No operation in progress",
-		}, nil
-	}
-
-	s.logger.Infof("Stop requested, cancelling operation")
-	cancelFunc()
-	<-done
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "Operation stopped",
-	}, nil
+	return s.sm.DoStop()
 }
 
-func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
+func (s *buildCoordinator) doBuildSalad(ctx context.Context, buildCtx context.Context, value interface{}, customerName string) (map[string]interface{}, error) {
 	// Customer name is required so leaderboards have a stable join key.
 	displayName := events.DisplayName(customerName)
 	normalizedName := events.NormalizeName(customerName)
@@ -646,40 +594,9 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 
 	// Guard against concurrent builds.
 
-	// TODO: Move inside state machine.
-	// Verify we're transitioning from a valid state.
-	// Also move to caller - will be easier to ensure ever DoCommand verifies sate before proceeding.
-	s.mu.Lock()
-	if s.opCancelFunc != nil {
-		s.mu.Unlock()
-		return map[string]interface{}{
-			"success": false,
-			"message": "An operation is already in progress, use 'stop' to cancel it first",
-		}, nil
-	}
-	buildCtx, buildCancelFunc := context.WithCancel(s.cancelCtx)
-	s.opCancelFunc = buildCancelFunc
-	s.opDone = make(chan struct{})
-	s.status = BuildStatusPreparing
-	s.progress = 0
-	s.customerName = displayName
-	s.errorMsg = ""
-	s.buildID = fmt.Sprintf("%s_%s", time.Now().UTC().Format("20060102-150405"), uuid.NewString()[:8])
-	s.mu.Unlock()
-	s.logger.Infof("Build ID: %s", s.buildID)
-
 	s.logger.Infof("New salad order received for %q: %v", displayName, value)
 
-	// TODO: Move to a state machine function.
-	defer func() {
-		s.mu.Lock()
-		s.opCancelFunc = nil
-		s.customerName = ""
-		s.buildID = ""
-		close(s.opDone)
-		s.opDone = nil
-		s.mu.Unlock()
-	}()
+	defer s.sm.EndBuildSalad()
 
 	// total_servings is reused by both the start and end events.
 	var orderMap map[string]interface{}
@@ -700,10 +617,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	// Registered after the state-clearing defer so it runs first and still
 	// sees the build's identity.
 	defer func() {
-		s.mu.RLock()
-		finalStatus := s.status
-		errMsg := s.errorMsg
-		s.mu.RUnlock()
+		finalStatus, errMsg := s.sm.GetFinalStatus()
 		fields := map[string]interface{}{
 			"duration_ms":    float64(time.Since(buildStart).Milliseconds()),
 			"total_servings": totalServings,
@@ -721,7 +635,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 	var err error
 	if s.simulate {
 		s.logger.Infof("Simulate mode: skipping robot commands for build")
-		s.updateStatus(BuildStatusComplete, 100)
+		s.sm.UpdateStateMachineStatus(statemachine.Complete, 100)
 		result = map[string]interface{}{
 			"success":   true,
 			"message":   "Salad built and delivered successfully (simulated)",
@@ -735,7 +649,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		if resetErr := s.resetAll(s.cancelCtx); resetErr != nil {
 			s.logger.Errorf("Failed to reset hardware after stop: %v", resetErr)
 		}
-		s.updateStatus(BuildStatusStopped, 0)
+		s.sm.UpdateStateMachineStatus(statemachine.Stopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Build stopped",
@@ -756,11 +670,7 @@ func (s *buildCoordinator) doBuildSalad(ctx context.Context, value interface{}, 
 		}
 	}
 	if buildFailed {
-		s.mu.Lock()
-		failedPhase = s.status.String()
-		s.status = BuildStatusFailed
-		s.errorMsg = failMsg
-		s.mu.Unlock()
+		failedPhase = s.sm.BuildSaladFailed(failMsg)
 		if result != nil {
 			return result, nil
 		}
@@ -785,31 +695,16 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("setup_station requires 'imaging-camera' to be configured")
 	}
 
-	s.mu.Lock()
-	if s.opCancelFunc != nil {
-		s.mu.Unlock()
-		return map[string]interface{}{
-			"success": false,
-			"message": "An operation is already in progress, use 'stop' to cancel it first",
-		}, nil
+	setupCtx, cancelFunc := context.WithCancel(s.cancelCtx)
+	err_output := s.sm.StartSetupStation(cancelFunc)
+
+	if err_output != nil {
+		return err_output, nil
 	}
-	setupCtx, setupCancelFunc := context.WithCancel(s.cancelCtx)
-	s.opCancelFunc = setupCancelFunc
-	s.opDone = make(chan struct{})
-	s.status = BuildStatusSettingUpStation
-	s.progress = 0
-	s.errorMsg = ""
-	s.mu.Unlock()
 
 	s.logger.Infof("Starting station setup")
 
-	defer func() {
-		s.mu.Lock()
-		s.opCancelFunc = nil
-		close(s.opDone)
-		s.opDone = nil
-		s.mu.Unlock()
-	}()
+	defer s.sm.EndSetupStation()
 
 	setupStart := time.Now()
 	// One terminal emit for setup, mirroring the build path: the outcome is
@@ -835,7 +730,7 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 	err := s.executeSetup(setupCtx)
 	if setupCtx.Err() != nil {
 		setupStopped = true
-		s.updateStatus(BuildStatusStopped, 0)
+		s.sm.UpdateStateMachineStatus(statemachine.Stopped, 0)
 		return map[string]interface{}{
 			"success": false,
 			"message": "Setup stopped",
@@ -843,17 +738,10 @@ func (s *buildCoordinator) doSetupStation() (map[string]interface{}, error) {
 	}
 	if err != nil {
 		setupErr = err
-		s.mu.Lock()
-		s.status = BuildStatusFailed
-		s.errorMsg = err.Error()
-		s.mu.Unlock()
-		return map[string]interface{}{
-			"success": false,
-			"message": err.Error(),
-		}, nil
+		return s.sm.SetupStationError(err), nil
 	}
 
-	s.updateStatus(BuildStatusIdle, 0)
+	s.sm.UpdateStateMachineStatus(statemachine.Idle, 0)
 	s.logger.Infof("Station setup complete")
 	return map[string]interface{}{
 		"success": true,
@@ -1142,7 +1030,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 			continue
 		}
 		name := t.name
-		buildID := s.getBuildID()
+		buildID := s.sm.GetBuildID()
 		go func() {
 			if _, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 				"pre_plan_dressing": name,
@@ -1157,7 +1045,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		s.updateStatus(BuildStatusAddingIngredient(target.name), completedServings/totalSteps*100)
+		s.sm.UpdateStateMachineStatus(statemachine.Adding, completedServings/totalSteps*100)
 		s.logger.Infof("Adding ingredient %q: target %.1fg", target.name, target.targetGrams)
 		if target.category == categoryDressing {
 			continue
@@ -1219,7 +1107,7 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// 	}
 	// }
 
-	s.updateStatus(BuildStatusDeliveringSalad, completedServings/totalSteps*100)
+	s.sm.UpdateStateMachineStatus(statemachine.Delivering, completedServings/totalSteps*100)
 	s.logger.Infof("All ingredients added; skipping deliver_bowl step")
 
 	if s.bowlControls != nil {
@@ -1240,14 +1128,14 @@ func (s *buildCoordinator) executeBuild(ctx context.Context, value interface{}) 
 	// the grabber and bowl-controls arms have gone home.
 	for _, target := range targets {
 		if target.category == categoryDressing {
-			s.updateStatus(BuildStatusAddingIngredient(target.name), 100)
+			s.sm.UpdateStateMachineStatus(statemachine.Adding, 100)
 			if err := s.addDressing(ctx, target.name); err != nil {
 				s.logger.Errorf("Failed to add dressing %q: %v", target.name, err)
 			}
 		}
 	}
 
-	s.updateStatus(BuildStatusComplete, 100)
+	s.sm.UpdateStateMachineStatus(statemachine.Complete, 100)
 
 	// chefs kiss
 	if _, err := s.chefsKissControls.DoCommand(ctx, map[string]interface{}{
@@ -1299,7 +1187,7 @@ func (s *buildCoordinator) addDressing(ctx context.Context, name string) error {
 	dressingStart := time.Now()
 	_, err := s.dressingControls.DoCommand(ctx, map[string]interface{}{
 		"pour_dressing": name,
-		"build_id":      s.getBuildID(),
+		"build_id":      s.sm.GetBuildID(),
 	})
 	durMs := float64(time.Since(dressingStart).Milliseconds())
 	if err != nil {
@@ -1383,7 +1271,7 @@ func (s *buildCoordinator) addIngredient(ctx context.Context, name string, targe
 				"serving-depth-mm": ing.ServingDepthMM,
 			},
 			"depth-offset-mm": depthOffset,
-			"build_id":        s.getBuildID(),
+			"build_id":        s.sm.GetBuildID(),
 		})
 		grabDurMs := float64(time.Since(grabStart).Milliseconds())
 		if err != nil {
