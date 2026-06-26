@@ -551,11 +551,12 @@ func finalEventType(status statemachine.Status) string {
 	case statemachine.Failed,
 		statemachine.Idle, statemachine.Preparing, statemachine.SettingUp, statemachine.Delivering:
 		return events.TypeBuildFailed
-	default:
+	case statemachine.Adding:
 		// Dynamic statuses (e.g. "adding salad: tomato") aren't terminal; treat
 		// as failed so we never lose a build-end record.
 		return events.TypeBuildFailed
 	}
+	return events.TypeBuildFailed
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
