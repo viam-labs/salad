@@ -64,5 +64,8 @@ dist-ssr
 downloads/*
 output/*
 
+# salad-cli app local work dir (setup/build assets when running off-machine)
+.salad-local/
+
 *.ply
 /cli
