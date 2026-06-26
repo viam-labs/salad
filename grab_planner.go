@@ -20,9 +20,10 @@ import (
 type GrabStepAction int
 
 const (
-	GrabStepActionNone  GrabStepAction = iota
-	GrabStepActionOpen                 // open gripper
-	GrabStepActionClose                // close gripper (Grab)
+	GrabStepActionNone     GrabStepAction = iota
+	GrabStepActionOpen                    // open gripper
+	GrabStepActionHalfOpen                // half open gripper
+	GrabStepActionClose                   // close gripper (Grab)
 	GrabStepActionGoHome
 	GrabStepActionShake
 )
@@ -110,9 +111,9 @@ func (s *grabberControls) planGrab(ctx context.Context, zoneCfg *grabberZone, na
 
 	specs = append(specs,
 		grabStepSpec{name: "bowl_hover", goal: s.bowlHoverPose, constraints: s.clearanceLinearConstraints()},
-		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionOpen},
+		grabStepSpec{name: "drop", goal: s.droppingPose, postAction: GrabStepActionHalfOpen},
 		grabStepSpec{name: "return_bowl_hover", goal: s.bowlHoverPose, postAction: GrabStepActionShake},
-		grabStepSpec{name: "return_home", goal: homePose},
+		grabStepSpec{name: "return_home", goal: homePose, postAction: GrabStepActionOpen},
 	)
 
 	fs, err := framesystem.NewFromService(ctx, s.fsService, nil)

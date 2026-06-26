@@ -31,6 +31,8 @@ var GrabberControls = resource.NewModel("ncs", "salad", "grabber-controls")
 
 const defaultBowlHoverHeightMM = 150.0
 
+const defaultGripperHalfOpenPosition = 425.0
+
 func init() {
 	resource.RegisterService(genericservice.API, GrabberControls,
 		resource.Registration[resource.Resource, *GrabberControlsConfig]{
@@ -69,6 +71,7 @@ type GrabberControlsConfig struct {
 	ClearanceOrientationToleranceDegs float64                               `json:"clearance-orientation-tolerance-degs,omitempty"`
 	DroppingPose                      *BowlDropPose                         `json:"dropping-pose"`
 	BowlHoverHeightMM                 float64                               `json:"bowl-hover-height-mm,omitempty"`
+	GripperHalfOpenPosition           float64                               `json:"gripper-half-open-position,omitempty"`
 	Arm                               string                                `json:"arm"`
 	Gripper                           string                                `json:"gripper"`
 	MotionService                     string                                `json:"motion-service"`
@@ -161,9 +164,11 @@ type grabberControls struct {
 	cancelCtx  context.Context
 	cancelFunc func()
 
-	zones             map[int]*grabberZone
-	droppingPose      spatialmath.Pose
-	bowlHoverPose     spatialmath.Pose
+	zones                   map[int]*grabberZone
+	droppingPose            spatialmath.Pose
+	bowlHoverPose           spatialmath.Pose
+	gripperHalfOpenPosition float64
+
 	arm               arm.Arm
 	gripper           gripper.Gripper
 	binImagingCam     camera.Camera
@@ -223,6 +228,11 @@ func NewGrabberControls(ctx context.Context, deps resource.Dependencies, name re
 		r3.Vector{X: droppingPt.X, Y: droppingPt.Y, Z: droppingPt.Z + hoverHeight},
 		conf.DroppingPose.Orientation,
 	)
+
+	s.gripperHalfOpenPosition = conf.GripperHalfOpenPosition
+	if s.gripperHalfOpenPosition == 0 {
+		s.gripperHalfOpenPosition = defaultGripperHalfOpenPosition
+	}
 
 	armComponent, err := arm.FromProvider(deps, conf.Arm)
 	if err != nil {

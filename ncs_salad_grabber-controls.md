@@ -34,6 +34,7 @@ The following attribute template can be used to configure this model:
   "motion-service": <string>,
   "dropping-pose": { "x": <float>, "y": <float>, "z": <float>, "orientation": { "x": <float>, "y": <float>, "z": <float>, "th": <float> } },
   "bowl-hover-height-mm": <float>,
+  "gripper-half-open-position": <float>,
   "left-home": <string>,
   "zones": [
     { "zone-id": <int>, "hover-x-offset-mm": <float>, "hover-y-offset-mm": <float> }
@@ -65,6 +66,7 @@ The following attributes are available for this model:
 | `motion-service` | string | Required | Name of the `motion` service used to plan moves with the bin mesh as a world obstacle. |
 | `dropping-pose` | object | Required | Inline pose (fields: `x`, `y`, `z` in mm, `orientation` as OV-degrees) where the gripper opens to drop the ingredient into the bowl. |
 | `bowl-hover-height-mm` | float | Optional | Height (mm) added to `dropping-pose.z` to compute the hover pose used before and after dropping. Defaults to `150`. |
+| `gripper-half-open-position` | float | Optional | Position value sent to the gripper's `set` `DoCommand` for the half-open grab step action. Defaults to `425`. |
 | `left-home` | string | Required | Name of a `switch` used by `reset` to send the arm home. |
 | `zones` | array | Required | List of grabbable zones. Must be non-empty and contain unique `zone-id`s. Each `zone-id` must exist in `zones.json` at runtime. Ingredient/food metadata (name, category, grams-per-serving, serving depth) is *not* configured here — it lives in `build-coordinator` and is passed in at grab time via `get_from_bin`. Each entry: `zone-id` (int, required), `hover-x-offset-mm` / `hover-y-offset-mm` (float, optional XY shifts of the hover pose, world frame mm). |
 | `bin-hover-height-mm` | float | Required | Hover height above the bin's mean Z (mm). Used for both pre-grab approach and post-grab return. Must be non-zero. |
