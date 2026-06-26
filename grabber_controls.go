@@ -168,6 +168,7 @@ type grabberControls struct {
 	droppingPose            spatialmath.Pose
 	bowlHoverPose           spatialmath.Pose
 	gripperHalfOpenPosition float64
+
 	arm               arm.Arm
 	gripper           gripper.Gripper
 	binImagingCam     camera.Camera
