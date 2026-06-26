@@ -320,7 +320,12 @@ type buildCoordinator struct {
 	leftHome          sw.Switch
 	rightHome         sw.Switch
 	ingredients       map[string]BuildCoordinatorIngredientConfig
-	emitter           events.Emitter
+	// ingredientOrder preserves the order ingredients were registered (config
+	// order first, then dressings) so listIngredients returns a stable order.
+	// Iterating the map directly yields random order, which makes the web app
+	// reshuffle ingredients on every poll.
+	ingredientOrder []string
+	emitter         events.Emitter
 
 	// TODO: Wrap inside a state machine - restrictions on state transtions (i.e. can't transition from "add ingredients" to "go home")
 	// As our system's complexity increases, inlining mutextes will without any guardrails will inevitbly lead to deadlocks.
@@ -456,6 +461,9 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 		if ing.ServingDepthMM == 0 {
 			ing.ServingDepthMM = DefaultServingDepthMM
 		}
+		if _, exists := s.ingredients[ing.Name]; !exists {
+			s.ingredientOrder = append(s.ingredientOrder, ing.Name)
+		}
 		s.ingredients[ing.Name] = ing
 	}
 
@@ -465,8 +473,12 @@ func NewBuildCoordinator(ctx context.Context, deps resource.Dependencies, name r
 	}
 	if dressings, ok := dressingsResult["dressings"].([]map[string]any); ok {
 		for _, dressing := range dressings {
-			s.ingredients[dressing["name"].(string)] = BuildCoordinatorIngredientConfig{
-				Name:            dressing["name"].(string),
+			name := dressing["name"].(string)
+			if _, exists := s.ingredients[name]; !exists {
+				s.ingredientOrder = append(s.ingredientOrder, name)
+			}
+			s.ingredients[name] = BuildCoordinatorIngredientConfig{
+				Name:            name,
 				GramsPerServing: 5,
 				Category:        categoryDressing,
 			}
@@ -602,8 +614,9 @@ func finalEventType(status BuildCoordinatorStatus) string {
 }
 
 func (s *buildCoordinator) listIngredients() map[string]interface{} {
-	ingredients := make([]interface{}, 0, len(s.ingredients))
-	for _, ing := range s.ingredients {
+	ingredients := make([]interface{}, 0, len(s.ingredientOrder))
+	for _, name := range s.ingredientOrder {
+		ing := s.ingredients[name]
 		entry := map[string]interface{}{
 			"name":              ing.Name,
 			"grams_per_serving": ing.GramsPerServing,
