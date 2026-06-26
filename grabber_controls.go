@@ -720,21 +720,6 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	var depthOffsetMM float64
-	if v, ok := cmd["depth-offset-mm"]; ok {
-		switch x := v.(type) {
-		case float64:
-			depthOffsetMM = x
-		case int:
-			depthOffsetMM = float64(x)
-		default:
-			return nil, fmt.Errorf("'depth-offset-mm' must be a number, got %T", v)
-		}
-		if depthOffsetMM < 0 {
-			return nil, fmt.Errorf("'depth-offset-mm' must be non-negative, got %v", depthOffsetMM)
-		}
-	}
-
 	buildID, _ := cmd["build_id"].(string)
 
 	zoneCfg, ok := s.zones[zoneID]
@@ -757,7 +742,7 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 		return nil, err
 	}
 
-	s.logger.Infof("Planning get_from_bin for '%s' (zone %d, serving-depth %.1fmm, depth-offset %.1fmm)", label, zoneID, servingDepthMM, depthOffsetMM)
+	s.logger.Infof("Planning get_from_bin for '%s' (zone %d, serving-depth %.1fmm)", label, zoneID, servingDepthMM)
 	plan, err := s.planGrab(ctx, zoneCfg, label, zoneID, zone, binFoodPoint.Point, servingDepthMM, buildID)
 	if err != nil {
 		return nil, err
@@ -770,11 +755,10 @@ func (s *grabberControls) doGetFromBin(ctx context.Context, cmd map[string]inter
 	s.logger.Infof("Successfully completed get_from_bin for '%s' (zone %d)", label, zoneID)
 
 	return map[string]interface{}{
-		"success":         true,
-		"bin":             label,
-		"zone-id":         zoneID,
-		"depth-offset-mm": depthOffsetMM,
-		"message":         fmt.Sprintf("Successfully grabbed from '%s' and moved to bowl", label),
+		"success": true,
+		"bin":     label,
+		"zone-id": zoneID,
+		"message": fmt.Sprintf("Successfully grabbed from '%s' and moved to bowl", label),
 	}, nil
 }
 

@@ -15,7 +15,7 @@ first command after startup, this model lazy-loads `mesh.ply` and
   centroid at height `Z_mean + bin-hover-height-mm` with orientation
   `bin-hover-orientation`.
 - A grab pose per configured bin, centered on the bin's centroid at
-  `Z_min + grab-height-mm - depth-offset-mm` with orientation
+  `serving-depth-mm` below the detected food surface with orientation
   `bin-hover-orientation`.
 
 The bowl drop-off is driven by an inline `dropping-pose` (position + orientation)
@@ -142,12 +142,9 @@ integer zone ID (legacy form) or a map supplied by `build-coordinator`:
 - `name` (string, optional) — ingredient name, used only for log/response
   labels.
 - `serving-depth-mm` (float, optional) — how far below the detected food
-  surface the gripper descends. Defaults to `30` when omitted or zero.
-
-The optional top-level `depth-offset-mm` descends an additional N millimeters;
-it must be non-negative. If motion planning fails ("`physically unreachable`",
-"`zero IK solutions`", "`no plan found`", or "`fatal early collision`") and
-`depth-offset-mm > 0`, the build coordinator halves it and retries.
+  surface the gripper descends. Defaults to `30` when omitted or zero. This is
+  the only control over grab depth; the build coordinator increases it on
+  successive empty-handed grabs to probe deeper into the bin.
 
 Request:
 
@@ -157,8 +154,7 @@ Request:
     "zone-id": 2,
     "name": "tomato",
     "serving-depth-mm": 30
-  },
-  "depth-offset-mm": 0
+  }
 }
 ```
 
@@ -169,7 +165,6 @@ Response:
   "success": true,
   "bin": "tomato",
   "zone-id": 2,
-  "depth-offset-mm": 0,
   "message": "Successfully grabbed from 'tomato' and moved to bowl"
 }
 ```
