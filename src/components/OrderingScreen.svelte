@@ -26,6 +26,10 @@
 
   let canBuild = $derived(totalItems > 0 && nameValid);
 
+  // True once the cart has items but no name yet: the build button is
+  // disabled in this state, so surface why instead of leaving it inert.
+  let needsName = $derived(totalItems > 0 && !nameValid);
+
   let cartNames = $derived(
     Object.entries(order)
       .filter(([, n]) => n > 0)
@@ -64,7 +68,7 @@
 
 <div class="ordering-screen">
   <h1>{text.orderTitle}</h1>
-  <div class="name-card">
+  <div class="name-card" class:needs-name={needsName}>
     <label class="name-label" for="customer-name">
       What's your name? <span class="name-required" aria-hidden="true">*</span>
     </label>
@@ -72,6 +76,7 @@
       id="customer-name"
       class="name-input"
       class:invalid={nameError && !nameValid}
+      class:needs-name={needsName}
       type="text"
       placeholder="e.g. Viam"
       maxlength="40"
@@ -108,7 +113,14 @@
       {cartNames}
     {/if}
   </div>
-  <button class="btn-build" disabled={!canBuild} onclick={handleBuild}>
-    {text.buildButton}
-  </button>
+  <div class="cart-actions">
+    {#if needsName}
+      <span class="build-hint" role="status">
+        Add your name above to build <span aria-hidden="true">↑</span>
+      </span>
+    {/if}
+    <button class="btn-build" disabled={!canBuild} onclick={handleBuild}>
+      {text.buildButton}
+    </button>
+  </div>
 </div>

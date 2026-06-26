@@ -138,6 +138,34 @@ body {
   box-shadow: 0 0 0 3px rgba(192, 57, 43, 0.18);
 }
 
+/* Items are in the cart but no name yet: nudge the user toward the field
+   with a softer amber "attention" cue (vs. the red error state on submit). */
+.name-input.needs-name:not(.invalid) {
+  border-color: #e0a800;
+  box-shadow: 0 0 0 3px rgba(224, 168, 0, 0.18);
+}
+
+.name-card.needs-name {
+  animation: name-card-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes name-card-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(224, 168, 0, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(224, 168, 0, 0.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .name-card.needs-name {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(224, 168, 0, 0.22);
+  }
+}
+
 .name-required {
   color: #c0392b;
   margin-left: 0.15rem;
@@ -277,6 +305,20 @@ body {
 
 .cart-summary strong {
   color: #1a1a1a;
+}
+
+.cart-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.build-hint {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #b8860b;
+  white-space: nowrap;
 }
 
 .btn-build {
